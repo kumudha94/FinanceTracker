@@ -25,7 +25,7 @@ import {
 } from "@shared/schema";
 import { suggestCategory, parseSmsMessage, fallbackCategorization, parseStatementPDF, ExtractedTransaction } from "./openai";
 import multer from "multer";
-import { PDFParse } from "pdf-parse";
+// pdf-parse is imported dynamically at usage site to avoid pdfjs-dist crashing on startup
 import { getPaydayForMonth, getNextPaydays, getPastPaydays, getCurrentCycleDates, getNextCycleDates, getCyclePrimaryMonth } from "./salaryUtils";
 import { generateOTP, storeOTP, verifyOTP, sendOTP } from "./emailService";
 import { generateTokenPair, generateAccessToken } from "./jwtService";
@@ -612,6 +612,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           pdfOptions.password = password;
           console.log("🔐 Using password for encrypted PDF");
         }
+        const { PDFParse } = await import("pdf-parse");
         const parser = new PDFParse(pdfOptions);
         const textResult = await parser.getText();
         pdfText = textResult.text || '';
@@ -3189,7 +3190,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           type: parsedData.type || "debit",
           transactionDate: parsedData.date || new Date().toISOString(),
         };
-        
+
         // Only add optional fields if they have values
         if (parsedData.description) transactionData.description = parsedData.description;
         if (parsedData.merchant) transactionData.merchant = parsedData.merchant;
@@ -3197,18 +3198,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (category?.id) transactionData.categoryId = category.id;
         if (defaultAccount?.id) transactionData.accountId = defaultAccount.id;
         if (smsLog?.id) transactionData.smsId = smsLog.id;
-        
-        // Create transaction
-        const transaction = await storage.createTransaction(transactionData);
 
-        // Update SMS log
-        await storage.updateSmsLogTransaction(smsLog.id, transaction.id);
-
-        res.json({ 
-          success: true, 
-          transaction,
-          parsed: parsedData 
-        });
+        // Only persist if we have a userId (via an account); otherwise return parsed data only
+        if (defaultAccount?.userId) {
+          transactionData.userId = defaultAccount.userId;
+          const transaction = await storage.createTransaction(transactionData);
+          await storage.updateSmsLogTransaction(smsLog.id, transaction.id);
+          res.json({
+            success: true,
+            transaction,
+            parsed: parsedData
+          });
+        } else {
+          // No user/account configured — return parsed data without persisting transaction
+          console.warn('⚠️  No accounts found — transaction not saved. Returning parsed data only.');
+          res.json({
+            success: true,
+            transaction: null,
+            parsed: parsedData
+          });
+        }
       } else {
         res.json({ 
           success: false, 
@@ -3283,16 +3292,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
             if (category?.id) transactionData.categoryId = category.id;
             if (defaultAccount?.id) transactionData.accountId = defaultAccount.id;
             if (smsLog?.id) transactionData.smsId = smsLog.id;
-            
-            // Create transaction
-            const transaction = await storage.createTransaction(transactionData);
-            await storage.updateSmsLogTransaction(smsLog.id, transaction.id);
-            
-            results.push({ 
-              success: true, 
-              transaction,
-              message: messageText.substring(0, 50) + '...'
-            });
+
+            // Only persist if we have a userId; otherwise return parsed data without saving
+            if (defaultAccount?.userId) {
+              transactionData.userId = defaultAccount.userId;
+              const transaction = await storage.createTransaction(transactionData);
+              await storage.updateSmsLogTransaction(smsLog.id, transaction.id);
+              results.push({
+                success: true,
+                transaction,
+                parsed: parsedData,
+                message: messageText.substring(0, 50) + '...'
+              });
+            } else {
+              results.push({
+                success: true,
+                transaction: null,
+                parsed: parsedData,
+                message: messageText.substring(0, 50) + '...'
+              });
+            }
           } else {
             results.push({ 
               success: false, 
