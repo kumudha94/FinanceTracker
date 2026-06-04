@@ -30,6 +30,7 @@ import { getPaydayForMonth, getNextPaydays, getPastPaydays, getCurrentCycleDates
 import { generateOTP, storeOTP, verifyOTP, sendOTP } from "./emailService";
 import { generateTokenPair, generateAccessToken } from "./jwtService";
 import { authenticateToken } from "./authMiddleware";
+import { validateApiKey } from "./apiKeyMiddleware";
 import { verifyToken } from "./jwtService";
 
 // Configure multer for file uploads (memory storage for processing)
@@ -3080,7 +3081,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // ========== SMS Parsing ==========
-  app.post("/api/parse-sms", async (req, res) => {
+  app.post("/api/parse-sms", validateApiKey, async (req, res) => {
     try {
       const { sender, message, receivedAt } = req.body;
       
@@ -3162,7 +3163,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // ========== Batch SMS Parsing ==========
-  app.post("/api/parse-sms-batch", async (req, res) => {
+  app.post("/api/parse-sms-batch", validateApiKey, async (req, res) => {
     try {
       const { messages } = req.body; // Array of SMS message strings or objects
       

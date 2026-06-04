@@ -1,0 +1,77 @@
+<TaskerData sr="" dvi="1" tv="6.2.19">
+	<Profile sr="prof1" ve="2">
+		<cdate>1716537600000</cdate>
+		<edate>1716537600000</edate>
+		<flags>8</flags>
+		<id>1</id>
+		<mid0>2</mid0>
+		<Event sr="con0" ve="2">
+			<code>7</code>
+			<pri>0</pri>
+			<Str sr="arg0" ve="3"/>
+			<Str sr="arg1" ve="3"/>
+			<Str sr="arg2" ve="3">sms</Str>
+		</Event>
+	</Profile>
+	<Task sr="task2">
+		<cdate>1716537600000</cdate>
+		<edate>1716537600000</edate>
+		<id>2</id>
+		<nme>Finance Tracker SMS</nme>
+		<pri>100</pri>
+		<Action sr="act0" ve="7">
+			<code>130</code>
+			<Str sr="arg0" ve="3">// Extract SMS data
+var sender = global('SMSRF');
+var message = global('SMSRB');
+var receivedAt = new Date().toISOString();
+
+// Store in global variables
+global('SMS_SENDER', sender);
+global('SMS_MESSAGE', message);
+global('SMS_TIME', receivedAt);</Str>
+			<Int sr="arg1" val="1"/>
+			<Str sr="arg2" ve="3"/>
+			<Str sr="arg3" ve="3"/>
+			<Str sr="arg4" ve="3"/>
+			<Str sr="arg5" ve="3"/>
+			<Str sr="arg6" ve="3"/>
+		</Action>
+		<Action sr="act1" ve="7">
+			<code>339</code>
+			<Str sr="arg0" ve="3">http://YOUR_SERVER_URL:5000/api/parse-sms</Str>
+			<Int sr="arg1" val="1"/>
+			<Str sr="arg2" ve="3">Content-Type: application/json
+X-API-Key: YOUR_API_KEY_HERE</Str>
+			<Str sr="arg3" ve="3">{
+  "sender": "%SMS_SENDER",
+  "message": "%SMS_MESSAGE",
+  "receivedAt": "%SMS_TIME"
+}</Str>
+			<Str sr="arg4" ve="3"/>
+			<Str sr="arg5" ve="3"/>
+			<Str sr="arg6" ve="3"/>
+			<Str sr="arg7" ve="3"/>
+			<Int sr="arg8" val="30"/>
+			<Str sr="arg9" ve="3">POST</Str>
+			<Int sr="arg10" val="0"/>
+			<Int sr="arg11" val="0"/>
+			<Int sr="arg12" val="1"/>
+			<Int sr="arg13" val="0"/>
+		</Action>
+		<Action sr="act2" ve="7">
+			<code>523</code>
+			<Str sr="arg0" ve="3">Finance Tracker</Str>
+			<Str sr="arg1" ve="3">Transaction logged from SMS</Str>
+			<Img sr="arg2" ve="2">
+				<nme>mw_action_swap_horiz</nme>
+			</Img>
+			<Int sr="arg3" val="0"/>
+			<Int sr="arg4" val="0"/>
+			<Int sr="arg5" val="3"/>
+			<Str sr="arg6" ve="3"/>
+			<Str sr="arg7" ve="3"/>
+			<Str sr="arg8" ve="3"/>
+		</Action>
+	</Task>
+</TaskerData>

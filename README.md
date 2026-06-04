@@ -25,6 +25,7 @@ Finance Tracker revolves around your **salary cycle** - not calendar months. Def
 - **Manual Entry** - Quick transaction logging with category tagging
 - **Bank Statement Upload** - PDF statement parsing with OpenAI
 - **SMS Parsing** - Auto-extract transactions from bank SMS messages
+- **🤖 Tasker Automation** - Auto-create transactions from bank SMS (Android)
 - Support for transfers between accounts
 - Link transactions to scheduled payments or savings goals
 
@@ -166,6 +167,7 @@ FinanceTracker/
    DATABASE_URL=your_postgres_connection_string
    OPENAI_API_KEY=your_openai_api_key
    JWT_SECRET=your_jwt_secret
+   TASKER_API_KEY=your_secure_random_string  # For Tasker integration
    ```
    
    Create `mobile/.env`:
@@ -204,6 +206,28 @@ npm run build:aab   # Production AAB for Play Store
 ```bash
 npm run build
 ```
+
+## 🤖 Tasker Automation (Android)
+
+Automate transaction tracking by intercepting bank SMS notifications!
+
+Finance Tracker includes a **Tasker integration** that automatically creates transactions when your bank sends SMS notifications about debits/credits.
+
+### Quick Setup
+1. Install [Tasker](https://play.google.com/store/apps/details?id=net.dinglisch.android.taskerm) on your Android device
+2. Set `TASKER_API_KEY` in your `.env` file
+3. Import the pre-configured profile from `tasker-profiles/FinanceTracker-SMS.prf.xml`
+4. Configure your server URL and API key in the profile
+5. Done! Transactions auto-create from bank SMS 🎉
+
+**Full guide**: See [TASKER_INTEGRATION.md](./TASKER_INTEGRATION.md) for detailed setup instructions, troubleshooting, and advanced configuration.
+
+**Features:**
+- ✅ Auto-parse bank SMS notifications
+- ✅ AI-powered transaction categorization
+- ✅ Works with all major Indian banks (HDFC, ICICI, Axis, SBI, etc.)
+- ✅ Secure API key authentication
+- ✅ Batch processing support
 
 ## 🎯 Roadmap
 
