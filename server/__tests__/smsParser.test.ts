@@ -49,11 +49,13 @@ console.log("\nTransaction type:");
 
 test("debit detection", () => {
   const r = parseSmsByRegex("Rs.500 debited from A/c XX1234", "HDFCBK");
+  assert(r !== null, "Parser returned null for this SMS");
   assert.equal(r!.type, "debit");
 });
 
 test("credit detection", () => {
   const r = parseSmsByRegex("Rs.5000 credited to A/c XX5678 from SALARY", "ICICIBK");
+  assert(r !== null, "Parser returned null for this SMS");
   assert.equal(r!.type, "credit");
 });
 
@@ -72,16 +74,19 @@ console.log("\nAccount last digits:");
 
 test("A/c XX format", () => {
   const r = parseSmsByRegex("Rs.500 debited from A/c XX1234 at SWIGGY", "HDFCBK");
+  assert(r !== null, "Parser returned null for this SMS");
   assert.equal(r!.accountLastDigits, "1234");
 });
 
 test("A/C uppercase asterisk format", () => {
   const r = parseSmsByRegex("Rs 500 debited from Kotak Savings A/C XXXXXXXX5678", "KOTAK");
+  assert(r !== null, "Parser returned null for this SMS");
   assert.equal(r!.accountLastDigits, "5678");
 });
 
 test("card ending format", () => {
   const r = parseSmsByRegex("Rs.500 spent on card ending 9012 at AMAZON", "HDFCBK");
+  assert(r !== null, "Parser returned null for this SMS");
   assert.equal(r!.accountLastDigits, "9012");
 });
 
@@ -93,6 +98,7 @@ test("'at MERCHANT' pattern", () => {
     "Rs.500.00 debited from A/c XX1234 on 04-Jun-26 at SWIGGY. Avl Bal: Rs.15,000.00",
     "HDFCBK"
   );
+  assert(r !== null, "Parser returned null for this SMS");
   assert(r!.merchant?.toUpperCase().includes("SWIGGY"), `Expected SWIGGY, got: ${r!.merchant}`);
 });
 
@@ -101,6 +107,7 @@ test("'to UPI-MERCHANT' pattern", () => {
     "Rs 250.50 debited from A/c XX5678 on 24-05-26 to UPI-ZOMATO PAYMENTS. Available Balance: Rs 12,500.75",
     "ICICIBK"
   );
+  assert(r !== null, "Parser returned null for this SMS");
   assert(r!.merchant?.toUpperCase().includes("ZOMATO"), `Expected ZOMATO, got: ${r!.merchant}`);
 });
 
@@ -109,6 +116,7 @@ test("'for MERCHANT' pattern (Axis)", () => {
     "INR 1000.00 has been debited from your A/c XX9012 on 24-MAY-26 for AMAZON PURCHASE. Avl Bal: INR 8,000.00",
     "AXISBK"
   );
+  assert(r !== null, "Parser returned null for this SMS");
   assert(r!.merchant?.toUpperCase().includes("AMAZON"), `Expected AMAZON, got: ${r!.merchant}`);
 });
 
@@ -120,6 +128,7 @@ test("UPI ref format", () => {
     "Rs.500.00 debited from A/c XX1234. Ref No: UPI/12345678",
     "HDFCBK"
   );
+  assert(r !== null, "Parser returned null for this SMS");
   assert(r!.referenceNumber?.includes("12345678"), `Got: ${r!.referenceNumber}`);
 });
 
@@ -128,6 +137,7 @@ test("UTR format", () => {
     "Rs.500 debited from A/c XX1234. UTR: 987654321012",
     "SBIINB"
   );
+  assert(r !== null, "Parser returned null for this SMS");
   assert(r!.referenceNumber?.includes("987654321012"), `Got: ${r!.referenceNumber}`);
 });
 
