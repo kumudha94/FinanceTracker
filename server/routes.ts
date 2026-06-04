@@ -3081,6 +3081,62 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // ========== SMS Parsing ==========
+
+  const SENDER_BANK_MAP: Record<string, string> = {
+    hdfcbk: "hdfc",
+    hdfc: "hdfc",
+    icicibk: "icici",
+    icici: "icici",
+    sbiinb: "sbi",
+    sbi: "sbi",
+    axisbk: "axis",
+    axis: "axis",
+    kotak: "kotak",
+    idfcfirst: "idfc",
+    idfc: "idfc",
+    indusind: "indusind",
+    yesbank: "yes",
+    federal: "federal",
+    canara: "canara",
+    pnb: "pnb",
+  };
+
+  function matchAccountBySender(
+    accounts: Awaited<ReturnType<typeof storage.getAllAccounts>>,
+    sender: string,
+    accountLastDigits?: string
+  ): (typeof accounts)[0] | undefined {
+    const senderLower = sender.toLowerCase().replace(/[^a-z0-9]/g, "");
+
+    let bankKeyword: string | undefined;
+    for (const [key, keyword] of Object.entries(SENDER_BANK_MAP)) {
+      if (senderLower.includes(key)) {
+        bankKeyword = keyword;
+        break;
+      }
+    }
+
+    if (!bankKeyword) return undefined;
+
+    const candidates = accounts.filter(acc => {
+      const name = (acc.name ?? "").toLowerCase();
+      const bankName = (acc.bankName ?? "").toLowerCase();
+      return name.includes(bankKeyword!) || bankName.includes(bankKeyword!);
+    });
+
+    if (candidates.length === 0) return undefined;
+    if (candidates.length === 1) return candidates[0];
+
+    if (accountLastDigits) {
+      const exact = candidates.find(acc =>
+        (acc.accountNumber ?? "").endsWith(accountLastDigits)
+      );
+      if (exact) return exact;
+    }
+
+    return candidates[0];
+  }
+
   app.post("/api/parse-sms", validateApiKey, async (req, res) => {
     try {
       const { sender, message, receivedAt } = req.body;
@@ -3119,9 +3175,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
           category = await storage.getCategoryByName(fallbackCategoryName);
         }
         
-        // Get default account or first active account
+        // Match account by SMS sender, fall back to default
         const accounts = await storage.getAllAccounts();
-        const defaultAccount = accounts.find(acc => acc.isDefault) || accounts.find(acc => acc.isActive) || accounts[0];
+        const matchedAccount = matchAccountBySender(accounts, sender || "", parsedData.accountLastDigits);
+        const defaultAccount = matchedAccount
+          || accounts.find(acc => acc.isDefault)
+          || accounts.find(acc => acc.isActive)
+          || accounts[0];
         
         // Build transaction data object
         const transactionData: any = {
@@ -3173,12 +3233,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const results = [];
       const accounts = await storage.getAllAccounts();
-      const defaultAccount = accounts.find(acc => acc.isDefault) || accounts.find(acc => acc.isActive) || accounts[0];
-      
+
       for (const msg of messages) {
         const messageText = typeof msg === 'string' ? msg : msg.message;
         const sender = typeof msg === 'string' ? undefined : msg.sender;
-        
+
         try {
           // Create SMS log
           const smsLogData: any = {
@@ -3187,12 +3246,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
             isParsed: false,
           };
           if (sender) smsLogData.sender = sender;
-          
+
           const smsLog = await storage.createSmsLog(smsLogData);
 
           // Parse SMS
           const parsedData = await parseSmsMessage(messageText, sender);
-          
+
           if (parsedData && parsedData.amount) {
             // Get category
             let category;
@@ -3203,14 +3262,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
               const fallbackCategoryName = fallbackCategorization(parsedData.merchant || parsedData.description || "");
               category = await storage.getCategoryByName(fallbackCategoryName);
             }
-            
+
+            // Match account by SMS sender, fall back to default
+            const matchedAccount = matchAccountBySender(accounts, sender || "", parsedData?.accountLastDigits);
+            const defaultAccount = matchedAccount
+              || accounts.find(acc => acc.isDefault)
+              || accounts.find(acc => acc.isActive)
+              || accounts[0];
+
             // Build transaction data
             const transactionData: any = {
               amount: parsedData.amount.toString(),
               type: parsedData.type || "debit",
               transactionDate: parsedData.date || new Date().toISOString(),
             };
-            
+
             if (parsedData.description) transactionData.description = parsedData.description;
             if (parsedData.merchant) transactionData.merchant = parsedData.merchant;
             if (parsedData.referenceNumber) transactionData.referenceNumber = parsedData.referenceNumber;
