@@ -23,6 +23,7 @@ import AddAccountScreen from './src/screens/AddAccountScreen';
 import AddBudgetScreen from './src/screens/AddBudgetScreen';
 import AddScheduledPaymentScreen from './src/screens/AddScheduledPaymentScreen';
 import ScanSMSScreen from './src/screens/ScanSMSScreen';
+import SmsAutoReadScreen from './src/screens/SmsAutoReadScreen';
 import SavingsGoalsScreen from './src/screens/SavingsGoalsScreen';
 import SalaryScreen from './src/screens/SalaryScreen';
 import LoansScreen from './src/screens/LoansScreen';
@@ -91,6 +92,7 @@ export type MoreStackParamList = {
   AddCategory: { categoryId?: number } | undefined;
   Settings: undefined;
   ScanSMS: undefined;
+  SmsAutoRead: undefined;
   ImportStatement: undefined;
 };
 
@@ -175,10 +177,15 @@ function MoreStackNavigator() {
         component={SettingsScreen}
         options={{ title: 'Settings' }}
       />
-      <MoreStack.Screen 
-        name="ScanSMS" 
+      <MoreStack.Screen
+        name="ScanSMS"
         component={ScanSMSScreen}
         options={{ title: 'Scan SMS' }}
+      />
+      <MoreStack.Screen
+        name="SmsAutoRead"
+        component={SmsAutoReadScreen}
+        options={{ title: 'Auto-Read SMS' }}
       />
       <MoreStack.Screen 
         name="SavingsGoals" 

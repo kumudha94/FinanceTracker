@@ -19,6 +19,20 @@ interface MenuItem {
 
 const menuItems: MenuItem[] = [
   {
+    icon: 'chatbubble-ellipses-outline',
+    title: 'Auto-Read SMS',
+    subtitle: 'Automatically log bank SMS as transactions',
+    route: 'SmsAutoRead',
+    color: '#16a34a',
+  },
+  {
+    icon: 'scan-outline',
+    title: 'Scan SMS',
+    subtitle: 'Paste a bank SMS to add manually',
+    route: 'ScanSMS',
+    color: '#0ea5e9',
+  },
+  {
     icon: 'document-text-outline',
     title: 'Import Statement',
     subtitle: 'Import PDF bank statements',

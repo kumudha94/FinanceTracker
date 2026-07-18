@@ -28,7 +28,10 @@
         "INTERNET",
         "READ_EXTERNAL_STORAGE",
         "WRITE_EXTERNAL_STORAGE",
-        "DETECT_SCREEN_CAPTURE"
+        "DETECT_SCREEN_CAPTURE",
+        "RECEIVE_SMS",
+        "READ_SMS",
+        "POST_NOTIFICATIONS"
       ]
     },
     "web": {
@@ -36,6 +39,26 @@
       "bundler": "metro"
     },
     "owner": "glorykumudha",
+    "plugins": [
+      "./plugins/withSmsReceiver.js",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/icon.png",
+          "color": "#16a34a"
+        }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "compileSdkVersion": 35,
+            "targetSdkVersion": 35,
+            "buildToolsVersion": "35.0.0"
+          }
+        }
+      ]
+    ],
     "extra": {
       "eas": {
         "projectId": "00f2d123-84f6-4e1d-a027-a2c0464eb435"

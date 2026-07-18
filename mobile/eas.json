@@ -14,13 +14,18 @@
         "buildType": "apk"
       },
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://financetracker-ckvf.onrender.com"
+        "EXPO_PUBLIC_API_URL": "https://financetracker-ckvf.onrender.com",
+        "EXPO_PUBLIC_TASKER_API_KEY": "FT-sms-2026-myTracker"
       }
     },
     "production": {
       "autoIncrement": true,
       "android": {
         "buildType": "app-bundle"
+      },
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://financetracker-ckvf.onrender.com",
+        "EXPO_PUBLIC_TASKER_API_KEY": "FT-sms-2026-myTracker"
       }
     }
   },
