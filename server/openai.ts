@@ -1,8 +1,13 @@
 import OpenAI from "openai";
+import Anthropic from "@anthropic-ai/sdk";
 import { parseSmsByRegex, type ParsedSmsData } from "./smsParser";
 
-const openai = process.env.OPENAI_API_KEY 
+const openai = process.env.OPENAI_API_KEY
   ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+  : null;
+
+const anthropic = process.env.ANTHROPIC_API_KEY
+  ? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
   : null;
 
 const CATEGORIES = [
@@ -21,38 +26,67 @@ const CATEGORIES = [
   "Other"
 ];
 
-export async function suggestCategory(description: string): Promise<string> {
+async function suggestCategoryWithOpenAI(description: string): Promise<string> {
   if (!openai) {
-    return fallbackCategorization(description);
+    throw new Error("OpenAI is not configured");
   }
-  
-  try {
-    const response = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [
-        {
-          role: "system",
-          content: `You are an expense categorization expert. Based on the text, suggest the most appropriate category from this list: ${CATEGORIES.join(", ")}. Respond with only the category name in JSON format: { "category": "CategoryName" }`,
-        },
-        {
-          role: "user",
-          content: `Categorize this: "${description}"`,
-        },
-      ],
-      response_format: { type: "json_object" },
-    });
 
-    const result = JSON.parse(response.choices[0].message.content || "{}");
-    
-    if (result.category && CATEGORIES.includes(result.category)) {
-      return result.category;
-    }
-    
-    return "Other";
-  } catch (error) {
-    console.error("AI categorization error:", error);
-    return fallbackCategorization(description);
+  const response = await openai.chat.completions.create({
+    model: "gpt-4o-mini",
+    messages: [
+      {
+        role: "system",
+        content: `You are an expense categorization expert. Based on the text, suggest the most appropriate category from this list: ${CATEGORIES.join(", ")}. Respond with only the category name in JSON format: { "category": "CategoryName" }`,
+      },
+      {
+        role: "user",
+        content: `Categorize this: "${description}"`,
+      },
+    ],
+    response_format: { type: "json_object" },
+  });
+
+  const result = JSON.parse(response.choices[0].message.content || "{}");
+  return result.category && CATEGORIES.includes(result.category) ? result.category : "Other";
+}
+
+async function suggestCategoryWithAnthropic(description: string): Promise<string> {
+  if (!anthropic) {
+    throw new Error("Anthropic is not configured");
   }
+
+  const response = await anthropic.messages.create({
+    model: "claude-opus-5",
+    max_tokens: 20,
+    messages: [
+      {
+        role: "user",
+        content: `Categorize this expense description into exactly one of these categories: ${CATEGORIES.join(", ")}.\n\nDescription: "${description}"\n\nRespond with ONLY the category name, nothing else.`,
+      },
+    ],
+  });
+
+  const textBlock = response.content.find((block) => block.type === "text");
+  const category = textBlock?.type === "text" ? textBlock.text.trim() : "";
+  return CATEGORIES.includes(category) ? category : "Other";
+}
+
+// Tries OpenAI first, falls back to Anthropic, then to keyword matching.
+// Never throws — every caller can rely on always getting a category back.
+export async function suggestCategory(description: string): Promise<string> {
+  try {
+    return await suggestCategoryWithOpenAI(description);
+  } catch (openaiError) {
+    console.error("OpenAI categorization failed, falling back to Anthropic:", openaiError);
+  }
+
+  try {
+    return await suggestCategoryWithAnthropic(description);
+  } catch (anthropicError) {
+    console.error("Anthropic categorization fallback failed, using keyword matching:", anthropicError);
+  }
+
+  return fallbackCategorization(description);
 }
 
 export function fallbackCategorization(description: string): string {

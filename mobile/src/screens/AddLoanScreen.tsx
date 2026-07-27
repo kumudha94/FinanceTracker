@@ -1,5 +1,6 @@
 import { useState, useMemo, useEffect } from 'react';
 import { View, Text, StyleSheet, ScrollView, TextInput, TouchableOpacity, ActivityIndicator, Switch, Platform, Modal, Keyboard } from 'react-native';
+import { KeyboardAwareScrollView } from 'react-native-keyboard-aware-scroll-view';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Ionicons } from '@expo/vector-icons';
 import DateTimePicker from '@react-native-community/datetimepicker';
@@ -327,7 +328,14 @@ export default function AddLoanScreen() {
           <ActivityIndicator size="large" color={colors.primary} />
         </View>
       ) : (
-        <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
+        <KeyboardAwareScrollView
+          style={styles.scrollView}
+          showsVerticalScrollIndicator={false}
+          enableOnAndroid
+          enableAutomaticScroll
+          extraScrollHeight={20}
+          keyboardShouldPersistTaps="handled"
+        >
       <View style={styles.form}>
         {/* Edit Mode Information Banner */}
         {isEditMode && (
@@ -948,7 +956,7 @@ export default function AddLoanScreen() {
       </View>
 
       <View style={{ height: 40 }} />
-        </ScrollView>
+        </KeyboardAwareScrollView>
       )}
     </View>
   );

@@ -78,6 +78,7 @@ export interface IStorage {
     limit?: number;
   }): Promise<TransactionWithRelations[]>;
   getTransaction(id: number): Promise<TransactionWithRelations | undefined>;
+  getTransactionByReferenceNumber(userId: number, referenceNumber: string): Promise<Transaction | undefined>;
   createTransaction(transaction: InsertTransaction): Promise<Transaction>;
   updateTransaction(id: number, transaction: Partial<InsertTransaction>): Promise<Transaction>;
   deleteTransaction(id: number): Promise<boolean>;
@@ -565,6 +566,12 @@ export class DatabaseStorage implements IStorage {
     .where(eq(transactions.id, id));
 
     return result as TransactionWithRelations || undefined;
+  }
+
+  async getTransactionByReferenceNumber(userId: number, referenceNumber: string): Promise<Transaction | undefined> {
+    const [result] = await db.select().from(transactions)
+      .where(and(eq(transactions.userId, userId), eq(transactions.referenceNumber, referenceNumber)));
+    return result || undefined;
   }
 
   async createTransaction(transaction: InsertTransaction): Promise<Transaction> {

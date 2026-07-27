@@ -32,6 +32,7 @@ import { generateTokenPair, generateAccessToken } from "./jwtService";
 import { authenticateToken } from "./authMiddleware";
 import { validateApiKey } from "./apiKeyMiddleware";
 import { verifyToken } from "./jwtService";
+import { PRIVACY_POLICY_HTML } from "./privacyPolicy";
 
 // Configure multer for file uploads (memory storage for processing)
 const upload = multer({ 
@@ -49,6 +50,11 @@ const upload = multer({
 export async function registerRoutes(app: Express): Promise<Server> {
   // Seed default categories on startup
   await storage.seedDefaultCategories();
+
+  // ========== Privacy Policy (public, required for Play Store listing) ==========
+  app.get("/privacy-policy", (req, res) => {
+    res.type("html").send(PRIVACY_POLICY_HTML);
+  });
 
   // ========== Authentication ==========
   app.post("/api/auth/request-otp", async (req, res) => {
@@ -3096,6 +3102,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     idfcfirst: "idfc",
     idfc: "idfc",
     indusind: "indusind",
+    indusb: "indusind",
     yesbank: "yes",
     federal: "federal",
     canara: "canara",
@@ -3202,13 +3209,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // Only persist if we have a userId (via an account); otherwise return parsed data only
         if (defaultAccount?.userId) {
           transactionData.userId = defaultAccount.userId;
-          const transaction = await storage.createTransaction(transactionData);
-          await storage.updateSmsLogTransaction(smsLog.id, transaction.id);
-          res.json({
-            success: true,
-            transaction,
-            parsed: parsedData
-          });
+
+          // Banks often send the same transaction from multiple sender IDs (or redeliver
+          // the same SMS) — the reference number uniquely identifies the real transaction,
+          // so skip creating a duplicate if one already exists for this user.
+          const existingTransaction = parsedData.referenceNumber
+            ? await storage.getTransactionByReferenceNumber(defaultAccount.userId, parsedData.referenceNumber)
+            : undefined;
+
+          if (existingTransaction) {
+            await storage.updateSmsLogTransaction(smsLog.id, existingTransaction.id);
+            res.json({
+              success: true,
+              transaction: existingTransaction,
+              duplicate: true,
+              parsed: parsedData
+            });
+          } else {
+            const transaction = await storage.createTransaction(transactionData);
+            await storage.updateSmsLogTransaction(smsLog.id, transaction.id);
+            res.json({
+              success: true,
+              transaction,
+              parsed: parsedData
+            });
+          }
         } else {
           // No user/account configured — return parsed data without persisting transaction
           console.warn('⚠️  No accounts found — transaction not saved. Returning parsed data only.');
@@ -4676,7 +4701,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       await db.execute(sql`DELETE FROM salary_cycles WHERE salary_profile_id IN (SELECT id FROM salary_profiles WHERE user_id = ${userId})`);
       await db.execute(sql`DELETE FROM salary_profiles WHERE user_id = ${userId}`);
 
-      await db.execute(sql`DELETE FROM sms_logs WHERE user_id = ${userId}`);
+      await db.execute(sql`DELETE FROM sms_logs WHERE user_id = ${userId} OR transaction_id IN (SELECT id FROM transactions WHERE user_id = ${userId})`);
       await db.execute(sql`DELETE FROM budgets WHERE user_id = ${userId}`);
       await db.execute(sql`DELETE FROM transactions WHERE user_id = ${userId}`);
       await db.execute(sql`DELETE FROM accounts WHERE user_id = ${userId}`);

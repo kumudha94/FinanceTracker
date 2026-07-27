@@ -1,11 +1,15 @@
-import React, { useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, Alert } from 'react-native';
+import React, { useState, useMemo } from 'react';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, Alert, KeyboardAvoidingView, Platform } from 'react-native';
 import { useAuth } from '../contexts/AuthContext';
 import { api } from '../lib/api';
 import { Ionicons } from '@expo/vector-icons';
+import { getThemedColors } from '../lib/utils';
+import { useTheme } from '../contexts/ThemeContext';
 
 export default function SetPasswordScreen({ navigation }: any) {
   const { setUser, user } = useAuth();
+  const { resolvedTheme } = useTheme();
+  const colors = useMemo(() => getThemedColors(resolvedTheme), [resolvedTheme]);
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -50,19 +54,23 @@ export default function SetPasswordScreen({ navigation }: any) {
   };
 
   return (
-    <View style={styles.container}>
+    <KeyboardAvoidingView
+      style={[styles.container, { backgroundColor: colors.background }]}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+    >
       <View style={styles.header}>
-        <Text style={styles.title}>Set Password</Text>
-        <Text style={styles.subtitle}>Create a password to login faster next time</Text>
+        <Text style={[styles.title, { color: colors.text }]}>Set Password</Text>
+        <Text style={[styles.subtitle, { color: colors.textMuted }]}>Create a password to login faster next time</Text>
       </View>
 
       <View style={styles.form}>
         <View style={styles.inputContainer}>
-          <Text style={styles.label}>Password</Text>
-          <View style={styles.passwordInputContainer}>
+          <Text style={[styles.label, { color: colors.text }]}>Password</Text>
+          <View style={[styles.passwordInputContainer, { backgroundColor: colors.card, borderColor: colors.border }]}>
             <TextInput
-              style={styles.passwordInput}
+              style={[styles.passwordInput, { color: colors.text }]}
               placeholder="Enter password"
+              placeholderTextColor={colors.textMuted}
               value={password}
               onChangeText={setPassword}
               secureTextEntry={!showPassword}
@@ -75,18 +83,19 @@ export default function SetPasswordScreen({ navigation }: any) {
               <Ionicons
                 name={showPassword ? 'eye-off-outline' : 'eye-outline'}
                 size={24}
-                color="#666"
+                color={colors.textMuted}
               />
             </TouchableOpacity>
           </View>
         </View>
 
         <View style={styles.inputContainer}>
-          <Text style={styles.label}>Confirm Password</Text>
-          <View style={styles.passwordInputContainer}>
+          <Text style={[styles.label, { color: colors.text }]}>Confirm Password</Text>
+          <View style={[styles.passwordInputContainer, { backgroundColor: colors.card, borderColor: colors.border }]}>
             <TextInput
-              style={styles.passwordInput}
+              style={[styles.passwordInput, { color: colors.text }]}
               placeholder="Confirm password"
+              placeholderTextColor={colors.textMuted}
               value={confirmPassword}
               onChangeText={setConfirmPassword}
               secureTextEntry={!showConfirmPassword}
@@ -99,14 +108,14 @@ export default function SetPasswordScreen({ navigation }: any) {
               <Ionicons
                 name={showConfirmPassword ? 'eye-off-outline' : 'eye-outline'}
                 size={24}
-                color="#666"
+                color={colors.textMuted}
               />
             </TouchableOpacity>
           </View>
         </View>
 
         <TouchableOpacity
-          style={[styles.button, isLoading && styles.buttonDisabled]}
+          style={[styles.button, { backgroundColor: colors.primary }, isLoading && styles.buttonDisabled]}
           onPress={handleSetPassword}
           disabled={isLoading}
         >
@@ -120,8 +129,8 @@ export default function SetPasswordScreen({ navigation }: any) {
           onPress={() => {
             // Update user to indicate they skipped password setup, navigation will be handled automatically
             if (user) {
-              setUser({ 
-                ...user, 
+              setUser({
+                ...user,
                 hasPassword: false,
                 hasPin: user.hasPin || false,
                 biometricEnabled: user.biometricEnabled || false
@@ -129,17 +138,16 @@ export default function SetPasswordScreen({ navigation }: any) {
             }
           }}
         >
-          <Text style={styles.skipText}>Skip for now</Text>
+          <Text style={[styles.skipText, { color: colors.primary }]}>Skip for now</Text>
         </TouchableOpacity>
       </View>
-    </View>
+    </KeyboardAvoidingView>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#fff',
     padding: 24,
   },
   header: {
@@ -149,12 +157,10 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 32,
     fontWeight: 'bold',
-    color: '#1a1a1a',
     marginBottom: 8,
   },
   subtitle: {
     fontSize: 16,
-    color: '#666',
     lineHeight: 24,
   },
   form: {
@@ -166,29 +172,24 @@ const styles = StyleSheet.create({
   label: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#1a1a1a',
     marginBottom: 8,
   },
   passwordInputContainer: {
     flexDirection: 'row',
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#e0e0e0',
     borderRadius: 12,
-    backgroundColor: '#f9f9f9',
   },
   passwordInput: {
     flex: 1,
     height: 56,
     paddingHorizontal: 16,
     fontSize: 16,
-    color: '#1a1a1a',
   },
   eyeIcon: {
     padding: 16,
   },
   button: {
-    backgroundColor: '#007AFF',
     height: 56,
     borderRadius: 12,
     justifyContent: 'center',
@@ -209,7 +210,6 @@ const styles = StyleSheet.create({
     padding: 12,
   },
   skipText: {
-    color: '#007AFF',
     fontSize: 16,
     fontWeight: '500',
   },

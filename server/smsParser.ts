@@ -72,6 +72,7 @@ function extractAccountLastDigits(msg: string): string | undefined {
 
 function extractReferenceNumber(msg: string): string | undefined {
   const patterns = [
+    /ref-?upi\/(\d+)/i,
     /(?:ref(?:erence)?(?:\s*no\.?)?|utr|rrn|txn(?:\s*id)?)[:\s]+([A-Z0-9\/]+)/i,
     /(?:upi\s*ref(?:no)?)[:\s]+([A-Z0-9\/]+)/i,
     /(?:imps|neft)\s+(?:ref)?[:\s]*([A-Z0-9]+)/i,
