@@ -1,11 +1,13 @@
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
+import { useQuery } from '@tanstack/react-query';
 import { getThemedColors } from '../lib/utils';
 import { MoreStackParamList } from '../../App';
 import { useTheme } from '../contexts/ThemeContext';
-import { useMemo } from 'react';
+import { useMemo, useCallback } from 'react';
+import { api } from '../lib/api';
 
 type NavigationProp = NativeStackNavigationProp<MoreStackParamList>;
 
@@ -38,6 +40,13 @@ const menuItems: MenuItem[] = [
     subtitle: 'Import PDF bank statements',
     route: 'ImportStatement',
     color: '#0ea5e9',
+  },
+  {
+    icon: 'help-buoy-outline',
+    title: 'New Accounts Detected',
+    subtitle: "SMS from banks/cards you haven't added yet",
+    route: 'InstitutionMappings',
+    color: '#f59e0b',
   },
   {
     icon: 'pie-chart-outline',
@@ -102,6 +111,17 @@ export default function MoreScreen() {
   const { resolvedTheme } = useTheme();
   const colors = useMemo(() => getThemedColors(resolvedTheme), [resolvedTheme]);
 
+  const { data: pendingMappings = [], refetch: refetchPending } = useQuery({
+    queryKey: ['/api/institution-mappings/pending'],
+    queryFn: api.getPendingInstitutionMappings,
+  });
+
+  useFocusEffect(
+    useCallback(() => {
+      refetchPending();
+    }, [refetchPending])
+  );
+
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
       <Text style={[styles.header, { color: colors.text }]}>More</Text>
@@ -121,6 +141,11 @@ export default function MoreScreen() {
                 <Text style={[styles.menuTitle, { color: colors.text }]}>{item.title}</Text>
                 <Text style={[styles.menuSubtitle, { color: colors.textMuted }]}>{item.subtitle}</Text>
               </View>
+              {item.route === 'InstitutionMappings' && pendingMappings.length > 0 && (
+                <View style={styles.badge}>
+                  <Text style={styles.badgeText}>{pendingMappings.length}</Text>
+                </View>
+              )}
               <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
             </TouchableOpacity>
           ))}
@@ -176,6 +201,21 @@ const styles = StyleSheet.create({
   menuSubtitle: {
     fontSize: 13,
     marginTop: 2,
+  },
+  badge: {
+    backgroundColor: '#ef4444',
+    borderRadius: 10,
+    minWidth: 20,
+    height: 20,
+    paddingHorizontal: 5,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 8,
+  },
+  badgeText: {
+    color: '#fff',
+    fontSize: 11,
+    fontWeight: '700',
   },
   footer: {
     alignItems: 'center',

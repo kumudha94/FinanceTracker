@@ -2,7 +2,7 @@ export interface Account {
   id: number;
   userId: number | null;
   name: string;
-  type: 'bank' | 'credit_card' | 'debit_card';
+  type: 'bank' | 'credit_card' | 'debit_card' | 'wallet' | 'pf';
   bankName: string | null;
   accountNumber: string | null;
   bankAccountNumber?: string | null;
@@ -19,6 +19,21 @@ export interface Account {
   cardDetails?: CardDetails | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface SenderInstitutionMapping {
+  id: number;
+  userId: number;
+  institutionKey: string;
+  status: 'pending' | 'mapped' | 'ignored';
+  accountId: number | null;
+  suggestedName: string | null;
+  lastSeenAt: string;
+  createdAt: string;
+  queuedCount: number;
+  latestAmount: number | null;
+  latestAvailableBalance: number | null;
+  latestReceivedAt: string | null;
 }
 
 export interface Category {
@@ -220,7 +235,7 @@ export interface NextMonthForecast {
 
 export interface InsertAccount {
   name: string;
-  type: 'bank' | 'credit_card' | 'debit_card';
+  type: 'bank' | 'credit_card' | 'debit_card' | 'wallet' | 'pf';
   bankName?: string | null;
   accountNumber?: string | null;
   balance?: string;

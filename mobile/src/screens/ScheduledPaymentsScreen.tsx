@@ -18,6 +18,11 @@ type NavigationProp = NativeStackNavigationProp<MoreStackParamList>;
 
 const MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 
+// Stable reference so the "occurrences" useEffect dependency doesn't change on every
+// render while the query is still loading (a fresh [] literal would re-trigger the effect
+// every render, causing an infinite render loop before the query ever resolves).
+const EMPTY_OCCURRENCES: PaymentOccurrence[] = [];
+
 const FREQUENCY_OPTIONS: Record<string, string> = {
   monthly: 'Monthly',
   quarterly: 'Every 3 Months',
@@ -90,7 +95,7 @@ export default function ScheduledPaymentsScreen() {
     queryFn: api.getAccounts,
   });
 
-  const { data: occurrences = [], refetch: refetchOccurrences } = useQuery<PaymentOccurrence[]>({
+  const { data: occurrences = EMPTY_OCCURRENCES, refetch: refetchOccurrences } = useQuery<PaymentOccurrence[]>({
     queryKey: ['payment-occurrences', currentMonth, currentYear],
     queryFn: () => api.getPaymentOccurrences(currentMonth, currentYear),
   });

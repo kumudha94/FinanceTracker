@@ -42,6 +42,7 @@ import CreditCardDetailsScreen from './src/screens/CreditCardDetailsScreen';
 import CategoriesScreen from './src/screens/CategoriesScreen';
 import AddCategoryScreen from './src/screens/AddCategoryScreen';
 import ImportStatementScreen from './src/screens/ImportStatementScreen';
+import InstitutionMappingsScreen from './src/screens/InstitutionMappingsScreen';
 
 import { ThemeProvider, useTheme } from './src/contexts/ThemeContext';
 import { AuthProvider, useAuth } from './src/contexts/AuthContext';
@@ -94,6 +95,7 @@ export type MoreStackParamList = {
   ScanSMS: undefined;
   SmsAutoRead: undefined;
   ImportStatement: undefined;
+  InstitutionMappings: undefined;
 };
 
 export type RootStackParamList = {
@@ -241,10 +243,15 @@ function MoreStackNavigator() {
         component={AddCategoryScreen}
         options={{ headerShown: false }}
       />
-      <MoreStack.Screen 
-        name="ImportStatement" 
+      <MoreStack.Screen
+        name="ImportStatement"
         component={ImportStatementScreen}
         options={{ headerShown: false }}
+      />
+      <MoreStack.Screen
+        name="InstitutionMappings"
+        component={InstitutionMappingsScreen}
+        options={{ title: 'New Accounts Detected' }}
       />
     </MoreStack.Navigator>
   );

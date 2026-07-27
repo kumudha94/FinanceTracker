@@ -7,7 +7,8 @@ import type {
   Loan, LoanInstallment, InsertLoan, LoanBtAllocation,
   CardDetails, InsertCardDetails,
   LoanTerm, LoanPayment, InsertLoanTerm, InsertLoanPayment, LoanWithDetails,
-  Insurance, InsurancePremium, InsertInsurance, InsertInsurancePremium
+  Insurance, InsurancePremium, InsertInsurance, InsertInsurancePremium,
+  SenderInstitutionMapping
 } from './types';
 import NetInfo from '@react-native-community/netinfo';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -268,9 +269,20 @@ export const api = {
     apiRequest<Account>('/api/accounts', { method: 'POST', body: JSON.stringify(data) }),
   updateAccount: (id: number, data: Partial<InsertAccount>) => 
     apiRequest<Account>(`/api/accounts/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
-  deleteAccount: (id: number) => 
+  deleteAccount: (id: number) =>
     apiRequest<void>(`/api/accounts/${id}`, { method: 'DELETE' }),
-  
+
+  getPendingInstitutionMappings: () =>
+    apiRequest<SenderInstitutionMapping[]>('/api/institution-mappings/pending'),
+  getQueuedSmsForMapping: (mappingId: number) =>
+    apiRequest<{ mapping: SenderInstitutionMapping; queued: Array<{ smsLogId: number; message: string; sender: string | null; receivedAt: string; parsed: any }> }>(`/api/institution-mappings/${mappingId}/queued`),
+  mapInstitutionToExistingAccount: (mappingId: number, accountId: number) =>
+    apiRequest<{ success: boolean; account: Account; backfilled: number }>(`/api/institution-mappings/${mappingId}/map`, { method: 'POST', body: JSON.stringify({ accountId }) }),
+  createAccountForInstitution: (mappingId: number, data: InsertAccount) =>
+    apiRequest<{ success: boolean; account: Account; backfilled: number }>(`/api/institution-mappings/${mappingId}/create-account`, { method: 'POST', body: JSON.stringify(data) }),
+  ignoreInstitutionMapping: (mappingId: number) =>
+    apiRequest<{ success: boolean; mapping: SenderInstitutionMapping }>(`/api/institution-mappings/${mappingId}/ignore`, { method: 'POST' }),
+
   getCategories: () => apiRequest<Category[]>('/api/categories'),
   createCategory: (data: { name: string; color: string; icon?: string; type?: string }) =>
     apiRequest<Category>('/api/categories', { method: 'POST', body: JSON.stringify(data) }),

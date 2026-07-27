@@ -23,7 +23,8 @@ import {
   insertInsuranceSchema,
   insertInsurancePremiumSchema
 } from "@shared/schema";
-import { suggestCategory, parseSmsMessage, fallbackCategorization, parseStatementPDF, ExtractedTransaction } from "./openai";
+import { suggestCategory, parseSmsMessage, parseStatementPDF, ExtractedTransaction } from "./openai";
+import { deriveInstitutionKey } from "./smsParser";
 import multer from "multer";
 // pdf-parse is imported dynamically at usage site to avoid pdfjs-dist crashing on startup
 import { getPaydayForMonth, getNextPaydays, getPastPaydays, getCurrentCycleDates, getNextCycleDates, getCyclePrimaryMonth } from "./salaryUtils";
@@ -3145,111 +3146,147 @@ export async function registerRoutes(app: Express): Promise<Server> {
     return candidates[0];
   }
 
+  // Best-effort display name for the "New Accounts Detected" review screen —
+  // just a starting suggestion, the user edits/confirms it when mapping the institution.
+  function suggestInstitutionName(message: string, institutionKey: string): string {
+    const lowerKey = institutionKey.toLowerCase();
+    for (const [senderPrefix, bankLabel] of Object.entries(SENDER_BANK_MAP)) {
+      if (lowerKey.includes(senderPrefix)) {
+        return bankLabel.charAt(0).toUpperCase() + bankLabel.slice(1);
+      }
+    }
+    if (/\bepfo\b/i.test(message) || /\bprovident fund\b/i.test(message)) {
+      return "EPFO";
+    }
+    return institutionKey.charAt(0).toUpperCase() + institutionKey.slice(1).toLowerCase();
+  }
+
+  type ParseSmsResult = {
+    success: boolean;
+    transaction?: any;
+    parsed?: any;
+    duplicate?: boolean;
+    pendingReview?: boolean;
+    ignored?: boolean;
+    institutionKey?: string;
+    message?: string;
+    smsLogId?: number;
+  };
+
+  // Parses one SMS, matches it to an account, and creates the transaction — shared by the
+  // single and batch parse-sms endpoints so the institution-mapping fallback only lives in one place.
+  async function processSingleSms(
+    messageText: string,
+    sender: string | undefined,
+    receivedAt: string | undefined,
+    accounts: Awaited<ReturnType<typeof storage.getAllAccounts>>
+  ): Promise<ParseSmsResult> {
+    const smsLogData: any = {
+      message: messageText,
+      receivedAt: receivedAt || new Date().toISOString(),
+      isParsed: false,
+    };
+    if (sender && typeof sender === 'string') {
+      smsLogData.sender = sender;
+    }
+
+    const parsedData = await parseSmsMessage(messageText, sender);
+
+    if (!parsedData || !parsedData.amount) {
+      const smsLog = await storage.createSmsLog(smsLogData);
+      return { success: false, message: "Could not parse transaction from SMS", smsLogId: smsLog.id };
+    }
+
+    const finishWithTransaction = async (account: (typeof accounts)[number]): Promise<ParseSmsResult> => {
+      const categoryName = await suggestCategory(parsedData.merchant || parsedData.description || "");
+      const category = await storage.getCategoryByName(categoryName);
+
+      const transactionData: any = {
+        amount: parsedData.amount!.toString(),
+        type: parsedData.type || "debit",
+        transactionDate: parsedData.date || new Date().toISOString(),
+        userId: account.userId,
+        accountId: account.id,
+      };
+      if (parsedData.description) transactionData.description = parsedData.description;
+      if (parsedData.merchant) transactionData.merchant = parsedData.merchant;
+      if (parsedData.referenceNumber) transactionData.referenceNumber = parsedData.referenceNumber;
+      if (parsedData.availableBalance !== undefined) transactionData.availableBalance = parsedData.availableBalance.toString();
+      if (category?.id) transactionData.categoryId = category.id;
+
+      // Banks often send the same transaction from multiple sender IDs (or redeliver the
+      // same SMS) — the reference number uniquely identifies the real transaction, so skip
+      // creating a duplicate if one already exists for this user.
+      const existingTransaction = parsedData.referenceNumber
+        ? await storage.getTransactionByReferenceNumber(account.userId, parsedData.referenceNumber)
+        : undefined;
+
+      const smsLog = await storage.createSmsLog(smsLogData);
+
+      if (existingTransaction) {
+        await storage.updateSmsLogTransaction(smsLog.id, existingTransaction.id);
+        return { success: true, transaction: existingTransaction, duplicate: true, parsed: parsedData };
+      }
+
+      transactionData.smsId = smsLog.id;
+      const transaction = await storage.createTransaction(transactionData);
+      await storage.updateSmsLogTransaction(smsLog.id, transaction.id);
+      return { success: true, transaction, parsed: parsedData };
+    };
+
+    const matchedAccount = matchAccountBySender(accounts, sender || "", parsedData.accountLastDigits);
+    if (matchedAccount) {
+      return finishWithTransaction(matchedAccount);
+    }
+
+    // Unmatched sender — don't guess an account. Route through institution mapping instead.
+    const fallbackOwnerAccount = accounts.find(acc => acc.isDefault) || accounts.find(acc => acc.isActive) || accounts[0];
+    if (!fallbackOwnerAccount?.userId) {
+      await storage.createSmsLog(smsLogData);
+      console.warn('⚠️  No accounts found — transaction not saved. Returning parsed data only.');
+      return { success: true, transaction: null, parsed: parsedData };
+    }
+
+    const userId = fallbackOwnerAccount.userId;
+    const institutionKey = sender ? deriveInstitutionKey(sender) : "UNKNOWN";
+    let mapping = await storage.getSenderInstitutionMapping(userId, institutionKey);
+
+    if (mapping?.status === "ignored") {
+      await storage.createSmsLog(smsLogData);
+      return { success: true, transaction: null, ignored: true, institutionKey, parsed: parsedData };
+    }
+
+    if (mapping?.status === "mapped" && mapping.accountId) {
+      const mappedAccount = accounts.find(a => a.id === mapping!.accountId);
+      if (mappedAccount) {
+        await storage.touchSenderInstitutionMapping(mapping.id);
+        return finishWithTransaction(mappedAccount);
+      }
+    }
+
+    // New or still-pending institution — queue it for review, no transaction until approved.
+    if (!mapping) {
+      mapping = await storage.createSenderInstitutionMapping({
+        userId,
+        institutionKey,
+        status: "pending",
+        suggestedName: suggestInstitutionName(messageText, institutionKey),
+      });
+    } else {
+      await storage.touchSenderInstitutionMapping(mapping.id);
+    }
+
+    smsLogData.institutionMappingId = mapping.id;
+    await storage.createSmsLog(smsLogData);
+    return { success: true, transaction: null, pendingReview: true, institutionKey, parsed: parsedData };
+  }
+
   app.post("/api/parse-sms", validateApiKey, async (req, res) => {
     try {
       const { sender, message, receivedAt } = req.body;
-      
-      // Build SMS log data
-      const smsLogData: any = {
-        message,
-        receivedAt: receivedAt || new Date().toISOString(),
-        isParsed: false,
-      };
-      
-      // Only add sender if it's provided and not empty
-      if (sender && typeof sender === 'string') {
-        smsLogData.sender = sender;
-      }
-      
-      // Create SMS log
-      const smsLog = await storage.createSmsLog(smsLogData);
-
-      // Parse SMS for transaction data
-      const parsedData = await parseSmsMessage(message, sender);
-      
-      if (parsedData && parsedData.amount) {
-        // Use OpenAI to suggest category based on merchant/description (with fallback)
-        let category;
-        try {
-          console.log(`Calling OpenAI to categorize: "${parsedData.merchant || parsedData.description}"`);
-          const categoryName = await suggestCategory(parsedData.merchant || parsedData.description || "");
-          console.log(`OpenAI suggested category: ${categoryName}`);
-          category = await storage.getCategoryByName(categoryName);
-        } catch (error: any) {
-          console.error(`OpenAI failed (${error.message}), using fallback categorization`);
-          // Fallback uses keyword matching based on merchant/description
-          const fallbackCategoryName = fallbackCategorization(parsedData.merchant || parsedData.description || "");
-          console.log(`Fallback suggested category: ${fallbackCategoryName}`);
-          category = await storage.getCategoryByName(fallbackCategoryName);
-        }
-        
-        // Match account by SMS sender, fall back to default
-        const accounts = await storage.getAllAccounts();
-        const matchedAccount = matchAccountBySender(accounts, sender || "", parsedData.accountLastDigits);
-        const defaultAccount = matchedAccount
-          || accounts.find(acc => acc.isDefault)
-          || accounts.find(acc => acc.isActive)
-          || accounts[0];
-        
-        // Build transaction data object
-        const transactionData: any = {
-          amount: parsedData.amount.toString(),
-          type: parsedData.type || "debit",
-          transactionDate: parsedData.date || new Date().toISOString(),
-        };
-
-        // Only add optional fields if they have values
-        if (parsedData.description) transactionData.description = parsedData.description;
-        if (parsedData.merchant) transactionData.merchant = parsedData.merchant;
-        if (parsedData.referenceNumber) transactionData.referenceNumber = parsedData.referenceNumber;
-        if (category?.id) transactionData.categoryId = category.id;
-        if (defaultAccount?.id) transactionData.accountId = defaultAccount.id;
-        if (smsLog?.id) transactionData.smsId = smsLog.id;
-
-        // Only persist if we have a userId (via an account); otherwise return parsed data only
-        if (defaultAccount?.userId) {
-          transactionData.userId = defaultAccount.userId;
-
-          // Banks often send the same transaction from multiple sender IDs (or redeliver
-          // the same SMS) — the reference number uniquely identifies the real transaction,
-          // so skip creating a duplicate if one already exists for this user.
-          const existingTransaction = parsedData.referenceNumber
-            ? await storage.getTransactionByReferenceNumber(defaultAccount.userId, parsedData.referenceNumber)
-            : undefined;
-
-          if (existingTransaction) {
-            await storage.updateSmsLogTransaction(smsLog.id, existingTransaction.id);
-            res.json({
-              success: true,
-              transaction: existingTransaction,
-              duplicate: true,
-              parsed: parsedData
-            });
-          } else {
-            const transaction = await storage.createTransaction(transactionData);
-            await storage.updateSmsLogTransaction(smsLog.id, transaction.id);
-            res.json({
-              success: true,
-              transaction,
-              parsed: parsedData
-            });
-          }
-        } else {
-          // No user/account configured — return parsed data without persisting transaction
-          console.warn('⚠️  No accounts found — transaction not saved. Returning parsed data only.');
-          res.json({
-            success: true,
-            transaction: null,
-            parsed: parsedData
-          });
-        }
-      } else {
-        res.json({ 
-          success: false, 
-          message: "Could not parse transaction from SMS",
-          smsLogId: smsLog.id 
-        });
-      }
+      const accounts = await storage.getAllAccounts();
+      const result = await processSingleSms(message, sender, receivedAt, accounts);
+      res.json(result);
     } catch (error: any) {
       console.error("SMS parsing error:", error.message);
       res.status(500).json({ error: error.message || "Failed to parse SMS" });
@@ -3273,82 +3310,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const sender = typeof msg === 'string' ? undefined : msg.sender;
 
         try {
-          // Create SMS log
-          const smsLogData: any = {
-            message: messageText,
-            receivedAt: new Date().toISOString(),
-            isParsed: false,
-          };
-          if (sender) smsLogData.sender = sender;
-
-          const smsLog = await storage.createSmsLog(smsLogData);
-
-          // Parse SMS
-          const parsedData = await parseSmsMessage(messageText, sender);
-
-          if (parsedData && parsedData.amount) {
-            // Get category
-            let category;
-            try {
-              const categoryName = await suggestCategory(parsedData.merchant || parsedData.description || "");
-              category = await storage.getCategoryByName(categoryName);
-            } catch (error: any) {
-              const fallbackCategoryName = fallbackCategorization(parsedData.merchant || parsedData.description || "");
-              category = await storage.getCategoryByName(fallbackCategoryName);
-            }
-
-            // Match account by SMS sender, fall back to default
-            const matchedAccount = matchAccountBySender(accounts, sender || "", parsedData?.accountLastDigits);
-            const defaultAccount = matchedAccount
-              || accounts.find(acc => acc.isDefault)
-              || accounts.find(acc => acc.isActive)
-              || accounts[0];
-
-            // Build transaction data
-            const transactionData: any = {
-              amount: parsedData.amount.toString(),
-              type: parsedData.type || "debit",
-              transactionDate: parsedData.date || new Date().toISOString(),
-            };
-
-            if (parsedData.description) transactionData.description = parsedData.description;
-            if (parsedData.merchant) transactionData.merchant = parsedData.merchant;
-            if (parsedData.referenceNumber) transactionData.referenceNumber = parsedData.referenceNumber;
-            if (category?.id) transactionData.categoryId = category.id;
-            if (defaultAccount?.id) transactionData.accountId = defaultAccount.id;
-            if (smsLog?.id) transactionData.smsId = smsLog.id;
-
-            // Only persist if we have a userId; otherwise return parsed data without saving
-            if (defaultAccount?.userId) {
-              transactionData.userId = defaultAccount.userId;
-              const transaction = await storage.createTransaction(transactionData);
-              await storage.updateSmsLogTransaction(smsLog.id, transaction.id);
-              results.push({
-                success: true,
-                transaction,
-                parsed: parsedData,
-                message: messageText.substring(0, 50) + '...'
-              });
-            } else {
-              results.push({
-                success: true,
-                transaction: null,
-                parsed: parsedData,
-                message: messageText.substring(0, 50) + '...'
-              });
-            }
-          } else {
-            results.push({ 
-              success: false, 
-              message: messageText.substring(0, 50) + '...',
-              error: "Could not parse transaction data"
-            });
-          }
+          const result = await processSingleSms(messageText, sender, undefined, accounts);
+          results.push({ ...result, message: messageText.substring(0, 50) + '...' });
         } catch (error: any) {
-          results.push({ 
-            success: false, 
+          results.push({
+            success: false,
             message: messageText.substring(0, 50) + '...',
-            error: error.message 
+            error: error.message
           });
         }
       }
@@ -3363,6 +3331,174 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error: any) {
       console.error("Batch SMS parsing error:", error.message);
       res.status(500).json({ error: error.message || "Failed to parse batch SMS" });
+    }
+  });
+
+  // ========== Institution Mapping Review ==========
+  // Re-parses every queued SMS for a now-resolved institution and creates the real
+  // transactions against the chosen account, in receivedAt order.
+  async function backfillQueuedSmsForMapping(mappingId: number, account: { id: number; userId: number }): Promise<number> {
+    const queued = await storage.getQueuedSmsLogsForMapping(mappingId);
+    let backfilled = 0;
+
+    for (const smsLog of queued) {
+      const parsedData = await parseSmsMessage(smsLog.message, smsLog.sender || undefined);
+      if (!parsedData || !parsedData.amount) continue;
+
+      const categoryName = await suggestCategory(parsedData.merchant || parsedData.description || "");
+      const category = await storage.getCategoryByName(categoryName);
+
+      const existingTransaction = parsedData.referenceNumber
+        ? await storage.getTransactionByReferenceNumber(account.userId, parsedData.referenceNumber)
+        : undefined;
+
+      if (existingTransaction) {
+        await storage.updateSmsLogTransaction(smsLog.id, existingTransaction.id);
+        backfilled++;
+        continue;
+      }
+
+      const transactionData: any = {
+        amount: parsedData.amount.toString(),
+        type: parsedData.type || "debit",
+        transactionDate: parsedData.date || smsLog.receivedAt.toISOString(),
+        userId: account.userId,
+        accountId: account.id,
+        smsId: smsLog.id,
+      };
+      if (parsedData.description) transactionData.description = parsedData.description;
+      if (parsedData.merchant) transactionData.merchant = parsedData.merchant;
+      if (parsedData.referenceNumber) transactionData.referenceNumber = parsedData.referenceNumber;
+      if (parsedData.availableBalance !== undefined) transactionData.availableBalance = parsedData.availableBalance.toString();
+      if (category?.id) transactionData.categoryId = category.id;
+
+      const transaction = await storage.createTransaction(transactionData);
+      await storage.updateSmsLogTransaction(smsLog.id, transaction.id);
+      backfilled++;
+    }
+
+    return backfilled;
+  }
+
+  // List institutions detected from unrecognized senders, awaiting your review.
+  app.get("/api/institution-mappings/pending", authenticateToken, async (req, res) => {
+    try {
+      const userId = req.user!.userId;
+      const mappings = await storage.getPendingSenderInstitutionMappings(userId);
+
+      const enriched = await Promise.all(mappings.map(async (mapping) => {
+        const queued = await storage.getQueuedSmsLogsForMapping(mapping.id);
+        const latest = queued[queued.length - 1];
+        const latestParsed = latest ? await parseSmsMessage(latest.message, latest.sender || undefined) : null;
+        return {
+          ...mapping,
+          queuedCount: queued.length,
+          latestAmount: latestParsed?.amount ?? null,
+          latestAvailableBalance: latestParsed?.availableBalance ?? null,
+          latestReceivedAt: latest?.receivedAt ?? null,
+        };
+      }));
+
+      res.json(enriched);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to fetch pending institution mappings" });
+    }
+  });
+
+  // Detail view: every queued message for one pending institution, parsed.
+  app.get("/api/institution-mappings/:id/queued", authenticateToken, async (req, res) => {
+    try {
+      const userId = req.user!.userId;
+      const mappingId = parseInt(req.params.id);
+      const mapping = await storage.getPendingSenderInstitutionMappings(userId);
+      const found = mapping.find(m => m.id === mappingId);
+      if (!found) {
+        return res.status(404).json({ error: "Institution mapping not found" });
+      }
+
+      const queued = await storage.getQueuedSmsLogsForMapping(mappingId);
+      const parsed = await Promise.all(queued.map(async (smsLog) => ({
+        smsLogId: smsLog.id,
+        message: smsLog.message,
+        sender: smsLog.sender,
+        receivedAt: smsLog.receivedAt,
+        parsed: await parseSmsMessage(smsLog.message, smsLog.sender || undefined),
+      })));
+
+      res.json({ mapping: found, queued: parsed });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to fetch queued messages" });
+    }
+  });
+
+  // Map a pending institution to an existing account, backfilling its queued transactions.
+  app.post("/api/institution-mappings/:id/map", authenticateToken, async (req, res) => {
+    try {
+      const userId = req.user!.userId;
+      const mappingId = parseInt(req.params.id);
+      const { accountId } = req.body;
+
+      const pending = await storage.getPendingSenderInstitutionMappings(userId);
+      const mapping = pending.find(m => m.id === mappingId);
+      if (!mapping) {
+        return res.status(404).json({ error: "Institution mapping not found" });
+      }
+
+      const account = await storage.getAccount(accountId);
+      if (!account || account.userId !== userId) {
+        return res.status(404).json({ error: "Account not found" });
+      }
+
+      await storage.resolveSenderInstitutionMapping(mappingId, { status: "mapped", accountId: account.id });
+      const backfilled = await backfillQueuedSmsForMapping(mappingId, account);
+
+      res.json({ success: true, account, backfilled });
+    } catch (error: any) {
+      res.status(400).json({ error: error.message || "Failed to map institution" });
+    }
+  });
+
+  // Create a new account for a pending institution, backfilling its queued transactions.
+  app.post("/api/institution-mappings/:id/create-account", authenticateToken, async (req, res) => {
+    try {
+      const userId = req.user!.userId;
+      const mappingId = parseInt(req.params.id);
+
+      const pending = await storage.getPendingSenderInstitutionMappings(userId);
+      const mapping = pending.find(m => m.id === mappingId);
+      if (!mapping) {
+        return res.status(404).json({ error: "Institution mapping not found" });
+      }
+
+      const validatedData = insertAccountSchema.parse({ ...req.body, userId });
+      const account = await storage.createAccount(validatedData);
+
+      await storage.resolveSenderInstitutionMapping(mappingId, { status: "mapped", accountId: account.id });
+      const backfilled = await backfillQueuedSmsForMapping(mappingId, account);
+
+      res.status(201).json({ success: true, account, backfilled });
+    } catch (error: any) {
+      res.status(400).json({ error: error.message || "Failed to create account" });
+    }
+  });
+
+  // Dismiss a pending institution permanently — its future SMS are logged but never turned
+  // into transactions, and you won't be asked about it again.
+  app.post("/api/institution-mappings/:id/ignore", authenticateToken, async (req, res) => {
+    try {
+      const userId = req.user!.userId;
+      const mappingId = parseInt(req.params.id);
+
+      const pending = await storage.getPendingSenderInstitutionMappings(userId);
+      const mapping = pending.find(m => m.id === mappingId);
+      if (!mapping) {
+        return res.status(404).json({ error: "Institution mapping not found" });
+      }
+
+      const updated = await storage.resolveSenderInstitutionMapping(mappingId, { status: "ignored" });
+      res.json({ success: true, mapping: updated });
+    } catch (error: any) {
+      res.status(400).json({ error: error.message || "Failed to ignore institution" });
     }
   });
 

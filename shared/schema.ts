@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, decimal, timestamp, integer, boolean, serial } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, decimal, timestamp, integer, boolean, serial, uniqueIndex } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
@@ -33,7 +33,7 @@ export const accounts = pgTable("accounts", {
   id: serial("id").primaryKey(),
   userId: integer("user_id").notNull().references(() => users.id),
   name: varchar("name", { length: 100 }).notNull(),
-  type: varchar("type", { length: 20 }).notNull(), // 'bank', 'credit_card', 'debit_card'
+  type: varchar("type", { length: 20 }).notNull(), // 'bank', 'credit_card', 'debit_card', 'wallet', 'pf'
   bankName: varchar("bank_name", { length: 100 }),
   accountNumber: varchar("account_number", { length: 50 }),
   bankAccountNumber: varchar("bank_account_number", { length: 50 }), // full account number for bank accounts
@@ -62,7 +62,7 @@ export const insertAccountSchema = createInsertSchema(accounts).omit({
   updatedAt: true,
 }).extend({
   name: z.string().min(1, "Account name is required"),
-  type: z.enum(["bank", "credit_card", "debit_card"]),
+  type: z.enum(["bank", "credit_card", "debit_card", "wallet", "pf"]),
   balance: z.string().optional(),
   creditLimit: z.string().optional(),
   monthlySpendingLimit: z.string().optional(),
@@ -126,6 +126,7 @@ export const transactions = pgTable("transactions", {
   referenceNumber: varchar("reference_number", { length: 100 }),
   transactionDate: timestamp("transaction_date").notNull(),
   smsId: integer("sms_id"),
+  availableBalance: decimal("available_balance", { precision: 14, scale: 2 }), // bank-reported balance after this transaction, when the SMS included one
   isRecurring: boolean("is_recurring").default(false),
   savingsContributionId: integer("savings_contribution_id"), // Link to savings contribution if this is a contribution transaction
   paymentOccurrenceId: integer("payment_occurrence_id"), // Link to scheduled payment occurrence if this is a scheduled payment transaction
@@ -158,6 +159,7 @@ export const insertTransactionSchema = createInsertSchema(transactions).omit({
   savingsContributionId: z.union([z.number(), z.null()]).optional(),
   paymentOccurrenceId: z.union([z.number(), z.null()]).optional(),
   smsId: z.union([z.number(), z.null()]).optional(),
+  availableBalance: z.union([z.string(), z.null()]).optional(),
 });
 
 export type InsertTransaction = z.infer<typeof insertTransactionSchema>;
@@ -298,6 +300,9 @@ export const paymentOccurrences = pgTable("payment_occurrences", {
   notes: text("notes"),
   affectTransaction: boolean("affect_transaction").default(true),
   affectAccountBalance: boolean("affect_account_balance").default(true),
+  cycleStartDate: timestamp("cycle_start_date"),
+  cycleEndDate: timestamp("cycle_end_date"),
+  salaryCycleId: integer("salary_cycle_id"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
@@ -751,6 +756,39 @@ export const insertCardDetailsSchema = createInsertSchema(cardDetails).omit({
 export type InsertCardDetails = z.infer<typeof insertCardDetailsSchema>;
 export type CardDetails = typeof cardDetails.$inferSelect;
 
+// Sender Institution Mappings — remembers which real-world institution (bank/PF/wallet/etc.)
+// a DLT sender-ID header belongs to, once it's been reviewed and mapped to an account or dismissed.
+export const senderInstitutionMappings = pgTable("sender_institution_mappings", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull().references(() => users.id),
+  institutionKey: varchar("institution_key", { length: 50 }).notNull(), // e.g. "EPFOHO", "ICICIT" — derived from the sender's DLT header
+  status: varchar("status", { length: 20 }).notNull().default("pending"), // 'pending', 'mapped', 'ignored'
+  accountId: integer("account_id").references(() => accounts.id), // set once mapped
+  suggestedName: varchar("suggested_name", { length: 200 }),
+  lastSeenAt: timestamp("last_seen_at").notNull().defaultNow(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+}, (table) => ({
+  userInstitutionUnique: uniqueIndex("sender_institution_mappings_user_institution_unique").on(table.userId, table.institutionKey),
+}));
+
+export const senderInstitutionMappingsRelations = relations(senderInstitutionMappings, ({ one }) => ({
+  user: one(users, { fields: [senderInstitutionMappings.userId], references: [users.id] }),
+  account: one(accounts, { fields: [senderInstitutionMappings.accountId], references: [accounts.id] }),
+}));
+
+export const insertSenderInstitutionMappingSchema = createInsertSchema(senderInstitutionMappings).omit({
+  id: true,
+  createdAt: true,
+  lastSeenAt: true,
+}).extend({
+  status: z.enum(["pending", "mapped", "ignored"]).optional(),
+  accountId: z.union([z.number(), z.null()]).optional(),
+  suggestedName: z.union([z.string(), z.null()]).optional(),
+});
+
+export type InsertSenderInstitutionMapping = z.infer<typeof insertSenderInstitutionMappingSchema>;
+export type SenderInstitutionMapping = typeof senderInstitutionMappings.$inferSelect;
+
 // SMS Logs (for tracking parsed messages)
 export const smsLogs = pgTable("sms_logs", {
   id: serial("id").primaryKey(),
@@ -760,12 +798,14 @@ export const smsLogs = pgTable("sms_logs", {
   receivedAt: timestamp("received_at").notNull(),
   isParsed: boolean("is_parsed").default(false),
   transactionId: integer("transaction_id").references(() => transactions.id),
+  institutionMappingId: integer("institution_mapping_id").references(() => senderInstitutionMappings.id), // set when the sender didn't match a known account, for the review queue
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
 export const smsLogsRelations = relations(smsLogs, ({ one }) => ({
   user: one(users, { fields: [smsLogs.userId], references: [users.id] }),
   transaction: one(transactions, { fields: [smsLogs.transactionId], references: [transactions.id] }),
+  institutionMapping: one(senderInstitutionMappings, { fields: [smsLogs.institutionMappingId], references: [senderInstitutionMappings.id] }),
 }));
 
 export const insertSmsLogSchema = createInsertSchema(smsLogs).omit({

@@ -6,6 +6,7 @@ export interface ParsedSmsData {
   referenceNumber?: string;
   date?: string;
   accountLastDigits?: string;
+  availableBalance?: number;
 }
 
 const DEBIT_KEYWORDS = [
@@ -66,6 +67,16 @@ function extractAccountLastDigits(msg: string): string | undefined {
   for (const pattern of patterns) {
     const match = msg.match(pattern);
     if (match) return match[1];
+  }
+  return undefined;
+}
+
+function extractAvailableBalance(msg: string): number | undefined {
+  const pattern = /(?:avl\.?\s*bal(?:ance)?|available\s*balance|\bbal(?:ance)?)\s*(?:is)?\s*[:\s]*(?:rs\.?|inr|₹)?\s*([\d,]+(?:\.\d{1,2})?)/i;
+  const match = msg.match(pattern);
+  if (match) {
+    const parsed = parseFloat(match[1].replace(/,/g, ""));
+    if (!isNaN(parsed) && parsed >= 0) return parsed;
   }
   return undefined;
 }
@@ -135,6 +146,16 @@ function extractDate(msg: string): string | undefined {
   return undefined;
 }
 
+// Indian DLT SMS headers follow a fixed shape: <2-letter series>-<entity code>-<1-letter type>,
+// e.g. "AX-ICICIT-S", "VA-EPFOHO-G". Different message types for the SAME institution rotate the
+// series/type letters (AX-INDUSB-S, AD-INDUSB-S, JM-INDUSB-S all belong to IndusInd Bank), so we
+// key on the middle entity code to group sender-ID variants of one real institution together.
+// Senders that don't follow this pattern fall back to their raw (uppercased) form as the key.
+export function deriveInstitutionKey(sender: string): string {
+  const match = sender.trim().match(/^[A-Z]{2}-([A-Z0-9]+)-[A-Z]$/i);
+  return (match ? match[1] : sender.trim()).toUpperCase();
+}
+
 export function parseSmsByRegex(message: string, sender?: string): ParsedSmsData | null {
   const lowerMsg = message.toLowerCase();
 
@@ -153,10 +174,11 @@ export function parseSmsByRegex(message: string, sender?: string): ParsedSmsData
   const referenceNumber = extractReferenceNumber(message);
   const merchant = extractMerchant(message);
   const date = extractDate(message);
+  const availableBalance = extractAvailableBalance(message);
 
   const description = merchant
     ? `${type === "debit" ? "Payment to" : "Received from"} ${merchant}`
     : type === "debit" ? "Amount debited" : "Amount credited";
 
-  return { amount, type, merchant, description, referenceNumber, date, accountLastDigits };
+  return { amount, type, merchant, description, referenceNumber, date, accountLastDigits, availableBalance };
 }

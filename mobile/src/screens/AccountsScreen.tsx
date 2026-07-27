@@ -108,6 +108,13 @@ export default function AccountsScreen() {
   const bankAccounts = accounts?.filter(a => a.type === 'bank') || [];
   const creditCards = accounts?.filter(a => a.type === 'credit_card') || [];
   const debitCards = accounts?.filter(a => a.type === 'debit_card') || [];
+  const otherAccounts = accounts?.filter(a => a.type === 'wallet' || a.type === 'pf') || [];
+
+  const accountTypeIcon = (type: Account['type']): keyof typeof Ionicons.glyphMap => {
+    if (type === 'wallet') return 'cash-outline';
+    if (type === 'pf') return 'shield-checkmark-outline';
+    return 'business-outline';
+  };
 
   // Helper to get linked bank account name
   const getLinkedAccountName = (linkedAccountId: number | null | undefined) => {
@@ -148,7 +155,7 @@ export default function AccountsScreen() {
     const content = (
       <View style={[styles.accountCard, { backgroundColor: colors.card }]}>
         <View style={[styles.accountIcon, { backgroundColor: colors.primary + '20' }]}>
-          <Ionicons name="business-outline" size={24} color={colors.primary} />
+          <Ionicons name={accountTypeIcon(account.type)} size={24} color={colors.primary} />
         </View>
         <View style={styles.accountInfo}>
           <View style={styles.accountNameRow}>
@@ -463,6 +470,13 @@ export default function AccountsScreen() {
           <View style={styles.section}>
             <Text style={[styles.sectionTitle, { color: colors.text }]}>Debit Cards</Text>
             {debitCards.map((account) => renderDebitCard(account))}
+          </View>
+        )}
+
+        {otherAccounts.length > 0 && (
+          <View style={styles.section}>
+            <Text style={[styles.sectionTitle, { color: colors.text }]}>Other Accounts</Text>
+            {otherAccounts.map((account) => renderAccountCard(account))}
           </View>
         )}
 

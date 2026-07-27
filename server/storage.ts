@@ -2,7 +2,7 @@ import {
   users, accounts, categories, transactions, budgets, scheduledPayments, smsLogs,
   paymentOccurrences, savingsGoals, savingsContributions, salaryProfiles, salaryCycles,
   loans, loanComponents, loanInstallments, loanTerms, loanPayments, loanBtAllocations, cardDetails,
-  insurances, insurancePremiums, creditCardStatements,
+  insurances, insurancePremiums, creditCardStatements, senderInstitutionMappings,
   type User, type InsertUser,
   type Account, type InsertAccount,
   type Category, type InsertCategory,
@@ -25,6 +25,7 @@ import {
   type InsurancePremium, type InsertInsurancePremium,
   type CreditCardStatement, type InsertCreditCardStatement,
   type SmsLog, type InsertSmsLog,
+  type SenderInstitutionMapping, type InsertSenderInstitutionMapping,
   type DashboardStats,
   DEFAULT_CATEGORIES
 } from "@shared/schema";
@@ -110,6 +111,14 @@ export interface IStorage {
   createSmsLog(smsLog: InsertSmsLog): Promise<SmsLog>;
   updateSmsLogTransaction(id: number, transactionId: number): Promise<SmsLog | undefined>;
   clearSmsLogTransaction(id: number): Promise<void>;
+
+  // Sender Institution Mappings
+  getSenderInstitutionMapping(userId: number, institutionKey: string): Promise<SenderInstitutionMapping | undefined>;
+  createSenderInstitutionMapping(mapping: InsertSenderInstitutionMapping): Promise<SenderInstitutionMapping>;
+  touchSenderInstitutionMapping(id: number): Promise<void>;
+  getPendingSenderInstitutionMappings(userId: number): Promise<SenderInstitutionMapping[]>;
+  resolveSenderInstitutionMapping(id: number, data: { status: 'mapped' | 'ignored'; accountId?: number }): Promise<SenderInstitutionMapping | undefined>;
+  getQueuedSmsLogsForMapping(institutionMappingId: number): Promise<SmsLog[]>;
 
   // Payment Occurrences
   getPaymentOccurrences(filters?: { userId?: number; month?: number; year?: number; scheduledPaymentId?: number }): Promise<(PaymentOccurrence & { scheduledPayment?: ScheduledPayment })[]>;
@@ -1115,7 +1124,10 @@ export class DatabaseStorage implements IStorage {
     if (smsLog.transactionId && typeof smsLog.transactionId === 'number') {
       insertData.transactionId = smsLog.transactionId;
     }
-    
+    if (smsLog.institutionMappingId && typeof smsLog.institutionMappingId === 'number') {
+      insertData.institutionMappingId = smsLog.institutionMappingId;
+    }
+
     const [newLog] = await db.insert(smsLogs).values(insertData).returning();
     return newLog;
   }
@@ -1132,6 +1144,53 @@ export class DatabaseStorage implements IStorage {
     await db.update(smsLogs)
       .set({ transactionId: null, isParsed: false })
       .where(eq(smsLogs.id, id));
+  }
+
+  // Sender Institution Mappings
+  async getSenderInstitutionMapping(userId: number, institutionKey: string): Promise<SenderInstitutionMapping | undefined> {
+    const [mapping] = await db.select().from(senderInstitutionMappings)
+      .where(and(
+        eq(senderInstitutionMappings.userId, userId),
+        eq(senderInstitutionMappings.institutionKey, institutionKey)
+      ));
+    return mapping || undefined;
+  }
+
+  async createSenderInstitutionMapping(mapping: InsertSenderInstitutionMapping): Promise<SenderInstitutionMapping> {
+    const [newMapping] = await db.insert(senderInstitutionMappings).values(mapping).returning();
+    return newMapping;
+  }
+
+  async touchSenderInstitutionMapping(id: number): Promise<void> {
+    await db.update(senderInstitutionMappings)
+      .set({ lastSeenAt: new Date() })
+      .where(eq(senderInstitutionMappings.id, id));
+  }
+
+  async getPendingSenderInstitutionMappings(userId: number): Promise<SenderInstitutionMapping[]> {
+    return db.select().from(senderInstitutionMappings)
+      .where(and(
+        eq(senderInstitutionMappings.userId, userId),
+        eq(senderInstitutionMappings.status, 'pending')
+      ))
+      .orderBy(desc(senderInstitutionMappings.lastSeenAt));
+  }
+
+  async resolveSenderInstitutionMapping(id: number, data: { status: 'mapped' | 'ignored'; accountId?: number }): Promise<SenderInstitutionMapping | undefined> {
+    const [updated] = await db.update(senderInstitutionMappings)
+      .set({ status: data.status, accountId: data.accountId })
+      .where(eq(senderInstitutionMappings.id, id))
+      .returning();
+    return updated || undefined;
+  }
+
+  async getQueuedSmsLogsForMapping(institutionMappingId: number): Promise<SmsLog[]> {
+    return db.select().from(smsLogs)
+      .where(and(
+        eq(smsLogs.institutionMappingId, institutionMappingId),
+        sql`${smsLogs.transactionId} IS NULL`
+      ))
+      .orderBy(smsLogs.receivedAt);
   }
 
   // Dashboard Analytics

@@ -23,7 +23,7 @@ export default function AddAccountScreen() {
   const accountId = route.params?.accountId;
   const isEditMode = !!accountId;
   
-  const [type, setType] = useState<'bank' | 'credit_card' | 'debit_card'>('bank');
+  const [type, setType] = useState<'bank' | 'credit_card' | 'debit_card' | 'wallet' | 'pf'>('bank');
   const [name, setName] = useState('');
   const [balance, setBalance] = useState('');
   const [creditLimit, setCreditLimit] = useState('');
@@ -86,7 +86,7 @@ export default function AddAccountScreen() {
     if (isEditMode && accounts) {
       const account = accounts.find(a => a.id === accountId);
       if (account) {
-        setType(account.type as 'bank' | 'credit_card' | 'debit_card');
+        setType(account.type as 'bank' | 'credit_card' | 'debit_card' | 'wallet' | 'pf');
         setName(account.name);
         setBalance(account.balance);
         setIsDefault(account.isDefault || false);
@@ -372,6 +372,36 @@ export default function AddAccountScreen() {
           />
           <Text style={[styles.typeText, { color: colors.text }, type === 'debit_card' && { color: '#fff' }]}>
             Debit
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.typeButton, { backgroundColor: colors.card, borderColor: colors.border }, type === 'wallet' && { backgroundColor: colors.primary }]}
+          onPress={() => !isEditMode && setType('wallet')}
+          disabled={isEditMode}
+          data-testid="button-type-wallet"
+        >
+          <Ionicons
+            name="cash-outline"
+            size={22}
+            color={type === 'wallet' ? '#fff' : colors.primary}
+          />
+          <Text style={[styles.typeText, { color: colors.text }, type === 'wallet' && { color: '#fff' }]}>
+            Wallet
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.typeButton, { backgroundColor: colors.card, borderColor: colors.border }, type === 'pf' && { backgroundColor: colors.primary }]}
+          onPress={() => !isEditMode && setType('pf')}
+          disabled={isEditMode}
+          data-testid="button-type-pf"
+        >
+          <Ionicons
+            name="shield-checkmark-outline"
+            size={22}
+            color={type === 'pf' ? '#fff' : colors.primary}
+          />
+          <Text style={[styles.typeText, { color: colors.text }, type === 'pf' && { color: '#fff' }]}>
+            PF
           </Text>
         </TouchableOpacity>
       </View>
@@ -738,11 +768,13 @@ const styles = StyleSheet.create({
   },
   typeSelector: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: 12,
     marginBottom: 24,
   },
   typeButton: {
-    flex: 1,
+    minWidth: '28%',
+    flexGrow: 1,
     alignItems: 'center',
     justifyContent: 'center',
     padding: 16,
