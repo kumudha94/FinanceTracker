@@ -2,7 +2,7 @@ import {
   users, accounts, categories, transactions, budgets, scheduledPayments, smsLogs,
   paymentOccurrences, savingsGoals, savingsContributions, salaryProfiles, salaryCycles,
   loans, loanComponents, loanInstallments, loanTerms, loanPayments, loanBtAllocations, cardDetails,
-  insurances, insurancePremiums, creditCardStatements, senderInstitutionMappings,
+  insurances, insurancePremiums, creditCardStatements, senderInstitutionMappings, billSenderMappings,
   type User, type InsertUser,
   type Account, type InsertAccount,
   type Category, type InsertCategory,
@@ -26,6 +26,7 @@ import {
   type CreditCardStatement, type InsertCreditCardStatement,
   type SmsLog, type InsertSmsLog,
   type SenderInstitutionMapping, type InsertSenderInstitutionMapping,
+  type BillSenderMapping, type InsertBillSenderMapping,
   type DashboardStats,
   DEFAULT_CATEGORIES
 } from "@shared/schema";
@@ -106,6 +107,10 @@ export interface IStorage {
   createCreditCardStatement(statement: InsertCreditCardStatement): Promise<CreditCardStatement>;
   updateCreditCardStatement(id: number, data: Partial<InsertCreditCardStatement>): Promise<CreditCardStatement | undefined>;
   recordCreditCardPayment(statementId: number, amount: number, paidDate: Date): Promise<CreditCardStatement | undefined>;
+  confirmCreditCardStatementSms(id: number, reportedBalance: number, matched: boolean): Promise<CreditCardStatement | undefined>;
+
+  // Card Details
+  getCardDetailsByLastFourDigits(lastFourDigits: string, userId?: number): Promise<CardDetails | undefined>;
 
   // SMS Logs
   createSmsLog(smsLog: InsertSmsLog): Promise<SmsLog>;
@@ -120,12 +125,21 @@ export interface IStorage {
   resolveSenderInstitutionMapping(id: number, data: { status: 'mapped' | 'ignored'; accountId?: number }): Promise<SenderInstitutionMapping | undefined>;
   getQueuedSmsLogsForMapping(institutionMappingId: number): Promise<SmsLog[]>;
 
+  // Bill Sender Mappings (Bills Inbox)
+  getBillSenderMapping(userId: number, institutionKey: string): Promise<BillSenderMapping | undefined>;
+  createBillSenderMapping(mapping: InsertBillSenderMapping): Promise<BillSenderMapping>;
+  touchBillSenderMapping(id: number): Promise<void>;
+  getPendingBillSenderMappings(userId: number): Promise<BillSenderMapping[]>;
+  resolveBillSenderMapping(id: number, data: { status: 'mapped' | 'ignored'; scheduledPaymentId?: number }): Promise<BillSenderMapping | undefined>;
+  getSmsLogsForBillMapping(billMappingId: number): Promise<SmsLog[]>;
+
   // Payment Occurrences
   getPaymentOccurrences(filters?: { userId?: number; month?: number; year?: number; scheduledPaymentId?: number }): Promise<(PaymentOccurrence & { scheduledPayment?: ScheduledPayment })[]>;
   getPaymentOccurrence(id: number): Promise<PaymentOccurrence | undefined>;
   createPaymentOccurrence(occurrence: InsertPaymentOccurrence): Promise<PaymentOccurrence>;
   updatePaymentOccurrence(id: number, data: Partial<InsertPaymentOccurrence>): Promise<PaymentOccurrence | undefined>;
   generatePaymentOccurrencesForMonth(month: number, year: number, userId?: number): Promise<PaymentOccurrence[]>;
+  confirmPaymentOccurrenceSms(id: number): Promise<PaymentOccurrence | undefined>;
 
   // Savings Goals
   getAllSavingsGoals(userId?: number): Promise<SavingsGoal[]>;
@@ -1105,6 +1119,19 @@ export class DatabaseStorage implements IStorage {
     return result[0];
   }
 
+  async confirmCreditCardStatementSms(id: number, reportedBalance: number, matched: boolean): Promise<CreditCardStatement | undefined> {
+    const result = await db
+      .update(creditCardStatements)
+      .set(
+        matched
+          ? { smsConfirmedAt: new Date() }
+          : { smsReportedBalance: reportedBalance.toFixed(2) }
+      )
+      .where(eq(creditCardStatements.id, id))
+      .returning();
+    return result[0];
+  }
+
   // SMS Logs
   async createSmsLog(smsLog: InsertSmsLog): Promise<SmsLog> {
     // Build insert data with only defined values
@@ -1126,6 +1153,15 @@ export class DatabaseStorage implements IStorage {
     }
     if (smsLog.institutionMappingId && typeof smsLog.institutionMappingId === 'number') {
       insertData.institutionMappingId = smsLog.institutionMappingId;
+    }
+    if (smsLog.billMappingId && typeof smsLog.billMappingId === 'number') {
+      insertData.billMappingId = smsLog.billMappingId;
+    }
+    if (smsLog.creditCardStatementId && typeof smsLog.creditCardStatementId === 'number') {
+      insertData.creditCardStatementId = smsLog.creditCardStatementId;
+    }
+    if (smsLog.paymentOccurrenceId && typeof smsLog.paymentOccurrenceId === 'number') {
+      insertData.paymentOccurrenceId = smsLog.paymentOccurrenceId;
     }
 
     const [newLog] = await db.insert(smsLogs).values(insertData).returning();
@@ -1191,6 +1227,50 @@ export class DatabaseStorage implements IStorage {
         sql`${smsLogs.transactionId} IS NULL`
       ))
       .orderBy(smsLogs.receivedAt);
+  }
+
+  // Bill Sender Mappings (Bills Inbox)
+  async getBillSenderMapping(userId: number, institutionKey: string): Promise<BillSenderMapping | undefined> {
+    const [mapping] = await db.select().from(billSenderMappings)
+      .where(and(
+        eq(billSenderMappings.userId, userId),
+        eq(billSenderMappings.institutionKey, institutionKey)
+      ));
+    return mapping || undefined;
+  }
+
+  async createBillSenderMapping(mapping: InsertBillSenderMapping): Promise<BillSenderMapping> {
+    const [newMapping] = await db.insert(billSenderMappings).values(mapping).returning();
+    return newMapping;
+  }
+
+  async touchBillSenderMapping(id: number): Promise<void> {
+    await db.update(billSenderMappings)
+      .set({ lastSeenAt: new Date() })
+      .where(eq(billSenderMappings.id, id));
+  }
+
+  async getPendingBillSenderMappings(userId: number): Promise<BillSenderMapping[]> {
+    return db.select().from(billSenderMappings)
+      .where(and(
+        eq(billSenderMappings.userId, userId),
+        eq(billSenderMappings.status, 'pending')
+      ))
+      .orderBy(desc(billSenderMappings.lastSeenAt));
+  }
+
+  async resolveBillSenderMapping(id: number, data: { status: 'mapped' | 'ignored'; scheduledPaymentId?: number }): Promise<BillSenderMapping | undefined> {
+    const [updated] = await db.update(billSenderMappings)
+      .set({ status: data.status, scheduledPaymentId: data.scheduledPaymentId })
+      .where(eq(billSenderMappings.id, id))
+      .returning();
+    return updated || undefined;
+  }
+
+  async getSmsLogsForBillMapping(billMappingId: number): Promise<SmsLog[]> {
+    return db.select().from(smsLogs)
+      .where(eq(smsLogs.billMappingId, billMappingId))
+      .orderBy(desc(smsLogs.receivedAt));
   }
 
   // Dashboard Analytics
@@ -1404,6 +1484,14 @@ export class DatabaseStorage implements IStorage {
     }
     const [updated] = await db.update(paymentOccurrences)
       .set(updateData)
+      .where(eq(paymentOccurrences.id, id))
+      .returning();
+    return updated || undefined;
+  }
+
+  async confirmPaymentOccurrenceSms(id: number): Promise<PaymentOccurrence | undefined> {
+    const [updated] = await db.update(paymentOccurrences)
+      .set({ confirmedBySms: new Date() })
       .where(eq(paymentOccurrences.id, id))
       .returning();
     return updated || undefined;
@@ -2135,6 +2223,19 @@ export class DatabaseStorage implements IStorage {
   async getCardDetails(accountId: number): Promise<CardDetails | undefined> {
     const [card] = await db.select().from(cardDetails).where(eq(cardDetails.accountId, accountId));
     return card || undefined;
+  }
+
+  async getCardDetailsByLastFourDigits(lastFourDigits: string, userId?: number): Promise<CardDetails | undefined> {
+    const conditions = [eq(cardDetails.lastFourDigits, lastFourDigits), eq(cardDetails.isActive, true)];
+    if (userId) {
+      conditions.push(eq(accounts.userId, userId));
+    }
+    const [card] = await db.select({ cardDetails })
+      .from(cardDetails)
+      .innerJoin(accounts, eq(cardDetails.accountId, accounts.id))
+      .where(and(...conditions))
+      .limit(1);
+    return card?.cardDetails;
   }
 
   async createCardDetails(card: InsertCardDetails): Promise<CardDetails> {

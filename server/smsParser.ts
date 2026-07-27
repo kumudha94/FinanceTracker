@@ -9,6 +9,12 @@ export interface ParsedSmsData {
   availableBalance?: number;
 }
 
+export interface ParsedDueSmsData {
+  amount: number;
+  dueDate?: string;
+  cardLastFourDigits?: string;
+}
+
 const DEBIT_KEYWORDS = [
   "debited", "deducted", "withdrawn", "spent", "used for",
   "paid", "purchase", "charged", "sent"
@@ -16,6 +22,11 @@ const DEBIT_KEYWORDS = [
 
 const CREDIT_KEYWORDS = [
   "credited", "received", "deposited", "refunded", "added", "reversed"
+];
+
+const DUE_KEYWORDS = [
+  "dues of", "minimum due", "total due", "total outstanding",
+  "outstanding amount", "amount due", "bill amount", "payment due"
 ];
 
 const MONTHS: Record<string, number> = {
@@ -181,4 +192,28 @@ export function parseSmsByRegex(message: string, sender?: string): ParsedSmsData
     : type === "debit" ? "Amount debited" : "Amount credited";
 
   return { amount, type, merchant, description, referenceNumber, date, accountLastDigits, availableBalance };
+}
+
+// Due-reminder SMS ("has dues of Rs X", "minimum due", "total outstanding") are not transactions —
+// parseSmsByRegex already rejects them (no debit/credit keyword), so callers should try that first
+// and only fall back to this when it returns null. Extracts just enough to route the message:
+// an amount plus, when present, a due date and/or a card's last 4 digits — never a merchant/category,
+// since a due notice isn't a spend event.
+export function parseDueSms(message: string): ParsedDueSmsData | null {
+  const lowerMsg = message.toLowerCase();
+
+  if (!lowerMsg.includes("rs") && !lowerMsg.includes("inr") && !lowerMsg.includes("₹")) {
+    return null;
+  }
+
+  const hasDueKeyword = DUE_KEYWORDS.some(k => lowerMsg.includes(k));
+  if (!hasDueKeyword) return null;
+
+  const amount = extractAmount(message);
+  if (!amount) return null;
+
+  const dueDate = extractDate(message);
+  const cardLastFourDigits = extractAccountLastDigits(message);
+
+  return { amount, dueDate, cardLastFourDigits };
 }

@@ -20,6 +20,7 @@ import ScheduledPayments from "@/pages/scheduled-payments";
 import SavingsGoals from "@/pages/savings-goals";
 import Salary from "@/pages/salary";
 import Loans from "@/pages/loans";
+import BillsInbox from "@/pages/bills-inbox";
 import Settings from "@/pages/settings";
 import Login from "@/pages/login";
 import SetPassword from "@/pages/set-password";
@@ -52,6 +53,7 @@ function Router() {
       <Route path="/savings-goals" component={SavingsGoals} />
       <Route path="/salary" component={Salary} />
       <Route path="/loans" component={Loans} />
+      <Route path="/bills-inbox" component={BillsInbox} />
       <Route path="/settings" component={Settings} />
       <Route component={NotFound} />
     </Switch>

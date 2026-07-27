@@ -1,14 +1,15 @@
 import { Link } from "wouter";
 import { Card, CardContent } from "@/components/ui/card";
-import { 
-  PieChart, 
-  Calendar, 
-  Settings, 
+import {
+  PieChart,
+  Calendar,
+  Settings,
   ChevronRight,
   Wallet,
   Target,
   Banknote,
-  Landmark
+  Landmark,
+  Inbox
 } from "lucide-react";
 
 export default function More() {
@@ -21,13 +22,21 @@ export default function More() {
       testId: "link-budgets",
       color: "bg-blue-500"
     },
-    { 
-      icon: Calendar, 
-      label: "Scheduled Payments", 
+    {
+      icon: Calendar,
+      label: "Scheduled Payments",
       description: "Monthly payment checklist",
       path: "/scheduled-payments",
       testId: "link-scheduled-payments",
       color: "bg-orange-500"
+    },
+    {
+      icon: Inbox,
+      label: "Bills Inbox",
+      description: "Triage due-reminder SMS",
+      path: "/bills-inbox",
+      testId: "link-bills-inbox",
+      color: "bg-teal-500"
     },
     { 
       icon: Target, 

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { parseSmsByRegex } from "../smsParser";
+import { parseSmsByRegex, parseDueSms } from "../smsParser";
 
 let passed = 0;
 let failed = 0;
@@ -217,6 +217,45 @@ test("EMI debit", () => {
   assert(r !== null);
   assert.equal(r!.amount, 5000);
   assert.equal(r!.type, "debit");
+});
+
+// ── Due SMS parsing ─────────────────────────────────────────────────────────
+
+test("credit card due with promo text and card last-4", () => {
+  const r = parseDueSms(
+    "Dear Customer, Your YES BANK Credit Card x2613 has dues of Rs. 9,629.90.\nConvert it into EMIs with no hidden charges.\nConfirm: ccybl.in/YESBNK/MAt7Sk1jgU -YES BANK LTD"
+  );
+  assert(r !== null);
+  assert.equal(r!.amount, 9629.90);
+  assert.equal(r!.cardLastFourDigits, "2613");
+});
+
+test("minimum due phrasing", () => {
+  const r = parseDueSms("Your minimum due of Rs.1,500 on card ending 4321 is payable by 15-Aug-26.");
+  assert(r !== null);
+  assert.equal(r!.amount, 1500);
+  assert.equal(r!.cardLastFourDigits, "4321");
+  assert.equal(r!.dueDate, "2026-08-15T00:00:00.000Z");
+});
+
+test("total outstanding with no card digits (routes to Bills Inbox)", () => {
+  const r = parseDueSms("Your Jio postpaid bill of Rs.499 total outstanding is due on 05-Aug-26. Pay now to avoid service interruption.");
+  assert(r !== null);
+  assert.equal(r!.amount, 499);
+  assert.equal(r!.cardLastFourDigits, undefined);
+});
+
+test("due SMS must not be misclassified as a transaction", () => {
+  const r = parseSmsByRegex(
+    "Dear Customer, Your YES BANK Credit Card x2613 has dues of Rs. 9,629.90.\nConvert it into EMIs with no hidden charges.\nConfirm: ccybl.in/YESBNK/MAt7Sk1jgU -YES BANK LTD"
+  );
+  assert.equal(r, null);
+});
+
+test("non-due, non-transaction SMS is rejected by both parsers", () => {
+  const promo = "Get Rs.500 cashback on your next flight booking! Use code FLY500.";
+  assert.equal(parseSmsByRegex(promo), null);
+  assert.equal(parseDueSms(promo), null);
 });
 
 // ── Summary ────────────────────────────────────────────────────────────────

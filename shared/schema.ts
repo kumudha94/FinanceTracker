@@ -303,6 +303,7 @@ export const paymentOccurrences = pgTable("payment_occurrences", {
   cycleStartDate: timestamp("cycle_start_date"),
   cycleEndDate: timestamp("cycle_end_date"),
   salaryCycleId: integer("salary_cycle_id"),
+  confirmedBySms: timestamp("confirmed_by_sms"), // set when a due-reminder SMS matched this occurrence's cycle; evidence only, does not imply paid
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
@@ -313,6 +314,7 @@ export const paymentOccurrencesRelations = relations(paymentOccurrences, ({ one 
 export const insertPaymentOccurrenceSchema = createInsertSchema(paymentOccurrences).omit({
   id: true,
   createdAt: true,
+  confirmedBySms: true,
 }).extend({
   month: z.number().min(1).max(12),
   year: z.number().min(2020),
@@ -341,6 +343,8 @@ export const creditCardStatements = pgTable("credit_card_statements", {
   paidAmount: decimal("paid_amount", { precision: 12, scale: 2 }).default("0"), // amount paid after statement
   paidDate: timestamp("paid_date"),
   status: varchar("status", { length: 20 }).default("unpaid"), // 'unpaid', 'partial', 'paid', 'overdue'
+  smsConfirmedAt: timestamp("sms_confirmed_at"), // set when a due-reminder SMS's amount matched statementBalance
+  smsReportedBalance: decimal("sms_reported_balance", { precision: 12, scale: 2 }), // set only when a due SMS's amount disagreed with statementBalance, for discrepancy review
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
@@ -351,6 +355,8 @@ export const creditCardStatementsRelations = relations(creditCardStatements, ({ 
 export const insertCreditCardStatementSchema = createInsertSchema(creditCardStatements).omit({
   id: true,
   createdAt: true,
+  smsConfirmedAt: true,
+  smsReportedBalance: true,
 }).extend({
   statementMonth: z.number().min(1).max(12),
   statementYear: z.number().min(2020),
@@ -789,6 +795,41 @@ export const insertSenderInstitutionMappingSchema = createInsertSchema(senderIns
 export type InsertSenderInstitutionMapping = z.infer<typeof insertSenderInstitutionMappingSchema>;
 export type SenderInstitutionMapping = typeof senderInstitutionMappings.$inferSelect;
 
+// Bill Sender Mappings — remembers which scheduled payment a due-reminder SMS sender belongs
+// to, once the user has triaged it once in the Bills Inbox. Parallel to senderInstitutionMappings,
+// but for due/bill SMS (credit card dues are matched directly via cardDetails.lastFourDigits and
+// never need this table — this is for everything without a reliable in-message identifier).
+export const billSenderMappings = pgTable("bill_sender_mappings", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull().references(() => users.id),
+  institutionKey: varchar("institution_key", { length: 50 }).notNull(), // derived from the sender's DLT header, same scheme as senderInstitutionMappings
+  status: varchar("status", { length: 20 }).notNull().default("pending"), // 'pending', 'mapped', 'ignored'
+  scheduledPaymentId: integer("scheduled_payment_id").references(() => scheduledPayments.id), // set once mapped
+  suggestedName: varchar("suggested_name", { length: 200 }),
+  lastSeenAt: timestamp("last_seen_at").notNull().defaultNow(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+}, (table) => ({
+  userInstitutionUnique: uniqueIndex("bill_sender_mappings_user_institution_unique").on(table.userId, table.institutionKey),
+}));
+
+export const billSenderMappingsRelations = relations(billSenderMappings, ({ one }) => ({
+  user: one(users, { fields: [billSenderMappings.userId], references: [users.id] }),
+  scheduledPayment: one(scheduledPayments, { fields: [billSenderMappings.scheduledPaymentId], references: [scheduledPayments.id] }),
+}));
+
+export const insertBillSenderMappingSchema = createInsertSchema(billSenderMappings).omit({
+  id: true,
+  createdAt: true,
+  lastSeenAt: true,
+}).extend({
+  status: z.enum(["pending", "mapped", "ignored"]).optional(),
+  scheduledPaymentId: z.union([z.number(), z.null()]).optional(),
+  suggestedName: z.union([z.string(), z.null()]).optional(),
+});
+
+export type InsertBillSenderMapping = z.infer<typeof insertBillSenderMappingSchema>;
+export type BillSenderMapping = typeof billSenderMappings.$inferSelect;
+
 // SMS Logs (for tracking parsed messages)
 export const smsLogs = pgTable("sms_logs", {
   id: serial("id").primaryKey(),
@@ -799,6 +840,9 @@ export const smsLogs = pgTable("sms_logs", {
   isParsed: boolean("is_parsed").default(false),
   transactionId: integer("transaction_id").references(() => transactions.id),
   institutionMappingId: integer("institution_mapping_id").references(() => senderInstitutionMappings.id), // set when the sender didn't match a known account, for the review queue
+  billMappingId: integer("bill_mapping_id").references(() => billSenderMappings.id), // set when this SMS was classified as a due/bill message routed through the Bills Inbox
+  creditCardStatementId: integer("credit_card_statement_id").references(() => creditCardStatements.id), // set when this SMS confirmed/flagged a credit card statement
+  paymentOccurrenceId: integer("payment_occurrence_id").references(() => paymentOccurrences.id), // set when this SMS confirmed a scheduled payment occurrence
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
@@ -806,6 +850,9 @@ export const smsLogsRelations = relations(smsLogs, ({ one }) => ({
   user: one(users, { fields: [smsLogs.userId], references: [users.id] }),
   transaction: one(transactions, { fields: [smsLogs.transactionId], references: [transactions.id] }),
   institutionMapping: one(senderInstitutionMappings, { fields: [smsLogs.institutionMappingId], references: [senderInstitutionMappings.id] }),
+  billMapping: one(billSenderMappings, { fields: [smsLogs.billMappingId], references: [billSenderMappings.id] }),
+  creditCardStatement: one(creditCardStatements, { fields: [smsLogs.creditCardStatementId], references: [creditCardStatements.id] }),
+  paymentOccurrence: one(paymentOccurrences, { fields: [smsLogs.paymentOccurrenceId], references: [paymentOccurrences.id] }),
 }));
 
 export const insertSmsLogSchema = createInsertSchema(smsLogs).omit({

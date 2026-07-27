@@ -24,7 +24,7 @@ import {
   insertInsurancePremiumSchema
 } from "@shared/schema";
 import { suggestCategory, parseSmsMessage, parseStatementPDF, ExtractedTransaction } from "./openai";
-import { deriveInstitutionKey } from "./smsParser";
+import { deriveInstitutionKey, parseDueSms } from "./smsParser";
 import multer from "multer";
 // pdf-parse is imported dynamically at usage site to avoid pdfjs-dist crashing on startup
 import { getPaydayForMonth, getNextPaydays, getPastPaydays, getCurrentCycleDates, getNextCycleDates, getCyclePrimaryMonth } from "./salaryUtils";
@@ -3173,6 +3173,101 @@ export async function registerRoutes(app: Express): Promise<Server> {
     smsLogId?: number;
   };
 
+  // Parses a due-reminder SMS ("has dues of Rs X", "minimum due", "total outstanding") — these
+  // aren't transactions, so parseSmsMessage already returned null before this is tried. A credit
+  // card due is matched instantly via its stored last-4-digits and reconciled against the
+  // existing (transaction-derived) statement balance. Everything else has no reliable identifier
+  // on first sight, so it's routed through a learned sender mapping (Bills Inbox) the same way
+  // unmatched transaction senders are — see processSingleSms's institution-mapping fallback.
+  async function processDueSms(
+    messageText: string,
+    sender: string | undefined,
+    accounts: Awaited<ReturnType<typeof storage.getAllAccounts>>,
+    smsLogData: any
+  ): Promise<ParseSmsResult | null> {
+    const dueData = parseDueSms(messageText);
+    if (!dueData) return null;
+
+    const fallbackOwnerAccount = accounts.find(acc => acc.isDefault) || accounts.find(acc => acc.isActive) || accounts[0];
+    const userId = fallbackOwnerAccount?.userId;
+
+    // Path 1: credit card, matched instantly by last-4-digits already on file.
+    if (dueData.cardLastFourDigits && userId) {
+      const card = await storage.getCardDetailsByLastFourDigits(dueData.cardLastFourDigits, userId);
+      if (card) {
+        const statement = await storage.getOrCreateCurrentStatement(card.accountId);
+        const statementBalance = parseFloat(statement.statementBalance || '0');
+        const matched = Math.abs(dueData.amount - statementBalance) < 1;
+        await storage.confirmCreditCardStatementSms(statement.id, dueData.amount, matched);
+        smsLogData.creditCardStatementId = statement.id;
+        smsLogData.isParsed = true;
+        const smsLog = await storage.createSmsLog(smsLogData);
+        return {
+          success: true,
+          transaction: null,
+          parsed: dueData,
+          smsLogId: smsLog.id,
+          message: matched ? "Credit card due confirmed against statement" : "Credit card due amount disagreed with tracked statement — flagged for review",
+        };
+      }
+      // Card digits didn't match any known card — fall through to the sender-mapping path below.
+    }
+
+    // Path 2: everything else — no reliable identifier in the message itself, route via learned
+    // sender mapping (same shape as senderInstitutionMappings for transactions).
+    if (!userId) {
+      const smsLog = await storage.createSmsLog(smsLogData);
+      console.warn('⚠️  No accounts found — due SMS not routed. Returning parsed data only.');
+      return { success: true, transaction: null, parsed: dueData, smsLogId: smsLog.id };
+    }
+
+    const institutionKey = sender ? deriveInstitutionKey(sender) : "UNKNOWN";
+    let mapping = await storage.getBillSenderMapping(userId, institutionKey);
+
+    if (mapping?.status === "ignored") {
+      await storage.touchBillSenderMapping(mapping.id);
+      const smsLog = await storage.createSmsLog(smsLogData);
+      return { success: true, transaction: null, ignored: true, institutionKey, parsed: dueData, smsLogId: smsLog.id };
+    }
+
+    if (mapping?.status === "mapped" && mapping.scheduledPaymentId) {
+      await storage.touchBillSenderMapping(mapping.id);
+      const now = new Date();
+      const month = now.getMonth() + 1;
+      const year = now.getFullYear();
+      const existingOccurrences = await storage.getPaymentOccurrences({ scheduledPaymentId: mapping.scheduledPaymentId, month, year });
+      const occurrence = existingOccurrences[0] || await storage.createPaymentOccurrence({
+        scheduledPaymentId: mapping.scheduledPaymentId,
+        month,
+        year,
+        dueDate: dueData.dueDate ? new Date(dueData.dueDate) : now,
+        status: "pending",
+      });
+      await storage.confirmPaymentOccurrenceSms(occurrence.id);
+      smsLogData.paymentOccurrenceId = occurrence.id;
+      smsLogData.billMappingId = mapping.id;
+      smsLogData.isParsed = true;
+      const smsLog = await storage.createSmsLog(smsLogData);
+      return { success: true, transaction: null, parsed: dueData, smsLogId: smsLog.id, message: "Scheduled payment due confirmed by SMS" };
+    }
+
+    // New or still-pending sender — queue it in the Bills Inbox, no linkage until the user resolves it.
+    if (!mapping) {
+      mapping = await storage.createBillSenderMapping({
+        userId,
+        institutionKey,
+        status: "pending",
+        suggestedName: suggestInstitutionName(messageText, institutionKey),
+      });
+    } else {
+      await storage.touchBillSenderMapping(mapping.id);
+    }
+
+    smsLogData.billMappingId = mapping.id;
+    const smsLog = await storage.createSmsLog(smsLogData);
+    return { success: true, transaction: null, pendingReview: true, institutionKey, parsed: dueData, smsLogId: smsLog.id };
+  }
+
   // Parses one SMS, matches it to an account, and creates the transaction — shared by the
   // single and batch parse-sms endpoints so the institution-mapping fallback only lives in one place.
   async function processSingleSms(
@@ -3193,6 +3288,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
     const parsedData = await parseSmsMessage(messageText, sender);
 
     if (!parsedData || !parsedData.amount) {
+      const dueResult = await processDueSms(messageText, sender, accounts, smsLogData);
+      if (dueResult) return dueResult;
+
       const smsLog = await storage.createSmsLog(smsLogData);
       return { success: false, message: "Could not parse transaction from SMS", smsLogId: smsLog.id };
     }
@@ -3499,6 +3597,102 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json({ success: true, mapping: updated });
     } catch (error: any) {
       res.status(400).json({ error: error.message || "Failed to ignore institution" });
+    }
+  });
+
+  // ========== Bills Inbox ==========
+  // Due-reminder SMS that couldn't be matched to a credit card (parseDueSms/processDueSms in
+  // the SMS parsing section above) land here for one-time triage. Once linked, future SMS from
+  // the same sender auto-route — see bill_sender_mappings / processDueSms.
+
+  app.get("/api/bill-mappings/pending", authenticateToken, async (req, res) => {
+    try {
+      const userId = req.user!.userId;
+      const mappings = await storage.getPendingBillSenderMappings(userId);
+
+      const enriched = await Promise.all(mappings.map(async (mapping) => {
+        const logs = await storage.getSmsLogsForBillMapping(mapping.id);
+        const latest = logs[0];
+        const latestParsed = latest ? parseDueSms(latest.message) : null;
+        return {
+          ...mapping,
+          latestAmount: latestParsed?.amount ?? null,
+          latestDueDate: latestParsed?.dueDate ?? null,
+          latestReceivedAt: latest?.receivedAt ?? null,
+          latestMessage: latest?.message ?? null,
+        };
+      }));
+
+      res.json(enriched);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to fetch pending bill mappings" });
+    }
+  });
+
+  // Link a pending bill sender to an existing scheduled payment.
+  app.post("/api/bill-mappings/:id/link", authenticateToken, async (req, res) => {
+    try {
+      const userId = req.user!.userId;
+      const mappingId = parseInt(req.params.id);
+      const { scheduledPaymentId } = req.body;
+
+      const pending = await storage.getPendingBillSenderMappings(userId);
+      const mapping = pending.find(m => m.id === mappingId);
+      if (!mapping) {
+        return res.status(404).json({ error: "Bill mapping not found" });
+      }
+
+      const scheduledPayment = await storage.getScheduledPayment(scheduledPaymentId);
+      if (!scheduledPayment || scheduledPayment.userId !== userId) {
+        return res.status(404).json({ error: "Scheduled payment not found" });
+      }
+
+      const updated = await storage.resolveBillSenderMapping(mappingId, { status: "mapped", scheduledPaymentId: scheduledPayment.id });
+      res.json({ success: true, mapping: updated });
+    } catch (error: any) {
+      res.status(400).json({ error: error.message || "Failed to link bill sender" });
+    }
+  });
+
+  // Create a new scheduled payment for a pending bill sender and link it in one step.
+  app.post("/api/bill-mappings/:id/create-scheduled-payment", authenticateToken, async (req, res) => {
+    try {
+      const userId = req.user!.userId;
+      const mappingId = parseInt(req.params.id);
+
+      const pending = await storage.getPendingBillSenderMappings(userId);
+      const mapping = pending.find(m => m.id === mappingId);
+      if (!mapping) {
+        return res.status(404).json({ error: "Bill mapping not found" });
+      }
+
+      const validatedData = insertScheduledPaymentSchema.parse({ ...req.body, userId });
+      const scheduledPayment = await storage.createScheduledPayment(validatedData);
+
+      const updated = await storage.resolveBillSenderMapping(mappingId, { status: "mapped", scheduledPaymentId: scheduledPayment.id });
+      res.status(201).json({ success: true, scheduledPayment, mapping: updated });
+    } catch (error: any) {
+      res.status(400).json({ error: error.message || "Failed to create scheduled payment" });
+    }
+  });
+
+  // Dismiss a pending bill sender permanently — its future due SMS are logged but never
+  // surfaced again.
+  app.post("/api/bill-mappings/:id/ignore", authenticateToken, async (req, res) => {
+    try {
+      const userId = req.user!.userId;
+      const mappingId = parseInt(req.params.id);
+
+      const pending = await storage.getPendingBillSenderMappings(userId);
+      const mapping = pending.find(m => m.id === mappingId);
+      if (!mapping) {
+        return res.status(404).json({ error: "Bill mapping not found" });
+      }
+
+      const updated = await storage.resolveBillSenderMapping(mappingId, { status: "ignored" });
+      res.json({ success: true, mapping: updated });
+    } catch (error: any) {
+      res.status(400).json({ error: error.message || "Failed to ignore bill sender" });
     }
   });
 
