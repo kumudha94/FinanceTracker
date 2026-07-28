@@ -8,7 +8,7 @@ import type {
   CardDetails, InsertCardDetails,
   LoanTerm, LoanPayment, InsertLoanTerm, InsertLoanPayment, LoanWithDetails,
   Insurance, InsurancePremium, InsertInsurance, InsertInsurancePremium,
-  SenderInstitutionMapping
+  SenderInstitutionMapping, PendingBillMapping
 } from './types';
 import NetInfo from '@react-native-community/netinfo';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -282,6 +282,15 @@ export const api = {
     apiRequest<{ success: boolean; account: Account; backfilled: number }>(`/api/institution-mappings/${mappingId}/create-account`, { method: 'POST', body: JSON.stringify(data) }),
   ignoreInstitutionMapping: (mappingId: number) =>
     apiRequest<{ success: boolean; mapping: SenderInstitutionMapping }>(`/api/institution-mappings/${mappingId}/ignore`, { method: 'POST' }),
+
+  getPendingBillMappings: () =>
+    apiRequest<PendingBillMapping[]>('/api/bill-mappings/pending'),
+  linkBillMapping: (mappingId: number, scheduledPaymentId: number) =>
+    apiRequest<{ success: boolean; mapping: PendingBillMapping }>(`/api/bill-mappings/${mappingId}/link`, { method: 'POST', body: JSON.stringify({ scheduledPaymentId }) }),
+  createScheduledPaymentForBillMapping: (mappingId: number, data: InsertScheduledPayment) =>
+    apiRequest<{ success: boolean; scheduledPayment: ScheduledPayment; mapping: PendingBillMapping }>(`/api/bill-mappings/${mappingId}/create-scheduled-payment`, { method: 'POST', body: JSON.stringify(data) }),
+  ignoreBillMapping: (mappingId: number) =>
+    apiRequest<{ success: boolean; mapping: PendingBillMapping }>(`/api/bill-mappings/${mappingId}/ignore`, { method: 'POST' }),
 
   getCategories: () => apiRequest<Category[]>('/api/categories'),
   createCategory: (data: { name: string; color: string; icon?: string; type?: string }) =>

@@ -43,6 +43,9 @@ import CategoriesScreen from './src/screens/CategoriesScreen';
 import AddCategoryScreen from './src/screens/AddCategoryScreen';
 import ImportStatementScreen from './src/screens/ImportStatementScreen';
 import InstitutionMappingsScreen from './src/screens/InstitutionMappingsScreen';
+import BillsInboxScreen from './src/screens/BillsInboxScreen';
+import SmsStatementsHubScreen from './src/screens/SmsStatementsHubScreen';
+import NeedsReviewHubScreen from './src/screens/NeedsReviewHubScreen';
 
 import { ThemeProvider, useTheme } from './src/contexts/ThemeContext';
 import { AuthProvider, useAuth } from './src/contexts/AuthContext';
@@ -96,6 +99,9 @@ export type MoreStackParamList = {
   SmsAutoRead: undefined;
   ImportStatement: undefined;
   InstitutionMappings: undefined;
+  BillsInbox: undefined;
+  SmsStatementsHub: undefined;
+  NeedsReviewHub: undefined;
 };
 
 export type RootStackParamList = {
@@ -252,6 +258,21 @@ function MoreStackNavigator() {
         name="InstitutionMappings"
         component={InstitutionMappingsScreen}
         options={{ title: 'New Accounts Detected' }}
+      />
+      <MoreStack.Screen
+        name="BillsInbox"
+        component={BillsInboxScreen}
+        options={{ title: 'Bills Inbox' }}
+      />
+      <MoreStack.Screen
+        name="SmsStatementsHub"
+        component={SmsStatementsHubScreen}
+        options={{ title: 'SMS & Statements' }}
+      />
+      <MoreStack.Screen
+        name="NeedsReviewHub"
+        component={NeedsReviewHubScreen}
+        options={{ title: 'Needs Review' }}
       />
     </MoreStack.Navigator>
   );

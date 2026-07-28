@@ -202,6 +202,11 @@ export default function InsuranceScreen() {
                   {item.status.charAt(0).toUpperCase() + item.status.slice(1)}
                 </Text>
               </View>
+              {item.autoFunded && (
+                <View style={[styles.statusBadge, { backgroundColor: `${colors.primary}20` }]}>
+                  <Text style={[styles.statusText, { color: colors.primary }]}>Auto-funded</Text>
+                </View>
+              )}
             </View>
           </View>
           <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />

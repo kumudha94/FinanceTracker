@@ -1548,6 +1548,12 @@ export class DatabaseStorage implements IStorage {
         case 'one_time':
           shouldCreate = false;
           break;
+        case 'day_interval':
+          // Day-interval occurrences are event-driven (created at scheduled-payment creation
+          // and again each time the current one is marked paid — see routes.ts), never by
+          // this month-batch generator.
+          shouldCreate = false;
+          break;
         default:
           shouldCreate = true;
       }
@@ -2452,21 +2458,45 @@ export class DatabaseStorage implements IStorage {
     return result.length > 0;
   }
 
+  // Auto-funded policies (e.g. a market/sub policy funded by a main policy's benefit) never get
+  // a manual "mark as paid" action — any premium whose due date has already passed is settled
+  // automatically so it reads as a historical investment record, not an outstanding bill.
+  private async reconcileAutoFundedPremiums(insurance: Insurance, premiums: InsurancePremium[]): Promise<InsurancePremium[]> {
+    if (!insurance.autoFunded) return premiums;
+
+    const now = new Date();
+    for (const premium of premiums) {
+      if (premium.status !== 'paid' && new Date(premium.dueDate) <= now) {
+        premium.status = 'paid';
+        premium.paidAmount = premium.amount;
+        premium.paidDate = premium.dueDate;
+        await db.update(insurancePremiums)
+          .set({ status: 'paid', paidAmount: premium.amount, paidDate: premium.dueDate })
+          .where(eq(insurancePremiums.id, premium.id));
+      }
+    }
+    return premiums;
+  }
+
   // Insurance
   async getAllInsurances(userId?: number): Promise<InsuranceWithRelations[]> {
-    const allInsurances = userId 
+    const allInsurances = userId
       ? await db.select().from(insurances).where(eq(insurances.userId, userId)).orderBy(desc(insurances.createdAt))
       : await db.select().from(insurances).orderBy(desc(insurances.createdAt));
-    
+
     const insurancesWithRelations: InsuranceWithRelations[] = [];
     for (const insurance of allInsurances) {
-      const [account] = insurance.accountId 
+      const [account] = insurance.accountId
         ? await db.select().from(accounts).where(eq(accounts.id, insurance.accountId))
         : [null];
-      const premiums = await db.select().from(insurancePremiums)
+      let premiums = await db.select().from(insurancePremiums)
         .where(eq(insurancePremiums.insuranceId, insurance.id))
         .orderBy(insurancePremiums.dueDate);
-      insurancesWithRelations.push({ ...insurance, account, premiums });
+      premiums = await this.reconcileAutoFundedPremiums(insurance, premiums);
+      const [linkedInsurance] = insurance.linkedInsuranceId
+        ? await db.select().from(insurances).where(eq(insurances.id, insurance.linkedInsuranceId))
+        : [null];
+      insurancesWithRelations.push({ ...insurance, account, premiums, linkedInsurance });
     }
     return insurancesWithRelations;
   }
@@ -2474,15 +2504,19 @@ export class DatabaseStorage implements IStorage {
   async getInsurance(id: number): Promise<InsuranceWithRelations | undefined> {
     const [insurance] = await db.select().from(insurances).where(eq(insurances.id, id));
     if (!insurance) return undefined;
-    
-    const [account] = insurance.accountId 
+
+    const [account] = insurance.accountId
       ? await db.select().from(accounts).where(eq(accounts.id, insurance.accountId))
       : [null];
-    const premiums = await db.select().from(insurancePremiums)
+    let premiums = await db.select().from(insurancePremiums)
       .where(eq(insurancePremiums.insuranceId, id))
       .orderBy(insurancePremiums.dueDate);
-    
-    return { ...insurance, account, premiums };
+    premiums = await this.reconcileAutoFundedPremiums(insurance, premiums);
+    const [linkedInsurance] = insurance.linkedInsuranceId
+      ? await db.select().from(insurances).where(eq(insurances.id, insurance.linkedInsuranceId))
+      : [null];
+
+    return { ...insurance, account, premiums, linkedInsurance };
   }
 
   async createInsurance(insurance: InsertInsurance): Promise<Insurance> {

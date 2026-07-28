@@ -22,30 +22,16 @@ interface MenuItem {
 const menuItems: MenuItem[] = [
   {
     icon: 'chatbubble-ellipses-outline',
-    title: 'Auto-Read SMS',
-    subtitle: 'Automatically log bank SMS as transactions',
-    route: 'SmsAutoRead',
+    title: 'SMS & Statements',
+    subtitle: 'Auto-read, scan, or import from a PDF',
+    route: 'SmsStatementsHub',
     color: '#16a34a',
   },
   {
-    icon: 'scan-outline',
-    title: 'Scan SMS',
-    subtitle: 'Paste a bank SMS to add manually',
-    route: 'ScanSMS',
-    color: '#0ea5e9',
-  },
-  {
-    icon: 'document-text-outline',
-    title: 'Import Statement',
-    subtitle: 'Import PDF bank statements',
-    route: 'ImportStatement',
-    color: '#0ea5e9',
-  },
-  {
-    icon: 'help-buoy-outline',
-    title: 'New Accounts Detected',
-    subtitle: "SMS from banks/cards you haven't added yet",
-    route: 'InstitutionMappings',
+    icon: 'alert-circle-outline',
+    title: 'Needs Review',
+    subtitle: 'New accounts and bills waiting for you',
+    route: 'NeedsReviewHub',
     color: '#f59e0b',
   },
   {
@@ -116,10 +102,16 @@ export default function MoreScreen() {
     queryFn: api.getPendingInstitutionMappings,
   });
 
+  const { data: pendingBillMappings = [], refetch: refetchPendingBills } = useQuery({
+    queryKey: ['/api/bill-mappings/pending'],
+    queryFn: api.getPendingBillMappings,
+  });
+
   useFocusEffect(
     useCallback(() => {
       refetchPending();
-    }, [refetchPending])
+      refetchPendingBills();
+    }, [refetchPending, refetchPendingBills])
   );
 
   return (
@@ -141,9 +133,9 @@ export default function MoreScreen() {
                 <Text style={[styles.menuTitle, { color: colors.text }]}>{item.title}</Text>
                 <Text style={[styles.menuSubtitle, { color: colors.textMuted }]}>{item.subtitle}</Text>
               </View>
-              {item.route === 'InstitutionMappings' && pendingMappings.length > 0 && (
+              {item.route === 'NeedsReviewHub' && (pendingMappings.length + pendingBillMappings.length) > 0 && (
                 <View style={styles.badge}>
-                  <Text style={styles.badgeText}>{pendingMappings.length}</Text>
+                  <Text style={styles.badgeText}>{pendingMappings.length + pendingBillMappings.length}</Text>
                 </View>
               )}
               <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />

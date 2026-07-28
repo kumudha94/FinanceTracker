@@ -227,6 +227,17 @@ export default function InsuranceDetailsScreen() {
             </View>
           )}
 
+          {insurance.autoFunded && (
+            <View style={[styles.autoFundedBanner, { backgroundColor: colors.primary + '15' }]}>
+              <Ionicons name="sync-outline" size={16} color={colors.primary} />
+              <Text style={[styles.autoFundedText, { color: colors.primary }]}>
+                {insurance.linkedInsurance
+                  ? `Auto-funded by ${insurance.linkedInsurance.name} — no payment needed`
+                  : 'Auto-funded — no payment needed'}
+              </Text>
+            </View>
+          )}
+
           <View style={[styles.divider, { backgroundColor: colors.border }]} />
 
           <View style={styles.detailsGrid}>
@@ -411,14 +422,16 @@ export default function InsuranceDetailsScreen() {
                       {formatCurrency(parseFloat(premium.amount))}
                     </Text>
                   </View>
-                  <TouchableOpacity
-                    style={[styles.payButton, { backgroundColor: colors.primary }]}
-                    onPress={() => handlePayPress(premium)}
-                    data-testid={`button-pay-premium-${premium.id}`}
-                  >
-                    <Ionicons name="checkmark-circle" size={18} color="#fff" />
-                    <Text style={styles.payButtonText}>Mark as Paid</Text>
-                  </TouchableOpacity>
+                  {!insurance?.autoFunded && (
+                    <TouchableOpacity
+                      style={[styles.payButton, { backgroundColor: colors.primary }]}
+                      onPress={() => handlePayPress(premium)}
+                      data-testid={`button-pay-premium-${premium.id}`}
+                    >
+                      <Ionicons name="checkmark-circle" size={18} color="#fff" />
+                      <Text style={styles.payButtonText}>Mark as Paid</Text>
+                    </TouchableOpacity>
+                  )}
                 </View>
               ))
             ) : (
@@ -652,6 +665,20 @@ const styles = StyleSheet.create({
   },
   providerText: {
     fontSize: 13,
+  },
+  autoFundedBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+  },
+  autoFundedText: {
+    fontSize: 12,
+    fontWeight: '500',
+    flexShrink: 1,
   },
   divider: {
     height: 1,

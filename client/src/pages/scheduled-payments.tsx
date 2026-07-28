@@ -26,6 +26,7 @@ interface PaymentOccurrence {
   year: number;
   dueDate: string;
   status: string;
+  amount: string | null;
   paidAt: string | null;
   scheduledPayment?: ScheduledPayment;
 }
@@ -39,11 +40,19 @@ function formatCurrency(amount: number): string {
   }).format(amount);
 }
 
+function frequencyLabel(payment?: ScheduledPayment): string {
+  if (payment?.frequency === "day_interval") {
+    return `Every ${payment.customIntervalDays ?? "?"} Days`;
+  }
+  return FREQUENCY_OPTIONS.find(f => f.value === (payment?.frequency || "monthly"))?.label || "Monthly";
+}
+
 const FREQUENCY_OPTIONS = [
   { value: "monthly", label: "Monthly" },
   { value: "quarterly", label: "Every 3 Months" },
   { value: "half_yearly", label: "Every 6 Months" },
   { value: "yearly", label: "Yearly" },
+  { value: "day_interval", label: "Every N Days" },
 ];
 
 const MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
@@ -54,15 +63,20 @@ export default function ScheduledPayments() {
   const [activeTab, setActiveTab] = useState("checklist");
   const [currentMonth, setCurrentMonth] = useState(new Date().getMonth() + 1);
   const [currentYear, setCurrentYear] = useState(new Date().getFullYear());
+  const [enteringAmountId, setEnteringAmountId] = useState<number | null>(null);
+  const [amountInput, setAmountInput] = useState("");
   const { toast } = useToast();
   
   const [formData, setFormData] = useState({
     name: "",
     amount: "",
+    variableAmount: false,
     dueDate: 1,
     categoryId: "",
     frequency: "monthly",
     startMonth: new Date().getMonth() + 1,
+    customIntervalDays: 30,
+    lastPaidDate: new Date().toISOString().slice(0, 10),
     notes: "",
     status: "active" as "active" | "inactive",
   });
@@ -98,7 +112,11 @@ export default function ScheduledPayments() {
   });
 
   useEffect(() => {
-    if (payments.length > 0 && occurrences.length === 0) {
+    // Always call this (not just when occurrences.length === 0) — a day-interval payment can
+    // put an occurrence in this month on its own (created when its previous cycle was paid),
+    // which would otherwise make this look "already generated" and skip other payments still
+    // due this month. The backend already dedupes per-payment, so repeat calls are safe.
+    if (payments.length > 0) {
       generateOccurrencesMutation.mutate();
     }
   }, [payments, currentMonth, currentYear]);
@@ -118,21 +136,44 @@ export default function ScheduledPayments() {
     },
   });
 
+  const setOccurrenceAmountMutation = useMutation({
+    mutationFn: async ({ id, amount }: { id: number; amount: string }) => {
+      const res = await fetch(`/api/payment-occurrences/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ amount }),
+      });
+      return res.json();
+    },
+    onSuccess: () => {
+      refetchOccurrences();
+      setEnteringAmountId(null);
+      setAmountInput("");
+      toast({ title: "Amount saved" });
+    },
+    onError: () => toast({ title: "Failed to save amount", variant: "destructive" }),
+  });
+
   const createMutation = useMutation({
     mutationFn: async (data: typeof formData) => {
       const response = await apiRequest("POST", "/api/scheduled-payments", {
         ...data,
         categoryId: data.categoryId ? parseInt(data.categoryId) : null,
-        startMonth: data.frequency !== "monthly" ? data.startMonth : null,
+        startMonth: data.frequency !== "monthly" && data.frequency !== "day_interval" ? data.startMonth : null,
       });
       return response.json();
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/scheduled-payments"] });
       queryClient.invalidateQueries({ queryKey: ["/api/dashboard"] });
+      refetchOccurrences();
       generateOccurrencesMutation.mutate();
       setIsDialogOpen(false);
-      setFormData({ name: "", amount: "", dueDate: 1, categoryId: "", frequency: "monthly", startMonth: new Date().getMonth() + 1, notes: "", status: "active" });
+      setFormData({
+        name: "", amount: "", variableAmount: false, dueDate: 1, categoryId: "", frequency: "monthly",
+        startMonth: new Date().getMonth() + 1, customIntervalDays: 30, lastPaidDate: new Date().toISOString().slice(0, 10),
+        notes: "", status: "active",
+      });
       toast({ title: "Payment added" });
     },
     onError: () => {
@@ -188,12 +229,13 @@ export default function ScheduledPayments() {
   };
 
   const activePayments = payments.filter(p => p.status === "active");
-  const totalMonthly = activePayments.reduce((sum, p) => sum + parseFloat(p.amount), 0);
-  
+  const totalMonthly = activePayments.reduce((sum, p) => sum + parseFloat(p.amount || "0"), 0);
+
+  const occurrenceAmount = (o: PaymentOccurrence) => parseFloat(o.amount ?? o.scheduledPayment?.amount ?? "0");
   const paidOccurrences = occurrences.filter(o => o.status === "paid");
   const pendingOccurrences = occurrences.filter(o => o.status === "pending");
-  const totalPaid = paidOccurrences.reduce((sum, o) => sum + parseFloat(o.scheduledPayment?.amount || "0"), 0);
-  const totalPending = pendingOccurrences.reduce((sum, o) => sum + parseFloat(o.scheduledPayment?.amount || "0"), 0);
+  const totalPaid = paidOccurrences.reduce((sum, o) => sum + occurrenceAmount(o), 0);
+  const totalPending = pendingOccurrences.reduce((sum, o) => sum + occurrenceAmount(o), 0);
 
   if (isLoading) {
     return (
@@ -239,16 +281,29 @@ export default function ScheduledPayments() {
                   data-testid="input-payment-name"
                 />
               </div>
-              <div>
-                <Label>Amount (INR)</Label>
-                <Input
-                  type="number"
-                  value={formData.amount}
-                  onChange={(e) => setFormData({ ...formData, amount: e.target.value })}
-                  placeholder="e.g., 2000"
-                  data-testid="input-payment-amount"
+              <div className="flex items-center justify-between rounded-md border p-3">
+                <div>
+                  <Label>This bill's amount varies each time</Label>
+                  <p className="text-xs text-muted-foreground">e.g. electricity — you'll enter the actual amount each cycle</p>
+                </div>
+                <Switch
+                  checked={formData.variableAmount}
+                  onCheckedChange={(checked) => setFormData({ ...formData, variableAmount: checked, amount: checked ? "" : formData.amount })}
+                  data-testid="switch-variable-amount"
                 />
               </div>
+              {!formData.variableAmount && (
+                <div>
+                  <Label>Amount (INR)</Label>
+                  <Input
+                    type="number"
+                    value={formData.amount}
+                    onChange={(e) => setFormData({ ...formData, amount: e.target.value })}
+                    placeholder="e.g., 2000"
+                    data-testid="input-payment-amount"
+                  />
+                </div>
+              )}
               <div>
                 <Label>Frequency</Label>
                 <Select value={formData.frequency} onValueChange={(v) => setFormData({ ...formData, frequency: v })}>
@@ -262,7 +317,7 @@ export default function ScheduledPayments() {
                   </SelectContent>
                 </Select>
               </div>
-              {formData.frequency !== "monthly" && (
+              {formData.frequency !== "monthly" && formData.frequency !== "day_interval" && (
                 <div>
                   <Label>Starting Month</Label>
                   <Select value={formData.startMonth.toString()} onValueChange={(v) => setFormData({ ...formData, startMonth: parseInt(v) })}>
@@ -277,19 +332,47 @@ export default function ScheduledPayments() {
                   </Select>
                 </div>
               )}
-              <div>
-                <Label>Due Date (Day of Month)</Label>
-                <Select value={formData.dueDate.toString()} onValueChange={(v) => setFormData({ ...formData, dueDate: parseInt(v) })}>
-                  <SelectTrigger data-testid="select-due-date">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {Array.from({ length: 28 }, (_, i) => i + 1).map((day) => (
-                      <SelectItem key={day} value={day.toString()}>{day}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
+              {formData.frequency === "day_interval" ? (
+                <>
+                  <div>
+                    <Label>Interval (days)</Label>
+                    <Input
+                      type="number"
+                      min={1}
+                      value={formData.customIntervalDays}
+                      onChange={(e) => setFormData({ ...formData, customIntervalDays: parseInt(e.target.value) || 1 })}
+                      placeholder="e.g., 84"
+                      data-testid="input-interval-days"
+                    />
+                  </div>
+                  <div>
+                    <Label>Last recharged/paid on</Label>
+                    <Input
+                      type="date"
+                      value={formData.lastPaidDate}
+                      onChange={(e) => setFormData({ ...formData, lastPaidDate: e.target.value })}
+                      data-testid="input-last-paid-date"
+                    />
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Next due date will be {formData.customIntervalDays} days after this
+                    </p>
+                  </div>
+                </>
+              ) : (
+                <div>
+                  <Label>Due Date (Day of Month)</Label>
+                  <Select value={formData.dueDate.toString()} onValueChange={(v) => setFormData({ ...formData, dueDate: parseInt(v) })}>
+                    <SelectTrigger data-testid="select-due-date">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {Array.from({ length: 28 }, (_, i) => i + 1).map((day) => (
+                        <SelectItem key={day} value={day.toString()}>{day}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
               <div>
                 <Label>Category (Optional)</Label>
                 <Select value={formData.categoryId} onValueChange={(v) => setFormData({ ...formData, categoryId: v })}>
@@ -377,16 +460,20 @@ export default function ScheduledPayments() {
                 const category = categories.find(c => c.id === payment?.categoryId);
                 const dueDate = new Date(occurrence.dueDate);
                 const isPastDue = !isPaid && dueDate < new Date();
+                const effectiveAmount = occurrence.amount ?? payment?.amount ?? null;
+                const needsAmount = !!payment?.variableAmount && !effectiveAmount;
+                const isEnteringAmount = enteringAmountId === occurrence.id;
 
                 return (
-                  <Card 
-                    key={occurrence.id} 
+                  <Card
+                    key={occurrence.id}
                     className={`transition-all ${isPaid ? "opacity-60 bg-muted/30" : isPastDue ? "border-red-500/50" : ""}`}
                   >
                     <CardContent className="py-3">
                       <div className="flex items-center gap-3">
                         <Checkbox
                           checked={isPaid}
+                          disabled={needsAmount}
                           onCheckedChange={(checked) => {
                             updateOccurrenceMutation.mutate({
                               id: occurrence.id,
@@ -395,7 +482,15 @@ export default function ScheduledPayments() {
                           }}
                           className="h-6 w-6"
                         />
-                        <div className="flex-1">
+                        <div
+                          className="flex-1 cursor-pointer"
+                          onClick={() => {
+                            if (needsAmount && !isEnteringAmount) {
+                              setEnteringAmountId(occurrence.id);
+                              setAmountInput("");
+                            }
+                          }}
+                        >
                           <div className="flex items-center gap-2">
                             <p className={`font-medium ${isPaid ? "line-through text-muted-foreground" : ""}`}>
                               {payment?.name}
@@ -407,14 +502,42 @@ export default function ScheduledPayments() {
                             {category && ` • ${category.name}`}
                             {payment?.frequency && payment.frequency !== "monthly" && (
                               <span className="ml-1 text-primary">
-                                • {FREQUENCY_OPTIONS.find(f => f.value === payment.frequency)?.label}
+                                • {frequencyLabel(payment)}
                               </span>
                             )}
                           </p>
+                          {isEnteringAmount && (
+                            <div className="flex items-center gap-2 mt-2" onClick={(e) => e.stopPropagation()}>
+                              <Input
+                                type="number"
+                                autoFocus
+                                value={amountInput}
+                                onChange={(e) => setAmountInput(e.target.value)}
+                                placeholder="This cycle's amount"
+                                className="h-8"
+                                data-testid={`input-occurrence-amount-${occurrence.id}`}
+                              />
+                              <Button
+                                size="sm"
+                                disabled={!amountInput || setOccurrenceAmountMutation.isPending}
+                                onClick={() => setOccurrenceAmountMutation.mutate({ id: occurrence.id, amount: amountInput })}
+                                data-testid={`button-save-occurrence-amount-${occurrence.id}`}
+                              >
+                                Save
+                              </Button>
+                              <Button size="sm" variant="ghost" onClick={() => setEnteringAmountId(null)}>Cancel</Button>
+                            </div>
+                          )}
                         </div>
-                        <p className={`font-semibold ${isPaid ? "text-muted-foreground" : "text-destructive"}`}>
-                          {formatCurrency(parseFloat(payment?.amount || "0"))}
-                        </p>
+                        {needsAmount ? (
+                          !isEnteringAmount && (
+                            <Badge variant="outline" className="text-xs">Enter amount</Badge>
+                          )
+                        ) : (
+                          <p className={`font-semibold ${isPaid ? "text-muted-foreground" : "text-destructive"}`}>
+                            {formatCurrency(parseFloat(effectiveAmount || "0"))}
+                          </p>
+                        )}
                       </div>
                     </CardContent>
                   </Card>
@@ -457,12 +580,12 @@ export default function ScheduledPayments() {
                           <div className="flex items-center gap-2 flex-wrap">
                             <p className="font-medium">{payment.name}</p>
                             <Badge variant="secondary" className="text-xs">
-                              {FREQUENCY_OPTIONS.find(f => f.value === (payment.frequency || "monthly"))?.label}
+                              {frequencyLabel(payment)}
                             </Badge>
                           </div>
                           <p className="text-xs text-muted-foreground mt-1">
                             <Calendar className="w-3 h-3 inline mr-1" />
-                            Due on {payment.dueDate}th
+                            {payment.frequency === "day_interval" ? frequencyLabel(payment) : `Due on ${payment.dueDate}th`}
                             {category && ` • ${category.name}`}
                           </p>
                           {payment.notes && (
@@ -470,7 +593,11 @@ export default function ScheduledPayments() {
                           )}
                         </div>
                         <div className="flex items-center gap-2">
-                          <p className="font-semibold">{formatCurrency(parseFloat(payment.amount))}</p>
+                          <p className="font-semibold">
+                            {payment.amount ? formatCurrency(parseFloat(payment.amount)) : (
+                              <span className="text-xs text-muted-foreground font-normal">Amount varies</span>
+                            )}
+                          </p>
                           <div className="flex flex-col items-center gap-1">
                             <Switch
                               checked={isActive}

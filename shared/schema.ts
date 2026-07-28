@@ -203,14 +203,16 @@ export const scheduledPayments = pgTable("scheduled_payments", {
   userId: integer("user_id").notNull().references(() => users.id),
   name: varchar("name", { length: 200 }).notNull(),
   paymentType: varchar("payment_type", { length: 20 }).default("regular"), // 'regular', 'credit_card_bill'
-  amount: decimal("amount", { precision: 12, scale: 2 }), // nullable for auto-calculated credit card bills
+  amount: decimal("amount", { precision: 12, scale: 2 }), // nullable for auto-calculated credit card bills and variable-amount bills
+  variableAmount: boolean("variable_amount").default(false), // true when this bill's amount is never fixed (e.g. electricity) — entered per-cycle on the occurrence instead
   dueDateType: varchar("due_date_type", { length: 20 }).default("fixed_day"), // 'fixed_day' or 'salary_day'
   dueDate: integer("due_date"), // day of month (1-31) when dueDateType is 'fixed_day', null when 'salary_day'
   categoryId: integer("category_id").references(() => categories.id),
   accountId: integer("account_id").references(() => accounts.id),
   creditCardAccountId: integer("credit_card_account_id").references(() => accounts.id), // for credit card bills
-  frequency: varchar("frequency", { length: 20 }).default("monthly"), // 'monthly', 'quarterly', 'half_yearly', 'yearly', 'one_time', 'custom'
+  frequency: varchar("frequency", { length: 20 }).default("monthly"), // 'monthly', 'quarterly', 'half_yearly', 'yearly', 'one_time', 'custom', 'day_interval'
   customIntervalMonths: integer("custom_interval_months"), // number of months between payments (e.g., 2, 3, 5, 8)
+  customIntervalDays: integer("custom_interval_days"), // number of days between payments when frequency is 'day_interval' (e.g. phone recharge every 84 days) — rolling from the actual paid date, not a fixed day-of-month
   startMonth: integer("start_month"), // 1-12, for quarterly/yearly/custom payments
   status: varchar("status", { length: 20 }).default("active"), // 'active', 'inactive'
   notes: text("notes"),
@@ -235,29 +237,32 @@ export const insertScheduledPaymentSchema = createInsertSchema(scheduledPayments
 }).extend({
   name: z.string().min(1, "Payment name is required"),
   paymentType: z.enum(["regular", "credit_card_bill"]).optional(),
-  amount: z.string().optional(), // optional for auto-calculated credit card bills
+  amount: z.string().optional(), // optional for auto-calculated credit card bills and variable-amount bills
+  variableAmount: z.boolean().optional(),
   dueDateType: z.enum(["fixed_day", "salary_day"]).optional(),
   dueDate: z.union([z.number().min(1).max(31), z.null()]).optional(), // optional/null when dueDateType is 'salary_day'
   creditCardAccountId: z.union([z.number(), z.null()]).optional(),
   categoryId: z.union([z.number(), z.null()]).optional(),
   accountId: z.union([z.number(), z.null()]).optional(),
-  frequency: z.enum(["monthly", "quarterly", "half_yearly", "yearly", "one_time", "custom"]).optional(),
+  frequency: z.enum(["monthly", "quarterly", "half_yearly", "yearly", "one_time", "custom", "day_interval"]).optional(),
   customIntervalMonths: z.union([z.number().min(1).max(60), z.null()]).optional(),
+  customIntervalDays: z.union([z.number().min(1).max(365), z.null()]).optional(),
   startMonth: z.union([z.number().min(1).max(12), z.null()]).optional(),
   status: z.enum(["active", "inactive"]).optional(),
   notes: z.union([z.string(), z.null()]).optional(),
 }).refine(
   (data) => {
-    // Amount is required for regular payments, optional for credit card bills
-    if (data.paymentType !== 'credit_card_bill' && !data.amount) {
+    // Amount is required for regular, fixed-amount payments — optional for credit card
+    // bills (auto-calculated) and variable-amount bills (entered per-cycle instead)
+    if (data.paymentType !== 'credit_card_bill' && !data.variableAmount && !data.amount) {
       return false;
     }
     // If amount is provided, it must be a valid number
     if (data.amount && isNaN(Number(data.amount))) {
       return false;
     }
-    // For regular payments, amount must be positive (> 0)
-    if (data.paymentType !== 'credit_card_bill' && data.amount && Number(data.amount) <= 0) {
+    // For fixed-amount regular payments, amount must be positive (> 0)
+    if (data.paymentType !== 'credit_card_bill' && !data.variableAmount && data.amount && Number(data.amount) <= 0) {
       return false;
     }
     // For credit card bills, amount can be 0 (auto-calculated) or positive
@@ -267,13 +272,14 @@ export const insertScheduledPaymentSchema = createInsertSchema(scheduledPayments
     return true;
   },
   {
-    message: "Amount is required for regular payments and must be a valid positive number",
+    message: "Amount is required unless this is a variable-amount or auto-calculated credit card bill",
     path: ["amount"],
   }
 ).refine(
   (data) => {
-    // dueDate is required when dueDateType is 'fixed_day'
-    if (data.dueDateType === 'fixed_day' && !data.dueDate) {
+    // dueDate (day-of-month) doesn't apply to day-interval payments — they're anchored by
+    // an actual date instead, handled separately at the route level.
+    if (data.dueDateType === 'fixed_day' && data.frequency !== 'day_interval' && !data.dueDate) {
       return false;
     }
     return true;
@@ -295,6 +301,7 @@ export const paymentOccurrences = pgTable("payment_occurrences", {
   year: integer("year").notNull(),
   dueDate: timestamp("due_date").notNull(),
   status: varchar("status", { length: 20 }).default("pending"), // 'pending', 'paid', 'skipped'
+  amount: decimal("amount", { precision: 12, scale: 2 }), // this cycle's actual bill amount, for variable-amount payments — distinct from paidAmount
   paidAt: timestamp("paid_at"),
   paidAmount: decimal("paid_amount", { precision: 12, scale: 2 }),
   notes: text("notes"),
@@ -956,6 +963,8 @@ export const insurances = pgTable("insurances", {
   status: varchar("status", { length: 20 }).default("active"), // 'active', 'expired', 'cancelled', 'lapsed', 'paid_up'
   createTransaction: boolean("create_transaction").default(false), // create transaction on payment
   affectBalance: boolean("affect_balance").default(false), // affect account balance on payment
+  autoFunded: boolean("auto_funded").default(false), // true when premiums are funded automatically by another policy (e.g. a market/sub policy funded from a main policy's benefit) — no manual payment needed, past-due premiums auto-settle
+  linkedInsuranceId: integer("linked_insurance_id").references((): any => insurances.id), // the policy that funds this one, when autoFunded is true
   notes: text("notes"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
@@ -965,6 +974,7 @@ export const insurancesRelations = relations(insurances, ({ one, many }) => ({
   user: one(users, { fields: [insurances.userId], references: [users.id] }),
   account: one(accounts, { fields: [insurances.accountId], references: [accounts.id] }),
   premiums: many(insurancePremiums),
+  linkedInsurance: one(insurances, { fields: [insurances.linkedInsuranceId], references: [insurances.id], relationName: "linkedInsurance" }),
 }));
 
 export const insertInsuranceSchema = createInsertSchema(insurances).omit({
@@ -987,6 +997,8 @@ export const insertInsuranceSchema = createInsertSchema(insurances).omit({
   status: z.enum(["active", "expired", "cancelled", "lapsed", "paid_up"]).optional(),
   createTransaction: z.boolean().optional(),
   affectBalance: z.boolean().optional(),
+  autoFunded: z.boolean().optional(),
+  linkedInsuranceId: z.union([z.number(), z.null()]).optional(),
 });
 
 export type InsertInsurance = z.infer<typeof insertInsuranceSchema>;
@@ -1037,6 +1049,7 @@ export type InsurancePremium = typeof insurancePremiums.$inferSelect;
 export type InsuranceWithRelations = Insurance & {
   account?: Account | null;
   premiums?: InsurancePremium[];
+  linkedInsurance?: Insurance | null;
 };
 
 // Extended transaction type with relations

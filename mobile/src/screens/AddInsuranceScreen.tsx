@@ -61,10 +61,20 @@ export default function AddInsuranceScreen() {
   const [accountId, setAccountId] = useState<number | undefined>();
   const [createTransaction, setCreateTransaction] = useState(false);
   const [affectBalance, setAffectBalance] = useState(false);
+  const [autoFunded, setAutoFunded] = useState(false);
+  const [linkedInsuranceId, setLinkedInsuranceId] = useState<number | undefined>();
   const [notes, setNotes] = useState('');
   const [showStartPicker, setShowStartPicker] = useState(false);
   const [showEndPicker, setShowEndPicker] = useState(false);
   const [showAccountPicker, setShowAccountPicker] = useState(false);
+  const [showLinkedPicker, setShowLinkedPicker] = useState(false);
+
+  const { data: insurances } = useQuery<Insurance[]>({
+    queryKey: ['/api/insurances'],
+    queryFn: () => api.getInsurances(),
+  });
+  const linkableInsurances = (insurances || []).filter(i => i.id !== insuranceId);
+  const selectedLinkedInsurance = linkableInsurances.find(i => i.id === linkedInsuranceId);
 
   const { data: accounts } = useQuery<Account[]>({
     queryKey: ['/api/accounts'],
@@ -98,6 +108,8 @@ export default function AddInsuranceScreen() {
       setAccountId(existingInsurance.accountId || undefined);
       setCreateTransaction(existingInsurance.createTransaction);
       setAffectBalance(existingInsurance.affectBalance);
+      setAutoFunded(existingInsurance.autoFunded);
+      setLinkedInsuranceId(existingInsurance.linkedInsuranceId || undefined);
       setNotes(existingInsurance.notes || '');
     }
   }, [existingInsurance]);
@@ -174,6 +186,8 @@ export default function AddInsuranceScreen() {
       accountId,
       createTransaction,
       affectBalance,
+      autoFunded,
+      linkedInsuranceId: autoFunded ? (linkedInsuranceId ?? null) : null,
       notes: notes.trim() || undefined,
     };
 
@@ -515,6 +529,57 @@ export default function AddInsuranceScreen() {
               trackColor={{ false: colors.border, true: colors.primary }}
             />
           </View>
+
+          <View style={styles.toggleRow}>
+            <View style={styles.toggleInfo}>
+              <Text style={[styles.toggleLabel, { color: colors.text }]}>Auto-Funded Policy</Text>
+              <Text style={[styles.toggleHint, { color: colors.textMuted }]}>
+                Funded automatically by another policy — no separate payment needed
+              </Text>
+            </View>
+            <Switch
+              value={autoFunded}
+              onValueChange={(value) => {
+                setAutoFunded(value);
+                if (!value) setLinkedInsuranceId(undefined);
+              }}
+              trackColor={{ false: colors.border, true: colors.primary }}
+            />
+          </View>
+
+          {autoFunded && (
+            <View style={styles.inputGroup}>
+              <Text style={[styles.label, { color: colors.textMuted }]}>Funded By</Text>
+              <TouchableOpacity
+                style={[styles.dateButton, { backgroundColor: colors.card, borderColor: colors.border }]}
+                onPress={() => setShowLinkedPicker(!showLinkedPicker)}
+              >
+                <Ionicons name="link-outline" size={20} color={colors.textMuted} />
+                <Text style={[styles.dateText, { color: selectedLinkedInsurance ? colors.text : colors.textMuted }]}>
+                  {selectedLinkedInsurance ? selectedLinkedInsurance.name : 'Select Policy'}
+                </Text>
+              </TouchableOpacity>
+              {showLinkedPicker && (
+                <View style={[styles.accountList, { backgroundColor: colors.card, borderColor: colors.border }]}>
+                  {linkableInsurances.length === 0 ? (
+                    <Text style={[styles.accountName, { color: colors.textMuted, padding: 12 }]}>
+                      No other policies yet
+                    </Text>
+                  ) : (
+                    linkableInsurances.map((ins) => (
+                      <TouchableOpacity
+                        key={ins.id}
+                        style={styles.accountOption}
+                        onPress={() => { setLinkedInsuranceId(ins.id); setShowLinkedPicker(false); }}
+                      >
+                        <Text style={[styles.accountName, { color: colors.text }]}>{ins.name}</Text>
+                      </TouchableOpacity>
+                    ))
+                  )}
+                </View>
+              )}
+            </View>
+          )}
         </View>
 
         <View style={styles.section}>

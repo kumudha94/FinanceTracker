@@ -1,9 +1,10 @@
-import { View, Text, ScrollView, StyleSheet, TouchableOpacity, ActivityIndicator, RefreshControl, LayoutAnimation, Platform, UIManager, Modal } from 'react-native';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { View, Text, ScrollView, StyleSheet, TouchableOpacity, ActivityIndicator, RefreshControl, LayoutAnimation, Platform, UIManager, Modal, Alert } from 'react-native';
+import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query';
 import { useNavigation, CompositeNavigationProp, useFocusEffect } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 import { Ionicons } from '@expo/vector-icons';
+import { format } from 'date-fns';
 import { api } from '../lib/api';
 import { formatCurrency, getThemedColors } from '../lib/utils';
 import { RootStackParamList, TabParamList } from '../../App';
@@ -23,7 +24,7 @@ type NavigationProp = CompositeNavigationProp<
 >;
 
 type ActiveTab = 'income' | 'expense' | 'bills';
-type BillsAccordion = 'scheduled' | 'creditCard' | 'loans' | 'insurance' | null;
+type BillsAccordion = 'scheduled' | 'creditCard' | 'loans' | 'insurance' | 'billsInbox' | null;
 type ForecastAccordion = 'scheduled' | 'insurance' | 'loans' | 'creditCard' | null;
 
 export default function DashboardScreen() {
@@ -59,12 +60,31 @@ export default function DashboardScreen() {
     queryFn: api.getSalaryProfile,
   });
 
+  const { data: pendingInstitutionMappings = [] } = useQuery({
+    queryKey: ['/api/institution-mappings/pending'],
+    queryFn: api.getPendingInstitutionMappings,
+  });
+
+  const { data: pendingBillMappings = [] } = useQuery({
+    queryKey: ['/api/bill-mappings/pending'],
+    queryFn: api.getPendingBillMappings,
+  });
+
+  const dismissBillMappingMutation = useMutation({
+    mutationFn: (mappingId: number) => api.ignoreBillMapping(mappingId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/bill-mappings/pending'] });
+    },
+  });
+
   useFocusEffect(
     useCallback(() => {
       queryClient.invalidateQueries({ queryKey: ['/api/dashboard-summary'] });
       queryClient.invalidateQueries({ queryKey: ['/api/next-month-forecast'] });
       queryClient.invalidateQueries({ queryKey: ['/api/salary-profile'] });
       queryClient.invalidateQueries({ queryKey: ['/api/savings-goals'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/institution-mappings/pending'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/bill-mappings/pending'] });
     }, [queryClient])
   );
 
@@ -74,6 +94,8 @@ export default function DashboardScreen() {
       queryClient.refetchQueries({ queryKey: ['/api/dashboard-summary'] }),
       queryClient.refetchQueries({ queryKey: ['/api/next-month-forecast'] }),
       queryClient.refetchQueries({ queryKey: ['/api/savings-goals'] }),
+      queryClient.refetchQueries({ queryKey: ['/api/institution-mappings/pending'] }),
+      queryClient.refetchQueries({ queryKey: ['/api/bill-mappings/pending'] }),
     ]);
     setRefreshing(false);
   }, [queryClient]);
@@ -228,6 +250,77 @@ export default function DashboardScreen() {
     );
   };
 
+  const handleDismissBillMapping = (mapping: { id: number; suggestedName: string | null; institutionKey: string }) => {
+    Alert.alert(
+      'Dismiss this sender?',
+      `Future due-reminder SMS from "${mapping.suggestedName || mapping.institutionKey}" will be logged but never surfaced again.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Dismiss', style: 'destructive', onPress: () => dismissBillMappingMutation.mutate(mapping.id) },
+      ]
+    );
+  };
+
+  const renderBillsInboxSection = () => {
+    if (pendingBillMappings.length === 0) return null;
+    const isOpen = billsAccordion === 'billsInbox';
+
+    return (
+      <View>
+        <TouchableOpacity
+          style={[styles.accordionHeader, { borderBottomColor: colors.border }]}
+          onPress={() => toggleBillsAccordion('billsInbox')}
+          activeOpacity={0.7}
+        >
+          <View style={[styles.accordionIconWrap, { backgroundColor: '#14b8a615' }]}>
+            <Ionicons name="file-tray-full-outline" size={16} color="#14b8a6" />
+          </View>
+          <View style={styles.accordionTitleArea}>
+            <Text style={[styles.accordionTitle, { color: colors.text }]}>Bills Inbox</Text>
+            <Text style={[styles.accordionSubtitle, { color: colors.textMuted }]}>
+              {pendingBillMappings.length} need{pendingBillMappings.length === 1 ? 's' : ''} review
+            </Text>
+          </View>
+          <View style={styles.accordionRight}>
+            <Ionicons name={isOpen ? 'chevron-up' : 'chevron-down'} size={14} color={colors.textMuted} />
+          </View>
+        </TouchableOpacity>
+        {isOpen && (
+          <View style={styles.accordionContent}>
+            {pendingBillMappings.map((mapping) => (
+              <TouchableOpacity
+                key={`bill-mapping-${mapping.id}`}
+                style={[styles.billDetailRow, { borderBottomColor: colors.border }]}
+                onPress={() => navigation.navigate('More' as any, { screen: 'BillsInbox' })}
+                activeOpacity={0.7}
+              >
+                <View style={[styles.billStatusDot, { backgroundColor: '#14b8a6' }]} />
+                <View style={styles.billDetailInfo}>
+                  <Text style={[styles.billDetailName, { color: colors.text }]} numberOfLines={1}>
+                    {mapping.suggestedName || mapping.institutionKey}
+                  </Text>
+                  <View style={styles.billMetaRow}>
+                    <Text style={[styles.billSubLabel, { color: colors.textMuted }]}>
+                      {mapping.latestAmount != null ? formatCurrency(mapping.latestAmount) : 'Amount unknown'}
+                      {mapping.latestDueDate ? ` · Due ${format(new Date(mapping.latestDueDate), 'd MMM')}` : ''}
+                    </Text>
+                  </View>
+                </View>
+                <TouchableOpacity
+                  style={styles.dismissBtn}
+                  onPress={() => handleDismissBillMapping(mapping)}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                >
+                  <Ionicons name="close-circle-outline" size={20} color="#ef4444" />
+                </TouchableOpacity>
+              </TouchableOpacity>
+            ))}
+          </View>
+        )}
+      </View>
+    );
+  };
+
   const { billsDueDetails } = summary;
   const totalBillsCount =
     (billsDueDetails?.scheduledPayments?.length || 0) +
@@ -285,6 +378,28 @@ export default function DashboardScreen() {
                 <View style={styles.salaryBannerText}>
                   <Text style={[styles.salaryBannerTitle, { color: colors.text }]}>Set up Salary Profile</Text>
                   <Text style={[styles.salaryBannerSub, { color: colors.textMuted }]}>Track your income and plan finances better</Text>
+                </View>
+              </View>
+              <Ionicons name="chevron-forward" size={18} color="#f59e0b" />
+            </TouchableOpacity>
+          )}
+
+          {pendingInstitutionMappings.length > 0 && (
+            <TouchableOpacity
+              style={[styles.salaryBanner, { backgroundColor: '#f59e0b18', borderColor: '#f59e0b40' }]}
+              onPress={() => navigation.navigate('More' as any, { screen: 'InstitutionMappings' })}
+              activeOpacity={0.7}
+              data-testid="button-new-accounts-detected"
+            >
+              <View style={styles.salaryBannerLeft}>
+                <View style={[styles.salaryBannerIcon, { backgroundColor: '#f59e0b25' }]}>
+                  <Ionicons name="help-buoy-outline" size={20} color="#f59e0b" />
+                </View>
+                <View style={styles.salaryBannerText}>
+                  <Text style={[styles.salaryBannerTitle, { color: colors.text }]}>New Accounts Detected</Text>
+                  <Text style={[styles.salaryBannerSub, { color: colors.textMuted }]}>
+                    {pendingInstitutionMappings.length} sender{pendingInstitutionMappings.length === 1 ? '' : 's'} need{pendingInstitutionMappings.length === 1 ? 's' : ''} to be mapped
+                  </Text>
                 </View>
               </View>
               <Ionicons name="chevron-forward" size={18} color="#f59e0b" />
@@ -468,6 +583,7 @@ export default function DashboardScreen() {
                       )}
                     </>
                   )}
+                  {renderBillsInboxSection()}
                 </View>
               )}
 
@@ -1481,6 +1597,9 @@ const styles = StyleSheet.create({
   billDetailRight: {
     alignItems: 'flex-end',
     gap: 2,
+  },
+  dismissBtn: {
+    padding: 4,
   },
   billDetailAmt: {
     fontSize: 13,

@@ -1097,7 +1097,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       const payment = await storage.createScheduledPayment(validatedData);
       console.log("  ✅ Scheduled payment created successfully:", payment.id);
-      
+
+      // Day-interval payments (e.g. phone recharge every 84 days) aren't picked up by the
+      // month-batch generator — create the first occurrence directly, anchored off the date
+      // the user says they last paid/recharged.
+      if (payment.frequency === 'day_interval' && payment.customIntervalDays) {
+        const anchorDate = req.body.lastPaidDate ? new Date(req.body.lastPaidDate) : new Date();
+        const dueDateObj = new Date(anchorDate.getTime() + payment.customIntervalDays * 24 * 60 * 60 * 1000);
+        await storage.createPaymentOccurrence({
+          scheduledPaymentId: payment.id,
+          month: dueDateObj.getMonth() + 1,
+          year: dueDateObj.getFullYear(),
+          dueDate: dueDateObj,
+          status: 'pending',
+        });
+      }
+
       res.status(201).json(payment);
     } catch (error: any) {
       console.error("❌ [scheduled-payments] POST Error:");
@@ -1354,14 +1369,42 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
 
+      // Variable-amount bills (e.g. electricity) can't be marked paid until this cycle's
+      // actual amount is known — enforced here, not just via the disabled checkbox client-side.
+      const effectiveAmount = otherData.amount ?? currentOccurrence.amount ?? payment.amount;
+      if (otherData.status === 'paid' && payment.variableAmount && !effectiveAmount) {
+        return res.status(400).json({ error: "Enter this cycle's amount before marking it paid" });
+      }
+
       // Update occurrence with new toggle states
-      const updateData = {
+      const updateData: any = {
         ...otherData,
         ...(affectTransaction !== undefined && { affectTransaction }),
         ...(affectAccountBalance !== undefined && { affectAccountBalance }),
       };
-      
+
+      if (otherData.status === 'paid' && updateData.paidAmount === undefined && effectiveAmount) {
+        updateData.paidAmount = effectiveAmount;
+      }
+
       const occurrence = await storage.updatePaymentOccurrence(occurrenceId, updateData);
+
+      // Day-interval payments (e.g. phone recharge every 84 days) have no fixed day-of-month —
+      // the next occurrence rolls forward from the actual paid date, created right here rather
+      // than by the month-batch generator (which explicitly skips this frequency).
+      const isNewlyPaid = otherData.status === 'paid' && currentOccurrence.status !== 'paid';
+      if (occurrence && isNewlyPaid && payment.frequency === 'day_interval' && payment.customIntervalDays) {
+        const anchorDate = occurrence.paidAt ? new Date(occurrence.paidAt) : new Date();
+        const dueDateObj = new Date(anchorDate.getTime() + payment.customIntervalDays * 24 * 60 * 60 * 1000);
+        await storage.createPaymentOccurrence({
+          scheduledPaymentId: payment.id,
+          month: dueDateObj.getMonth() + 1,
+          year: dueDateObj.getFullYear(),
+          dueDate: dueDateObj,
+          status: 'pending',
+        });
+      }
+
       if (occurrence) {
         res.json(occurrence);
       } else {
@@ -2494,7 +2537,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const allInsurances = await storage.getAllInsurances(userId);
-      const activeInsurances = allInsurances.filter(i => i.status === 'active');
+      // Auto-funded policies (e.g. a market/sub policy funded by a main policy's benefit) are
+      // never something the user pays directly — exclude them from due/forecast projections
+      // entirely; their premium history is only meaningful on the policy's own details view.
+      const activeInsurances = allInsurances.filter(i => i.status === 'active' && !i.autoFunded);
       const insuranceBills = [];
       for (const ins of activeInsurances) {
         const premiums = ins.premiums || [];
@@ -2699,7 +2745,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const allInsurances = await storage.getAllInsurances(userId);
-      const activeInsurances = allInsurances.filter(i => i.status === 'active');
+      // Auto-funded policies (e.g. a market/sub policy funded by a main policy's benefit) are
+      // never something the user pays directly — exclude them from due/forecast projections
+      // entirely; their premium history is only meaningful on the policy's own details view.
+      const activeInsurances = allInsurances.filter(i => i.status === 'active' && !i.autoFunded);
       const insuranceItems: any[] = [];
       let totalInsurance = 0;
       for (const ins of activeInsurances) {

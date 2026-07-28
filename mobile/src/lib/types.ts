@@ -36,6 +36,21 @@ export interface SenderInstitutionMapping {
   latestReceivedAt: string | null;
 }
 
+export interface PendingBillMapping {
+  id: number;
+  userId: number;
+  institutionKey: string;
+  status: 'pending' | 'mapped' | 'ignored';
+  scheduledPaymentId: number | null;
+  suggestedName: string | null;
+  lastSeenAt: string;
+  createdAt: string;
+  latestAmount: number | null;
+  latestDueDate: string | null;
+  latestReceivedAt: string | null;
+  latestMessage: string | null;
+}
+
 export interface Category {
   id: number;
   name: string;
@@ -566,11 +581,14 @@ export interface Insurance {
   status: 'active' | 'expired' | 'cancelled' | 'lapsed' | 'paid_up';
   createTransaction: boolean;
   affectBalance: boolean;
+  autoFunded: boolean;
+  linkedInsuranceId: number | null;
   notes: string | null;
   createdAt: string;
   updatedAt: string;
   account?: Account | null;
   premiums?: InsurancePremium[];
+  linkedInsurance?: Insurance | null;
 }
 
 export interface InsurancePremium {
@@ -609,6 +627,8 @@ export interface InsertInsurance {
   accountId?: number;
   createTransaction?: boolean;
   affectBalance?: boolean;
+  autoFunded?: boolean;
+  linkedInsuranceId?: number | null;
   notes?: string;
 }
 
