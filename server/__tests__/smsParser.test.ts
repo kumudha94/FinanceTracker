@@ -258,6 +258,52 @@ test("non-due, non-transaction SMS is rejected by both parsers", () => {
   assert.equal(parseDueSms(promo), null);
 });
 
+// ── NEFT/RTGS/IMPS payer name extraction ────────────────────────────────────
+
+test("NEFT credit narration extracts the actual payer, not trailing sentence text", () => {
+  const r = parseSmsByRegex(
+    "Update! INR 1,86,162.00 deposited in HDFC Bank A/c XX7900 on 29-JUL-26 for NEFT Cr-CITI0000003-COMCAST INDIA ENGG CTR I LLP-SEZ-Kumudha Glory-CITIN26705118988.Avl bal INR 1,87,592.10. Cheque deposits in A/C are subject to clearing"
+  );
+  assert(r !== null);
+  assert.equal(r!.type, "credit");
+  assert.equal(r!.amount, 186162);
+  assert.equal(r!.merchant, "COMCAST INDIA ENGG CTR I LLP");
+});
+
+test("merchant extraction rejects lowercase false positives from unrelated sentences", () => {
+  const r = parseSmsByRegex(
+    "Rs.500 debited from A/c XX1234 on 04-Jun-26. Please note this is subject to clearing rules."
+  );
+  assert(r !== null);
+  assert.notEqual(r!.merchant, "clearing");
+});
+
+// ── E-mandate / subscription pre-notifications ──────────────────────────────
+
+test("e-mandate pre-notification is not misclassified as a completed transaction", () => {
+  const msg = `E-Mandate!
+Rs.139.00 will be deducted on 31/07/26, 00:00:00
+For SPOTIFY INDIA PVT LTD mandate
+UMN 4d226b3fcc966fe1e063e9eee20ae2fc@okhdfcbank
+Maintain Balance
+-HDFC Bank`;
+  assert.equal(parseSmsByRegex(msg), null);
+});
+
+test("e-mandate pre-notification routes to parseDueSms with provider name", () => {
+  const msg = `E-Mandate!
+Rs.139.00 will be deducted on 31/07/26, 00:00:00
+For SPOTIFY INDIA PVT LTD mandate
+UMN 4d226b3fcc966fe1e063e9eee20ae2fc@okhdfcbank
+Maintain Balance
+-HDFC Bank`;
+  const r = parseDueSms(msg);
+  assert(r !== null);
+  assert.equal(r!.amount, 139);
+  assert.equal(r!.providerName, "SPOTIFY INDIA PVT LTD");
+  assert.equal(r!.dueDate, "2026-07-31T00:00:00.000Z");
+});
+
 // ── Summary ────────────────────────────────────────────────────────────────
 console.log(`\n=== Results: ${passed} passed, ${failed} failed ===\n`);
 if (failed > 0) process.exit(1);

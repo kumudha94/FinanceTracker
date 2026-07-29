@@ -21,11 +21,13 @@ export default function AddScheduledPaymentScreen() {
   
   const paymentId = route.params?.paymentId;
   const isEditMode = !!paymentId;
-  
-  const [name, setName] = useState('');
-  const [amount, setAmount] = useState('');
+  const linkBillMappingId = route.params?.linkBillMappingId;
+  const prefill = route.params?.prefill;
+
+  const [name, setName] = useState(prefill?.name || '');
+  const [amount, setAmount] = useState(prefill?.amount || '');
   const [dueDateType, setDueDateType] = useState<'fixed_day' | 'salary_day'>('fixed_day');
-  const [dueDate, setDueDate] = useState('');
+  const [dueDate, setDueDate] = useState(prefill?.dueDate?.toString() || '');
   const [notes, setNotes] = useState('');
   const [selectedCategoryId, setSelectedCategoryId] = useState<number | null>(null);
   const [selectedAccountId, setSelectedAccountId] = useState<number | null>(null);
@@ -109,14 +111,22 @@ export default function AddScheduledPaymentScreen() {
   }, [isEditMode, payments, paymentId, accounts]);
 
   const createMutation = useMutation({
-    mutationFn: api.createScheduledPayment,
+    // If this came from Bills Inbox, route through the endpoint that creates AND links the
+    // mapping in one step, so resolving the Bills Inbox entry doesn't need a separate call.
+    mutationFn: async (data: any): Promise<any> => {
+      if (linkBillMappingId) {
+        return api.createScheduledPaymentForBillMapping(linkBillMappingId, data);
+      }
+      return api.createScheduledPayment(data);
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/scheduled-payments'] });
       queryClient.invalidateQueries({ queryKey: ['/api/dashboard'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/bill-mappings/pending'] });
       Toast.show({
         type: 'success',
         text1: 'Payment Added',
-        text2: 'Scheduled payment has been created',
+        text2: linkBillMappingId ? 'Scheduled payment created and linked' : 'Scheduled payment has been created',
         position: 'bottom',
       });
       navigation.goBack();

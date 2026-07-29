@@ -3,6 +3,7 @@ import {
   paymentOccurrences, savingsGoals, savingsContributions, salaryProfiles, salaryCycles,
   loans, loanComponents, loanInstallments, loanTerms, loanPayments, loanBtAllocations, cardDetails,
   insurances, insurancePremiums, creditCardStatements, senderInstitutionMappings, billSenderMappings,
+  forecastExclusions,
   type User, type InsertUser,
   type Account, type InsertAccount,
   type Category, type InsertCategory,
@@ -27,6 +28,7 @@ import {
   type SmsLog, type InsertSmsLog,
   type SenderInstitutionMapping, type InsertSenderInstitutionMapping,
   type BillSenderMapping, type InsertBillSenderMapping,
+  type ForecastExclusion, type InsertForecastExclusion,
   type DashboardStats,
   DEFAULT_CATEGORIES
 } from "@shared/schema";
@@ -81,6 +83,7 @@ export interface IStorage {
   }): Promise<TransactionWithRelations[]>;
   getTransaction(id: number): Promise<TransactionWithRelations | undefined>;
   getTransactionByReferenceNumber(userId: number, referenceNumber: string): Promise<Transaction | undefined>;
+  getTransactionByFallbackKey(userId: number, accountId: number, amount: string, type: string, date: Date): Promise<Transaction | undefined>;
   createTransaction(transaction: InsertTransaction): Promise<Transaction>;
   updateTransaction(id: number, transaction: Partial<InsertTransaction>): Promise<Transaction>;
   deleteTransaction(id: number): Promise<boolean>;
@@ -132,6 +135,10 @@ export interface IStorage {
   getPendingBillSenderMappings(userId: number): Promise<BillSenderMapping[]>;
   resolveBillSenderMapping(id: number, data: { status: 'mapped' | 'ignored'; scheduledPaymentId?: number }): Promise<BillSenderMapping | undefined>;
   getSmsLogsForBillMapping(billMappingId: number): Promise<SmsLog[]>;
+
+  // Forecast Exclusions
+  getForecastExclusions(userId: number, cycleStart: Date): Promise<ForecastExclusion[]>;
+  toggleForecastExclusion(userId: number, itemType: string, itemId: string, cycleStart: Date): Promise<{ excluded: boolean }>;
 
   // Payment Occurrences
   getPaymentOccurrences(filters?: { userId?: number; month?: number; year?: number; scheduledPaymentId?: number }): Promise<(PaymentOccurrence & { scheduledPayment?: ScheduledPayment })[]>;
@@ -594,6 +601,24 @@ export class DatabaseStorage implements IStorage {
   async getTransactionByReferenceNumber(userId: number, referenceNumber: string): Promise<Transaction | undefined> {
     const [result] = await db.select().from(transactions)
       .where(and(eq(transactions.userId, userId), eq(transactions.referenceNumber, referenceNumber)));
+    return result || undefined;
+  }
+
+  // Fallback dedupe for SMS with no reference number — matches same account, amount, type,
+  // and calendar day. Used by rescans, where the same historical SMS could otherwise be
+  // re-added on a repeat scan.
+  async getTransactionByFallbackKey(userId: number, accountId: number, amount: string, type: string, date: Date): Promise<Transaction | undefined> {
+    const dayStart = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0);
+    const dayEnd = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 23, 59, 59, 999);
+    const [result] = await db.select().from(transactions)
+      .where(and(
+        eq(transactions.userId, userId),
+        eq(transactions.accountId, accountId),
+        eq(transactions.amount, amount),
+        eq(transactions.type, type),
+        gte(transactions.transactionDate, dayStart),
+        lte(transactions.transactionDate, dayEnd),
+      ));
     return result || undefined;
   }
 
@@ -1271,6 +1296,33 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(smsLogs)
       .where(eq(smsLogs.billMappingId, billMappingId))
       .orderBy(desc(smsLogs.receivedAt));
+  }
+
+  // Forecast Exclusions
+  async getForecastExclusions(userId: number, cycleStart: Date): Promise<ForecastExclusion[]> {
+    return db.select().from(forecastExclusions)
+      .where(and(
+        eq(forecastExclusions.userId, userId),
+        eq(forecastExclusions.cycleStart, cycleStart),
+      ));
+  }
+
+  async toggleForecastExclusion(userId: number, itemType: string, itemId: string, cycleStart: Date): Promise<{ excluded: boolean }> {
+    const [existing] = await db.select().from(forecastExclusions)
+      .where(and(
+        eq(forecastExclusions.userId, userId),
+        eq(forecastExclusions.itemType, itemType),
+        eq(forecastExclusions.itemId, itemId),
+        eq(forecastExclusions.cycleStart, cycleStart),
+      ));
+
+    if (existing) {
+      await db.delete(forecastExclusions).where(eq(forecastExclusions.id, existing.id));
+      return { excluded: false };
+    }
+
+    await db.insert(forecastExclusions).values({ userId, itemType, itemId, cycleStart });
+    return { excluded: true };
   }
 
   // Dashboard Analytics
@@ -2484,21 +2536,21 @@ export class DatabaseStorage implements IStorage {
       ? await db.select().from(insurances).where(eq(insurances.userId, userId)).orderBy(desc(insurances.createdAt))
       : await db.select().from(insurances).orderBy(desc(insurances.createdAt));
 
-    const insurancesWithRelations: InsuranceWithRelations[] = [];
-    for (const insurance of allInsurances) {
-      const [account] = insurance.accountId
-        ? await db.select().from(accounts).where(eq(accounts.id, insurance.accountId))
-        : [null];
-      let premiums = await db.select().from(insurancePremiums)
-        .where(eq(insurancePremiums.insuranceId, insurance.id))
-        .orderBy(insurancePremiums.dueDate);
-      premiums = await this.reconcileAutoFundedPremiums(insurance, premiums);
-      const [linkedInsurance] = insurance.linkedInsuranceId
-        ? await db.select().from(insurances).where(eq(insurances.id, insurance.linkedInsuranceId))
-        : [null];
-      insurancesWithRelations.push({ ...insurance, account, premiums, linkedInsurance });
-    }
-    return insurancesWithRelations;
+    // Each insurance's account/premiums/linked-policy lookups are independent of the other
+    // insurances — was previously 3+ sequential queries repeated per insurance in a for-loop.
+    return Promise.all(allInsurances.map(async (insurance) => {
+      const [accountRows, rawPremiums, linkedRows] = await Promise.all([
+        insurance.accountId
+          ? db.select().from(accounts).where(eq(accounts.id, insurance.accountId))
+          : Promise.resolve([] as Account[]),
+        db.select().from(insurancePremiums).where(eq(insurancePremiums.insuranceId, insurance.id)).orderBy(insurancePremiums.dueDate),
+        insurance.linkedInsuranceId
+          ? db.select().from(insurances).where(eq(insurances.id, insurance.linkedInsuranceId))
+          : Promise.resolve([] as Insurance[]),
+      ]);
+      const premiums = await this.reconcileAutoFundedPremiums(insurance, rawPremiums);
+      return { ...insurance, account: accountRows[0], premiums, linkedInsurance: linkedRows[0] };
+    }));
   }
 
   async getInsurance(id: number): Promise<InsuranceWithRelations | undefined> {

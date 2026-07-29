@@ -13,6 +13,7 @@ export interface ParsedDueSmsData {
   amount: number;
   dueDate?: string;
   cardLastFourDigits?: string;
+  providerName?: string;
 }
 
 const DEBIT_KEYWORDS = [
@@ -26,8 +27,15 @@ const CREDIT_KEYWORDS = [
 
 const DUE_KEYWORDS = [
   "dues of", "minimum due", "total due", "total outstanding",
-  "outstanding amount", "amount due", "bill amount", "payment due"
+  "outstanding amount", "amount due", "bill amount", "payment due",
+  "e-mandate", "will be deducted", "will be debited"
 ];
+
+// "X will be deducted/debited on <future date>" (e-mandate / subscription pre-notifications)
+// use the same verbs as a completed transaction ("deducted", "debited") but describe something
+// that HASN'T happened yet — must be checked before the debit/credit keyword match, or these
+// get recorded as completed transactions dated in the future.
+const PRE_NOTIFICATION_PATTERNS = [/e-mandate/i, /will be deducted/i, /will be debited/i];
 
 const MONTHS: Record<string, number> = {
   jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6,
@@ -108,7 +116,19 @@ function extractReferenceNumber(msg: string): string | undefined {
   return undefined;
 }
 
+// Inward remittance narrations (NEFT/RTGS/IMPS credit) follow a fixed dash-delimited shape:
+// "NEFT Cr-<sender/IFSC code>-<PAYER NAME>-<purpose>-<UTR>" — the payer name is always the
+// segment right after the sender code, which a generic "for X" pattern can't reliably isolate
+// since the whole narration runs together as one long hyphenated string.
+const REMITTANCE_PAYER_PATTERN = /(?:NEFT|RTGS|IMPS)\s+Cr-[A-Z0-9]+-([A-Za-z0-9 &.]+?)-/i;
+
 function extractMerchant(msg: string): string | undefined {
+  const remittanceMatch = msg.match(REMITTANCE_PAYER_PATTERN);
+  if (remittanceMatch) {
+    const candidate = remittanceMatch[1].trim();
+    if (candidate.length >= 2) return candidate;
+  }
+
   const patterns = [
     /\bat\s+([A-Z][A-Z0-9 &\-\.]{2,35}?)(?:\.|,|\s+on\s|\s+avl|\s+ref|\s*\n|$)/i,
     /\bto\s+(?:upi-)?([A-Z][A-Z0-9 &\-\.@]{2,35}?)(?:\.|,|\s+on\s|\s+avl|\s+ref|\s*\n|$)/i,
@@ -120,7 +140,10 @@ function extractMerchant(msg: string): string | undefined {
     const match = msg.match(pattern);
     if (match) {
       const candidate = match[1].trim();
-      if (!candidate.match(/^\d/) && candidate.length >= 2) {
+      // These patterns are case-insensitive (needed so terminators like "avl"/"on" also match
+      // "Avl"/"On" in real messages), which defeats [A-Z] as a "looks like a proper name" filter
+      // baked into the pattern itself — so re-check case explicitly here, outside the /i match.
+      if (/^[A-Z]/.test(candidate) && !candidate.match(/^\d/) && candidate.length >= 2) {
         return candidate;
       }
     }
@@ -175,6 +198,13 @@ export function parseSmsByRegex(message: string, sender?: string): ParsedSmsData
     return null;
   }
 
+  // "Will be deducted/debited" (e-mandate, subscription pre-notifications) describes a future
+  // event, not a completed one — must be excluded before the debit-keyword check below, which
+  // would otherwise match "deducted"/"debited" and record it as an already-completed transaction.
+  if (PRE_NOTIFICATION_PATTERNS.some(p => p.test(message))) {
+    return null;
+  }
+
   const type = extractType(lowerMsg);
   if (!type) return null;
 
@@ -214,6 +244,19 @@ export function parseDueSms(message: string): ParsedDueSmsData | null {
 
   const dueDate = extractDate(message);
   const cardLastFourDigits = extractAccountLastDigits(message);
+  const providerName = extractProviderName(message);
 
-  return { amount, dueDate, cardLastFourDigits };
+  return { amount, dueDate, cardLastFourDigits, providerName };
+}
+
+// E-mandate / subscription pre-notifications name the payee as "For X mandate" or
+// "For X Ltd mandate" — distinct from extractMerchant's transaction-narration patterns, since
+// this phrasing is specific to future-dated mandate alerts, not completed spends.
+function extractProviderName(msg: string): string | undefined {
+  const match = msg.match(/\bfor\s+([A-Za-z0-9 &.]+?)\s+mandate\b/i);
+  if (match) {
+    const candidate = match[1].trim();
+    if (candidate.length >= 2) return candidate;
+  }
+  return undefined;
 }

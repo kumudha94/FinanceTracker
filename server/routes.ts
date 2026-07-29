@@ -2342,8 +2342,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const creditCardAccounts = await storage.getAllAccounts(userId);
       const creditCards = creditCardAccounts.filter(a => a.type === 'credit_card' && a.isActive);
-      const creditCardSpending = [];
-      for (const card of creditCards) {
+      // One transaction-history query per card, run concurrently instead of awaited in sequence.
+      const creditCardSpending = await Promise.all(creditCards.map(async (card) => {
         let cycleStartDate: Date;
         let cycleEndDate: Date;
         if (card.billingDate) {
@@ -2376,7 +2376,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           if (percentage >= 100) color = '#ef4444';
           else if (percentage >= 80) color = '#eab308';
         }
-        creditCardSpending.push({
+        return {
           accountId: card.id,
           accountName: card.name,
           bankName: card.bankName || '',
@@ -2384,8 +2384,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           limit,
           percentage,
           color,
-        });
-      }
+        };
+      }));
 
       const incomeByAccount = new Map<number, { accountId: number; accountName: string; bankName: string; amount: number }>();
       for (const t of monthTransactions.filter(t => t.type === 'credit')) {
@@ -2417,8 +2417,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const scheduledPaymentsBills = [];
       const manualCreditCardBills = [];
-      for (const p of activePayments) {
-        if (!isPaymentDueThisMonth(p)) continue;
+      // Each payment's bill item is independent of the others — was previously one query per
+      // payment awaited in sequence; running them concurrently is what actually cuts load time
+      // (this loop alone can be a dozen+ sequential round-trips to Neon on a real account).
+      const duePaymentsThisMonth = activePayments.filter(isPaymentDueThisMonth);
+      const billItems = await Promise.all(duePaymentsThisMonth.map(async (p) => {
         const occurrences = await storage.getPaymentOccurrences({
           scheduledPaymentId: p.id,
           month: currentMonth,
@@ -2429,7 +2432,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const paidAmount = occurrence?.paidAmount ? parseFloat(occurrence.paidAmount) : 0;
 
         let amount = parseFloat(p.amount || '0');
-        
+
         // If amount is 0 for credit card bill (auto-calculate), fetch the actual billing cycle amount
         if (amount === 0 && p.paymentType === 'credit_card_bill' && p.creditCardAccountId) {
           const creditCardAccount = await storage.getAccount(p.creditCardAccountId);
@@ -2447,83 +2450,87 @@ export async function registerRoutes(app: Express): Promise<Server> {
           }
         }
 
-        const billItem = {
-          id: p.id,
-          name: p.name,
-          amount,
-          dueDate: p.dueDate,
-          dueDateType: p.dueDateType || 'fixed_day',
-          frequency: p.frequency || 'monthly',
-          isPaid,
-          paidAmount,
-          status: isPaid ? 'paid' : (p.dueDate && p.dueDate < today ? 'overdue' : 'pending'),
+        return {
+          paymentType: p.paymentType,
+          billItem: {
+            id: p.id,
+            name: p.name,
+            amount,
+            dueDate: p.dueDate,
+            dueDateType: p.dueDateType || 'fixed_day',
+            frequency: p.frequency || 'monthly',
+            isPaid,
+            paidAmount,
+            status: isPaid ? 'paid' : (p.dueDate && p.dueDate < today ? 'overdue' : 'pending'),
+          },
         };
+      }));
 
-        if (p.paymentType === 'credit_card_bill') {
+      for (const { paymentType, billItem } of billItems) {
+        if (paymentType === 'credit_card_bill') {
           manualCreditCardBills.push(billItem);
         } else {
           scheduledPaymentsBills.push(billItem);
         }
       }
 
-      const creditCardBills: any[] = [];
       const manualCCAccountIds = new Set(
         activePayments.filter(p => p.paymentType === 'credit_card_bill').map(p => p.creditCardAccountId).filter(Boolean)
       );
-      for (const card of creditCards) {
-        if (manualCCAccountIds.has(card.id)) continue;
-        if (!card.billingDate) continue;
-        const billingDay = card.billingDate;
-        let prevCycleStart: Date;
-        let prevCycleEnd: Date;
-        if (today >= billingDay) {
-          prevCycleStart = new Date(now.getFullYear(), now.getMonth() - 1, billingDay, 0, 0, 0);
-          prevCycleEnd = new Date(now.getFullYear(), now.getMonth(), billingDay - 1, 23, 59, 59);
-        } else {
-          prevCycleStart = new Date(now.getFullYear(), now.getMonth() - 2, billingDay, 0, 0, 0);
-          prevCycleEnd = new Date(now.getFullYear(), now.getMonth() - 1, billingDay - 1, 23, 59, 59);
-        }
-        const prevCycleTxns = await storage.getAllTransactions({
-          userId,
-          accountId: card.id,
-          startDate: prevCycleStart,
-          endDate: prevCycleEnd,
-        });
-        const billAmount = prevCycleTxns
-          .filter(t => t.type === 'debit')
-          .reduce((sum, t) => sum + parseFloat(t.amount), 0);
-        if (billAmount > 0) {
-          const creditLimit = card.creditLimit ? parseFloat(card.creditLimit) : null;
-          creditCardBills.push({
-            id: `cc-auto-${card.id}`,
-            name: `${card.name} Bill`,
-            amount: billAmount,
-            dueDate: billingDay,
-            dueDateType: 'fixed_day',
-            frequency: 'monthly',
-            isPaid: false,
-            paidAmount: 0,
-            status: billingDay < today ? 'overdue' : billingDay === today ? 'due_today' : 'pending',
-            creditLimit,
-            bankName: card.bankName || '',
-            isAutoCalculated: true,
-          });
-        }
-      }
-      creditCardBills.push(...manualCreditCardBills);
+      const autoCreditCardBills = (await Promise.all(
+        creditCards
+          .filter(card => !manualCCAccountIds.has(card.id) && card.billingDate)
+          .map(async (card) => {
+            const billingDay = card.billingDate!;
+            let prevCycleStart: Date;
+            let prevCycleEnd: Date;
+            if (today >= billingDay) {
+              prevCycleStart = new Date(now.getFullYear(), now.getMonth() - 1, billingDay, 0, 0, 0);
+              prevCycleEnd = new Date(now.getFullYear(), now.getMonth(), billingDay - 1, 23, 59, 59);
+            } else {
+              prevCycleStart = new Date(now.getFullYear(), now.getMonth() - 2, billingDay, 0, 0, 0);
+              prevCycleEnd = new Date(now.getFullYear(), now.getMonth() - 1, billingDay - 1, 23, 59, 59);
+            }
+            const prevCycleTxns = await storage.getAllTransactions({
+              userId,
+              accountId: card.id,
+              startDate: prevCycleStart,
+              endDate: prevCycleEnd,
+            });
+            const billAmount = prevCycleTxns
+              .filter(t => t.type === 'debit')
+              .reduce((sum, t) => sum + parseFloat(t.amount), 0);
+            if (billAmount <= 0) return null;
+            const creditLimit = card.creditLimit ? parseFloat(card.creditLimit) : null;
+            return {
+              id: `cc-auto-${card.id}`,
+              name: `${card.name} Bill`,
+              amount: billAmount,
+              dueDate: billingDay,
+              dueDateType: 'fixed_day',
+              frequency: 'monthly',
+              isPaid: false,
+              paidAmount: 0,
+              status: billingDay < today ? 'overdue' : billingDay === today ? 'due_today' : 'pending',
+              creditLimit,
+              bankName: card.bankName || '',
+              isAutoCalculated: true,
+            };
+          })
+      )).filter((bill): bill is NonNullable<typeof bill> => bill !== null);
+      const creditCardBills: any[] = [...autoCreditCardBills, ...manualCreditCardBills];
 
       const loans = await storage.getAllLoans(userId);
       const activeLoans = loans.filter(l => l.status === 'active');
       const totalEMI = activeLoans.reduce((sum, l) => sum + parseFloat(l.emiAmount || '0'), 0);
 
-      const loanBills = [];
-      for (const loan of activeLoans) {
+      const loanBills = await Promise.all(activeLoans.map(async (loan) => {
         const installments = await storage.getLoanInstallments(loan.id);
         const currentInstallment = installments.find(inst => {
           const d = new Date(inst.dueDate);
           return d.getMonth() + 1 === currentMonth && d.getFullYear() === currentYear;
         });
-        loanBills.push({
+        return {
           id: loan.id,
           name: loan.name,
           loanType: loan.type,
@@ -2533,8 +2540,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           paidAmount: currentInstallment?.paidAmount ? parseFloat(currentInstallment.paidAmount) : 0,
           status: currentInstallment?.status || (loan.emiDay && loan.emiDay < today ? 'overdue' : 'pending'),
           lenderName: loan.lenderName || '',
-        });
-      }
+        };
+      }));
 
       const allInsurances = await storage.getAllInsurances(userId);
       // Auto-funded policies (e.g. a market/sub policy funded by a main policy's benefit) are
@@ -2569,6 +2576,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
         loanBills.filter(b => !b.isPaid).reduce((s, b) => s + b.amount, 0) +
         insuranceBills.filter(b => !b.isPaid).reduce((s, b) => s + b.amount, 0);
 
+      // Savings progress for the current cycle — sum of contributions (not goal balances) made
+      // to active goals within this cycle's date range, so it reads as "progress this cycle"
+      // rather than an all-time total.
+      const activeSavingsGoals = await storage.getAllSavingsGoals(userId);
+      const savedThisCycleByGoal = await Promise.all(
+        activeSavingsGoals.filter(g => g.status === 'active').map(async (goal) => {
+          const contributions = await storage.getSavingsContributions(goal.id);
+          return contributions
+            .filter(c => {
+              const contributedAt = new Date(c.contributedAt);
+              return contributedAt >= startOfMonth && contributedAt <= endOfMonth;
+            })
+            .reduce((sum, c) => sum + parseFloat(c.amount), 0);
+        })
+      );
+      const savedThisCycle = savedThisCycleByGoal.reduce((sum, amount) => sum + amount, 0);
+
       const lastTransactions = await storage.getAllTransactions({ userId, limit: 5 });
 
       const cycleDatesObj = getCurrentCycleDates(salaryProfile, lastSalaryCycle, now);
@@ -2593,6 +2617,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         totalEMI,
         activeLoansCount: activeLoans.length,
         lastTransactions,
+        savedThisCycle,
         cycleInfo: {
           cycleStartFormatted: cycleDatesObj.cycleStartFormatted,
           cycleEndFormatted: cycleDatesObj.cycleEndFormatted,
@@ -2622,6 +2647,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const nextCycle = getNextCycleDates(salaryProfile, lastSalaryCycle, now);
       const { month: nextMonth, year: nextYear } = getCyclePrimaryMonth(nextCycle.cycleStart, nextCycle.cycleEnd);
       const monthLabel = nextCycle.cycleLabel;
+
+      // Items the user has opted out of this specific cycle's Income/Outflow/Balance totals —
+      // still shown in the list (so it's obvious they exist and can be re-included), just not
+      // counted toward the sums.
+      const exclusions = await storage.getForecastExclusions(userId, nextCycle.cycleStart);
+      const excludedKeys = new Set(exclusions.map(e => `${e.itemType}:${e.itemId}`));
+      const isExcluded = (itemType: string, itemId: string | number) => excludedKeys.has(`${itemType}:${itemId}`);
 
       const salaryItems: any[] = [];
       let totalIncome = 0;
@@ -2712,21 +2744,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const amount = parseFloat(p.amount || '0');
         const freq = p.frequency || 'monthly';
         const freqLabel = freq === 'monthly' ? 'Monthly' : freq === 'quarterly' ? 'Quarterly' : freq === 'half_yearly' ? 'Half Yearly' : freq === 'yearly' ? 'Yearly' : freq === 'custom' ? 'Custom' : '';
+        const excluded = isExcluded('scheduled_payment', p.id);
         scheduledPaymentItems.push({
           id: p.id,
           name: p.name,
           amount,
           dueDate: p.dueDate,
           subLabel: freqLabel,
+          excluded,
         });
-        totalScheduled += amount;
+        if (!excluded) totalScheduled += amount;
       }
 
       const loans = await storage.getAllLoans(userId);
       const activeLoans = loans.filter(l => l.status === 'active');
-      const loanItems: any[] = [];
-      let totalLoans = 0;
-      for (const loan of activeLoans) {
+      const loanItems = await Promise.all(activeLoans.map(async (loan) => {
         const installments = await storage.getLoanInstallments(loan.id);
         const nextInstallment = installments.find(inst => {
           const d = new Date(inst.dueDate);
@@ -2734,15 +2766,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
         const amount = nextInstallment ? parseFloat(nextInstallment.emiAmount) : parseFloat(loan.emiAmount || '0');
         const typeLabel = loan.type === 'home_loan' ? 'Home Loan' : loan.type === 'personal_loan' ? 'Personal Loan' : loan.type === 'credit_card_loan' ? 'CC Loan' : loan.type === 'item_emi' ? 'Item EMI' : 'Loan';
-        loanItems.push({
+        const excluded = isExcluded('loan', loan.id);
+        return {
           id: loan.id,
           name: loan.name,
           amount,
           dueDate: loan.emiDay,
           subLabel: `${typeLabel}${loan.lenderName ? ` · ${loan.lenderName}` : ''}`,
-        });
-        totalLoans += amount;
-      }
+          excluded,
+        };
+      }));
+      const totalLoans = loanItems.filter(item => !item.excluded).reduce((sum, item) => sum + item.amount, 0);
 
       const allInsurances = await storage.getAllInsurances(userId);
       // Auto-funded policies (e.g. a market/sub policy funded by a main policy's benefit) are
@@ -2760,98 +2794,107 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (nextPremium) {
           const amount = parseFloat(nextPremium.amount);
           const typeLabel = ins.type === 'health' ? 'Health' : ins.type === 'life' ? 'Life' : ins.type === 'vehicle' ? 'Vehicle' : ins.type === 'home' ? 'Home' : ins.type === 'term' ? 'Term' : 'Insurance';
+          const excluded = isExcluded('insurance', ins.id);
           insuranceItems.push({
             id: ins.id,
             name: ins.name,
             amount,
             dueDate: new Date(nextPremium.dueDate).getDate(),
             subLabel: `${typeLabel}${ins.providerName ? ` · ${ins.providerName}` : ''}`,
+            excluded,
           });
-          totalInsurance += amount;
+          if (!excluded) totalInsurance += amount;
         }
       }
 
-      const creditCardBillItems: any[] = [];
-      let totalCreditCardBills = 0;
       const allAccounts = await storage.getAllAccounts(userId);
       const ccCards = allAccounts.filter(a => a.type === 'credit_card' && a.isActive && a.billingDate);
       const manualCCIds = new Set(
         activePayments.filter(p => p.paymentType === 'credit_card_bill').map(p => p.creditCardAccountId).filter(Boolean)
       );
-      for (const card of ccCards) {
-        if (manualCCIds.has(card.id)) continue;
-        const billingDay = card.billingDate!;
-        const currentDay = now.getDate();
-        let curCycleStart: Date;
-        let curCycleEnd: Date;
-        if (currentDay >= billingDay) {
-          curCycleStart = new Date(now.getFullYear(), now.getMonth(), billingDay, 0, 0, 0);
-          curCycleEnd = new Date(now.getFullYear(), now.getMonth() + 1, billingDay - 1, 23, 59, 59);
-        } else {
-          curCycleStart = new Date(now.getFullYear(), now.getMonth() - 1, billingDay, 0, 0, 0);
-          curCycleEnd = new Date(now.getFullYear(), now.getMonth(), billingDay - 1, 23, 59, 59);
-        }
-        const curCycleTxns = await storage.getAllTransactions({
-          userId,
-          accountId: card.id,
-          startDate: curCycleStart,
-          endDate: new Date(),
-        });
-        const spentSoFar = curCycleTxns
-          .filter(t => t.type === 'debit')
-          .reduce((sum, t) => sum + parseFloat(t.amount), 0);
-        const creditLimit = card.creditLimit ? parseFloat(card.creditLimit) : null;
-        if (spentSoFar > 0) {
-          creditCardBillItems.push({
-            id: `cc-auto-${card.id}`,
+
+      // Auto-detected credit card bills (spend-based) — one transaction-history query per card,
+      // run concurrently instead of awaited in sequence.
+      const autoCcItems = (await Promise.all(
+        ccCards.filter(card => !manualCCIds.has(card.id)).map(async (card) => {
+          const billingDay = card.billingDate!;
+          const currentDay = now.getDate();
+          let curCycleStart: Date;
+          let curCycleEnd: Date;
+          if (currentDay >= billingDay) {
+            curCycleStart = new Date(now.getFullYear(), now.getMonth(), billingDay, 0, 0, 0);
+            curCycleEnd = new Date(now.getFullYear(), now.getMonth() + 1, billingDay - 1, 23, 59, 59);
+          } else {
+            curCycleStart = new Date(now.getFullYear(), now.getMonth() - 1, billingDay, 0, 0, 0);
+            curCycleEnd = new Date(now.getFullYear(), now.getMonth(), billingDay - 1, 23, 59, 59);
+          }
+          const curCycleTxns = await storage.getAllTransactions({
+            userId,
+            accountId: card.id,
+            startDate: curCycleStart,
+            endDate: new Date(),
+          });
+          const spentSoFar = curCycleTxns
+            .filter(t => t.type === 'debit')
+            .reduce((sum, t) => sum + parseFloat(t.amount), 0);
+          if (spentSoFar <= 0) return null;
+          const creditLimit = card.creditLimit ? parseFloat(card.creditLimit) : null;
+          const itemId = `cc-auto-${card.id}`;
+          return {
+            id: itemId,
             name: `${card.name} Bill`,
             amount: spentSoFar,
             dueDate: billingDay,
             subLabel: `Spent so far this cycle`,
             creditLimit,
-          });
-          totalCreditCardBills += spentSoFar;
-        }
-      }
-      for (const p of activePayments) {
-        if (p.paymentType !== 'credit_card_bill') continue;
-        if (!isPaymentDueNextMonth(p)) continue;
-        if (manualCCIds.has(p.creditCardAccountId)) {
-          let amount = parseFloat(p.amount || '0');
-          
-          // If amount is 0 (auto-calculate), fetch the actual billing cycle amount
-          if (amount === 0 && p.creditCardAccountId) {
-            const creditCardAccount = await storage.getAccount(p.creditCardAccountId);
-            if (creditCardAccount && creditCardAccount.billingDate) {
-              const { getCreditCardBillingCycle } = await import('./salaryUtils');
-              const { cycleStart, cycleEnd } = getCreditCardBillingCycle(now, creditCardAccount.billingDate);
-              const cycleTransactions = await storage.getAllTransactions({
-                accountId: creditCardAccount.id,
-                startDate: cycleStart,
-                endDate: cycleEnd,
-              });
-              amount = cycleTransactions
-                .filter(t => t.type === 'debit')
-                .reduce((sum, t) => sum + parseFloat(t.amount), 0);
+            excluded: isExcluded('credit_card_bill', itemId),
+          };
+        })
+      )).filter((item): item is NonNullable<typeof item> => item !== null);
+
+      // Manually-configured credit card bill payments — same concurrency treatment.
+      const manualCcItems = await Promise.all(
+        activePayments
+          .filter(p => p.paymentType === 'credit_card_bill' && isPaymentDueNextMonth(p) && manualCCIds.has(p.creditCardAccountId))
+          .map(async (p) => {
+            let amount = parseFloat(p.amount || '0');
+
+            // If amount is 0 (auto-calculate), fetch the actual billing cycle amount
+            if (amount === 0 && p.creditCardAccountId) {
+              const creditCardAccount = await storage.getAccount(p.creditCardAccountId);
+              if (creditCardAccount && creditCardAccount.billingDate) {
+                const { getCreditCardBillingCycle } = await import('./salaryUtils');
+                const { cycleStart, cycleEnd } = getCreditCardBillingCycle(now, creditCardAccount.billingDate);
+                const cycleTransactions = await storage.getAllTransactions({
+                  accountId: creditCardAccount.id,
+                  startDate: cycleStart,
+                  endDate: cycleEnd,
+                });
+                amount = cycleTransactions
+                  .filter(t => t.type === 'debit')
+                  .reduce((sum, t) => sum + parseFloat(t.amount), 0);
+              }
             }
-          }
-          
-          let creditLimit: number | null = null;
-          const linkedCard = allAccounts.find(a => a.id === p.creditCardAccountId);
-          if (linkedCard && linkedCard.creditLimit) {
-            creditLimit = parseFloat(linkedCard.creditLimit);
-          }
-          creditCardBillItems.push({
-            id: p.id,
-            name: p.name,
-            amount,
-            dueDate: p.dueDate,
-            subLabel: 'Monthly',
-            creditLimit,
-          });
-          totalCreditCardBills += amount;
-        }
-      }
+
+            let creditLimit: number | null = null;
+            const linkedCard = allAccounts.find(a => a.id === p.creditCardAccountId);
+            if (linkedCard && linkedCard.creditLimit) {
+              creditLimit = parseFloat(linkedCard.creditLimit);
+            }
+            return {
+              id: p.id,
+              name: p.name,
+              amount,
+              dueDate: p.dueDate,
+              subLabel: 'Monthly',
+              creditLimit,
+              excluded: isExcluded('credit_card_bill', p.id),
+            };
+          })
+      );
+
+      const creditCardBillItems: any[] = [...autoCcItems, ...manualCcItems];
+      const totalCreditCardBills = creditCardBillItems.filter(item => !item.excluded).reduce((sum, item) => sum + item.amount, 0);
 
       const totalOutflow = totalScheduled + totalLoans + totalInsurance + totalCreditCardBills;
 
@@ -2878,6 +2921,35 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error fetching next month forecast:", error);
       res.status(500).json({ error: "Failed to fetch next month forecast" });
+    }
+  });
+
+  // Toggle whether a specific item counts toward the Next Cycle Plan's Income/Outflow/Balance
+  // totals — scoped to the upcoming cycle only, so it resets back to included next cycle rather
+  // than silently muting a recurring bill from every future projection.
+  app.post("/api/forecast-exclusions/toggle", authenticateToken, async (req, res) => {
+    try {
+      const userId = req.user!.userId;
+      const { itemType, itemId } = req.body;
+      if (!itemType || itemId === undefined || itemId === null) {
+        return res.status(400).json({ error: "itemType and itemId are required" });
+      }
+
+      const salaryProfile = await storage.getSalaryProfile(userId);
+      let lastSalaryCycle = null;
+      if (salaryProfile) {
+        const recentCycles = await storage.getSalaryCycles(salaryProfile.id, 1);
+        if (recentCycles.length > 0) {
+          lastSalaryCycle = recentCycles[0];
+        }
+      }
+      const nextCycle = getNextCycleDates(salaryProfile, lastSalaryCycle, new Date());
+
+      const result = await storage.toggleForecastExclusion(userId, itemType, String(itemId), nextCycle.cycleStart);
+      res.json(result);
+    } catch (error: any) {
+      console.error("Error toggling forecast exclusion:", error.message);
+      res.status(500).json({ error: error.message || "Failed to toggle forecast exclusion" });
     }
   });
 
@@ -3306,7 +3378,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         userId,
         institutionKey,
         status: "pending",
-        suggestedName: suggestInstitutionName(messageText, institutionKey),
+        // Prefer the provider name actually parsed from the message (e.g. "SPOTIFY INDIA PVT
+        // LTD" from an e-mandate alert) over the generic sender/bank-derived guess.
+        suggestedName: dueData.providerName || suggestInstitutionName(messageText, institutionKey),
       });
     } else {
       await storage.touchBillSenderMapping(mapping.id);
@@ -3351,7 +3425,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const transactionData: any = {
         amount: parsedData.amount!.toString(),
         type: parsedData.type || "debit",
-        transactionDate: parsedData.date || new Date().toISOString(),
+        // Prefer the date embedded in the SMS text; if the message doesn't have one, the
+        // actual received time (accurate for a rescan of historical messages) beats "now".
+        transactionDate: parsedData.date || receivedAt || new Date().toISOString(),
         userId: account.userId,
         accountId: account.id,
       };
@@ -3363,10 +3439,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Banks often send the same transaction from multiple sender IDs (or redeliver the
       // same SMS) — the reference number uniquely identifies the real transaction, so skip
-      // creating a duplicate if one already exists for this user.
+      // creating a duplicate if one already exists for this user. Not every bank SMS has a
+      // parseable reference number, so fall back to matching on account+amount+type+day —
+      // matters most for rescans, which can otherwise re-add the same historical SMS.
       const existingTransaction = parsedData.referenceNumber
         ? await storage.getTransactionByReferenceNumber(account.userId, parsedData.referenceNumber)
-        : undefined;
+        : await storage.getTransactionByFallbackKey(
+            account.userId, account.id, transactionData.amount, transactionData.type, new Date(transactionData.transactionDate)
+          );
 
       const smsLog = await storage.createSmsLog(smsLogData);
 
@@ -3428,6 +3508,85 @@ export async function registerRoutes(app: Express): Promise<Server> {
     return { success: true, transaction: null, pendingReview: true, institutionKey, parsed: parsedData };
   }
 
+  type PreviewSmsResult = {
+    message: string;
+    sender?: string;
+    receivedAt?: string;
+    status: 'new' | 'duplicate' | 'unmatched' | 'unparseable';
+    amount?: number;
+    type?: 'debit' | 'credit';
+    merchant?: string;
+    date?: string;
+    matchedAccountName?: string;
+  };
+
+  // Read-only counterpart to processSingleSms, used by the rescan preview — parses and checks
+  // for a duplicate/account match exactly like the real path, but never creates anything.
+  async function previewSingleSms(
+    messageText: string,
+    sender: string | undefined,
+    receivedAt: string | undefined,
+    accounts: Awaited<ReturnType<typeof storage.getAllAccounts>>
+  ): Promise<PreviewSmsResult> {
+    const parsedData = await parseSmsMessage(messageText, sender);
+
+    if (!parsedData || !parsedData.amount) {
+      return { message: messageText, sender, receivedAt, status: 'unparseable' };
+    }
+
+    const base = {
+      message: messageText,
+      sender,
+      receivedAt,
+      amount: parsedData.amount,
+      type: parsedData.type,
+      merchant: parsedData.merchant,
+      date: parsedData.date,
+    };
+
+    const matchedAccount = matchAccountBySender(accounts, sender || "", parsedData.accountLastDigits);
+    if (!matchedAccount) {
+      return { ...base, status: 'unmatched' };
+    }
+
+    const transactionDate = new Date(parsedData.date || receivedAt || new Date().toISOString());
+    const existingTransaction = parsedData.referenceNumber
+      ? await storage.getTransactionByReferenceNumber(matchedAccount.userId, parsedData.referenceNumber)
+      : await storage.getTransactionByFallbackKey(
+          matchedAccount.userId, matchedAccount.id, parsedData.amount.toString(), parsedData.type || 'debit', transactionDate
+        );
+
+    return {
+      ...base,
+      status: existingTransaction ? 'duplicate' : 'new',
+      matchedAccountName: matchedAccount.name,
+    };
+  }
+
+  app.post("/api/parse-sms-preview", validateApiKey, async (req, res) => {
+    try {
+      const { messages } = req.body;
+      if (!messages || !Array.isArray(messages) || messages.length === 0) {
+        return res.status(400).json({ error: "Messages array is required" });
+      }
+
+      const accounts = await storage.getAllAccounts();
+      const results = await Promise.all(
+        messages.map((msg: any) => {
+          const messageText = typeof msg === 'string' ? msg : msg.message;
+          const sender = typeof msg === 'string' ? undefined : msg.sender;
+          const receivedAt = typeof msg === 'string' ? undefined : msg.receivedAt;
+          return previewSingleSms(messageText, sender, receivedAt, accounts);
+        })
+      );
+
+      res.json({ results });
+    } catch (error: any) {
+      console.error("SMS preview error:", error.message);
+      res.status(500).json({ error: error.message || "Failed to preview SMS" });
+    }
+  });
+
   app.post("/api/parse-sms", validateApiKey, async (req, res) => {
     try {
       const { sender, message, receivedAt } = req.body;
@@ -3455,9 +3614,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       for (const msg of messages) {
         const messageText = typeof msg === 'string' ? msg : msg.message;
         const sender = typeof msg === 'string' ? undefined : msg.sender;
+        const receivedAt = typeof msg === 'string' ? undefined : msg.receivedAt;
 
         try {
-          const result = await processSingleSms(messageText, sender, undefined, accounts);
+          const result = await processSingleSms(messageText, sender, receivedAt, accounts);
           results.push({ ...result, message: messageText.substring(0, 50) + '...' });
         } catch (error: any) {
           results.push({

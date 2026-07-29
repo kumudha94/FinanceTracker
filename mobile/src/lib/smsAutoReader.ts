@@ -2,7 +2,7 @@ import { PermissionsAndroid, Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Notifications from 'expo-notifications';
 import NetInfo from '@react-native-community/netinfo';
-import { API_BASE_URL } from './api';
+import { API_BASE_URL, TASKER_API_KEY } from './api';
 
 const STORAGE_KEYS = {
   AUTO_READ_ENABLED: '@finance_tracker_sms_auto_read_enabled',
@@ -12,7 +12,6 @@ const STORAGE_KEYS = {
 
 const MAX_PROCESSED_IDS = 200;
 const MAX_QUEUE_SIZE = 50;
-const TASKER_API_KEY = process.env.EXPO_PUBLIC_TASKER_API_KEY || '';
 
 export interface RawSmsPayload {
   sender: string;

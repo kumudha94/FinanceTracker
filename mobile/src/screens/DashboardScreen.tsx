@@ -9,10 +9,10 @@ import { api } from '../lib/api';
 import { formatCurrency, getThemedColors } from '../lib/utils';
 import { RootStackParamList, TabParamList } from '../../App';
 import { FABButton } from '../components/FABButton';
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo, useEffect } from 'react';
 import { useTheme } from '../contexts/ThemeContext';
 import { useAuth } from '../contexts/AuthContext';
-import { BillItem, NextMonthForecast, NextMonthForecastItem } from '../lib/types';
+import { BillItem, NextMonthForecast, NextMonthForecastItem, ForecastItemType } from '../lib/types';
 
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
@@ -27,11 +27,21 @@ type ActiveTab = 'income' | 'expense' | 'bills';
 type BillsAccordion = 'scheduled' | 'creditCard' | 'loans' | 'insurance' | 'billsInbox' | null;
 type ForecastAccordion = 'scheduled' | 'insurance' | 'loans' | 'creditCard' | null;
 
+const LOADING_MESSAGES = [
+  'Setting up your current month finances…',
+  'Thinking about next cycle plans…',
+  'Fetching your last 5 transactions…',
+  'Adding up scheduled payments, EMIs, and premiums…',
+  'Almost there…',
+];
+const LOADING_MESSAGE_INTERVAL_MS = 2000;
+
 export default function DashboardScreen() {
   const navigation = useNavigation<NavigationProp>();
   const queryClient = useQueryClient();
   const { username } = useAuth();
   const [refreshing, setRefreshing] = useState(false);
+  const [loadingMessageIndex, setLoadingMessageIndex] = useState(0);
   const { resolvedTheme } = useTheme();
   const colors = useMemo(() => getThemedColors(resolvedTheme), [resolvedTheme]);
   const [activeTab, setActiveTab] = useState<ActiveTab>('income');
@@ -77,6 +87,14 @@ export default function DashboardScreen() {
     },
   });
 
+  const toggleExclusionMutation = useMutation({
+    mutationFn: ({ itemType, itemId }: { itemType: ForecastItemType; itemId: number | string }) =>
+      api.toggleForecastExclusion(itemType, itemId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/next-month-forecast'] });
+    },
+  });
+
   useFocusEffect(
     useCallback(() => {
       queryClient.invalidateQueries({ queryKey: ['/api/dashboard-summary'] });
@@ -117,16 +135,28 @@ export default function DashboardScreen() {
   }, []);
 
   const activeGoals = useMemo(() => savingsGoals?.filter(g => g.status === 'active') || [], [savingsGoals]);
-  const totalSavings = useMemo(() => activeGoals.reduce((acc, goal) => acc + parseFloat(goal.currentAmount || "0"), 0), [activeGoals]);
   const monthlyExpectedSavings = useMemo(() => activeGoals.reduce((acc, goal) => acc + parseFloat(goal.monthlyExpectedAmount || "0"), 0), [activeGoals]);
-  const savedThisMonth = 0; // Approximation for now
+  const savedThisCycle = summary?.savedThisCycle ?? 0;
+
+  useEffect(() => {
+    if (!isLoading) return;
+    const interval = setInterval(() => {
+      setLoadingMessageIndex((prev) => (prev + 1) % LOADING_MESSAGES.length);
+    }, LOADING_MESSAGE_INTERVAL_MS);
+    return () => clearInterval(interval);
+  }, [isLoading]);
 
   if (isLoading || !summary) {
     return (
       <View style={[styles.container, { backgroundColor: colors.background }]}>
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color={colors.primary} />
-          <Text style={[styles.loadingText, { color: colors.textMuted }]}>Loading dashboard...</Text>
+          <Text style={[styles.loadingText, { color: colors.text }]}>
+            {LOADING_MESSAGES[loadingMessageIndex]}
+          </Text>
+          <Text style={[styles.loadingSubtext, { color: colors.textMuted }]}>
+            My Tracker is putting your cycle together
+          </Text>
         </View>
       </View>
     );
@@ -261,6 +291,34 @@ export default function DashboardScreen() {
     );
   };
 
+  const renderForecastRow = (item: NextMonthForecastItem, itemType: ForecastItemType, dotColor: string, keyPrefix: string, metaText?: string) => (
+    <View key={`${keyPrefix}-${item.id}`} style={[styles.forecastRow, { borderBottomColor: colors.border }, item.excluded && { opacity: 0.5 }]}>
+      <View style={[styles.forecastDot, { backgroundColor: dotColor }]} />
+      <View style={styles.forecastRowInfo}>
+        <Text style={[styles.forecastRowName, { color: colors.text }, item.excluded && { textDecorationLine: 'line-through' }]} numberOfLines={1}>
+          {item.name}
+        </Text>
+        <Text style={[styles.forecastRowMeta, { color: colors.textMuted }]}>
+          {metaText ?? `${item.subLabel || ''}${item.dueDate ? ` · Due: ${item.dueDate}${getOrdinalSuffix(item.dueDate)}` : ''}`}
+        </Text>
+      </View>
+      <Text style={[styles.forecastRowAmt, { color: item.excluded ? colors.textMuted : '#ef4444' }]}>
+        -{formatCurrency(item.amount)}
+      </Text>
+      <TouchableOpacity
+        onPress={() => toggleExclusionMutation.mutate({ itemType, itemId: item.id })}
+        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        style={styles.forecastToggleBtn}
+      >
+        <Ionicons
+          name={item.excluded ? 'add-circle' : 'remove-circle'}
+          size={20}
+          color={item.excluded ? '#10b981' : colors.textMuted}
+        />
+      </TouchableOpacity>
+    </View>
+  );
+
   const renderBillsInboxSection = () => {
     if (pendingBillMappings.length === 0) return null;
     const isOpen = billsAccordion === 'billsInbox';
@@ -291,7 +349,7 @@ export default function DashboardScreen() {
               <TouchableOpacity
                 key={`bill-mapping-${mapping.id}`}
                 style={[styles.billDetailRow, { borderBottomColor: colors.border }]}
-                onPress={() => navigation.navigate('More' as any, { screen: 'BillsInbox' })}
+                onPress={() => navigation.navigate('BillsInbox')}
                 activeOpacity={0.7}
               >
                 <View style={[styles.billStatusDot, { backgroundColor: '#14b8a6' }]} />
@@ -367,7 +425,7 @@ export default function DashboardScreen() {
           {!salaryProfile && (
             <TouchableOpacity
               style={[styles.salaryBanner, { backgroundColor: '#f59e0b18', borderColor: '#f59e0b40' }]}
-              onPress={() => navigation.navigate('More' as any, { screen: 'Salary' })}
+              onPress={() => navigation.navigate('Salary')}
               activeOpacity={0.7}
               data-testid="button-setup-salary"
             >
@@ -387,7 +445,7 @@ export default function DashboardScreen() {
           {pendingInstitutionMappings.length > 0 && (
             <TouchableOpacity
               style={[styles.salaryBanner, { backgroundColor: '#f59e0b18', borderColor: '#f59e0b40' }]}
-              onPress={() => navigation.navigate('More' as any, { screen: 'InstitutionMappings' })}
+              onPress={() => navigation.navigate('InstitutionMappings')}
               activeOpacity={0.7}
               data-testid="button-new-accounts-detected"
             >
@@ -591,18 +649,13 @@ export default function DashboardScreen() {
                 <View style={styles.tabInner}>
                   <View style={styles.savingsSummaryRow}>
                     <View style={styles.savingsStat}>
-                      <Text style={[styles.savingsStatLabel, { color: colors.textMuted }]}>Total</Text>
-                      <Text style={[styles.savingsStatValue, { color: colors.text }]}>{formatCurrency(totalSavings)}</Text>
+                      <Text style={[styles.savingsStatLabel, { color: colors.textMuted }]}>Saved This Cycle</Text>
+                      <Text style={[styles.savingsStatValue, { color: colors.primary }]}>{formatCurrency(savedThisCycle)}</Text>
                     </View>
                     <View style={[styles.savingsDivider, { backgroundColor: colors.border }]} />
                     <View style={styles.savingsStat}>
-                      <Text style={[styles.savingsStatLabel, { color: colors.textMuted }]}>Monthly</Text>
+                      <Text style={[styles.savingsStatLabel, { color: colors.textMuted }]}>Target This Cycle</Text>
                       <Text style={[styles.savingsStatValue, { color: colors.text }]}>{formatCurrency(monthlyExpectedSavings)}</Text>
-                    </View>
-                    <View style={[styles.savingsDivider, { backgroundColor: colors.border }]} />
-                    <View style={styles.savingsStat}>
-                      <Text style={[styles.savingsStatLabel, { color: colors.textMuted }]}>Saved</Text>
-                      <Text style={[styles.savingsStatValue, { color: colors.primary }]}>{formatCurrency(savedThisMonth)}</Text>
                     </View>
                   </View>
 
@@ -712,18 +765,7 @@ export default function DashboardScreen() {
                   </TouchableOpacity>
                   {forecastAccordion === 'scheduled' && (
                     <View style={styles.accordionContent}>
-                      {forecast.scheduledPayments.map((item) => (
-                        <View key={`fsp-${item.id}`} style={[styles.forecastRow, { borderBottomColor: colors.border }]}>
-                          <View style={[styles.forecastDot, { backgroundColor: '#6366f1' }]} />
-                          <View style={styles.forecastRowInfo}>
-                            <Text style={[styles.forecastRowName, { color: colors.text }]} numberOfLines={1}>{item.name}</Text>
-                            <Text style={[styles.forecastRowMeta, { color: colors.textMuted }]}>
-                              {item.subLabel}{item.dueDate ? ` · Due: ${item.dueDate}${getOrdinalSuffix(item.dueDate)}` : ''}
-                            </Text>
-                          </View>
-                          <Text style={[styles.forecastRowAmt, { color: '#ef4444' }]}>-{formatCurrency(item.amount)}</Text>
-                        </View>
-                      ))}
+                      {forecast.scheduledPayments.map((item) => renderForecastRow(item, 'scheduled_payment', '#6366f1', 'fsp'))}
                       <View style={styles.forecastTabTotal}>
                         <Text style={[styles.forecastTabTotalLabel, { color: colors.textMuted }]}>Total</Text>
                         <Text style={[styles.forecastTabTotalValue, { color: '#ef4444' }]}>-{formatCurrency(forecast.totalScheduled)}</Text>
@@ -754,18 +796,7 @@ export default function DashboardScreen() {
                   </TouchableOpacity>
                   {forecastAccordion === 'insurance' && (
                     <View style={styles.accordionContent}>
-                      {forecast.insurance.map((item) => (
-                        <View key={`fins-${item.id}`} style={[styles.forecastRow, { borderBottomColor: colors.border }]}>
-                          <View style={[styles.forecastDot, { backgroundColor: '#8b5cf6' }]} />
-                          <View style={styles.forecastRowInfo}>
-                            <Text style={[styles.forecastRowName, { color: colors.text }]} numberOfLines={1}>{item.name}</Text>
-                            <Text style={[styles.forecastRowMeta, { color: colors.textMuted }]}>
-                              {item.subLabel}{item.dueDate ? ` · Due: ${item.dueDate}${getOrdinalSuffix(item.dueDate)}` : ''}
-                            </Text>
-                          </View>
-                          <Text style={[styles.forecastRowAmt, { color: '#ef4444' }]}>-{formatCurrency(item.amount)}</Text>
-                        </View>
-                      ))}
+                      {forecast.insurance.map((item) => renderForecastRow(item, 'insurance', '#8b5cf6', 'fins'))}
                       <View style={styles.forecastTabTotal}>
                         <Text style={[styles.forecastTabTotalLabel, { color: colors.textMuted }]}>Total</Text>
                         <Text style={[styles.forecastTabTotalValue, { color: '#ef4444' }]}>-{formatCurrency(forecast.totalInsurance)}</Text>
@@ -796,18 +827,7 @@ export default function DashboardScreen() {
                   </TouchableOpacity>
                   {forecastAccordion === 'loans' && (
                     <View style={styles.accordionContent}>
-                      {forecast.loans.map((item) => (
-                        <View key={`floan-${item.id}`} style={[styles.forecastRow, { borderBottomColor: colors.border }]}>
-                          <View style={[styles.forecastDot, { backgroundColor: '#f59e0b' }]} />
-                          <View style={styles.forecastRowInfo}>
-                            <Text style={[styles.forecastRowName, { color: colors.text }]} numberOfLines={1}>{item.name}</Text>
-                            <Text style={[styles.forecastRowMeta, { color: colors.textMuted }]}>
-                              {item.subLabel}{item.dueDate ? ` · Due: ${item.dueDate}${getOrdinalSuffix(item.dueDate)}` : ''}
-                            </Text>
-                          </View>
-                          <Text style={[styles.forecastRowAmt, { color: '#ef4444' }]}>-{formatCurrency(item.amount)}</Text>
-                        </View>
-                      ))}
+                      {forecast.loans.map((item) => renderForecastRow(item, 'loan', '#f59e0b', 'floan'))}
                       <View style={styles.forecastTabTotal}>
                         <Text style={[styles.forecastTabTotalLabel, { color: colors.textMuted }]}>Total</Text>
                         <Text style={[styles.forecastTabTotalValue, { color: '#ef4444' }]}>-{formatCurrency(forecast.totalLoans)}</Text>
@@ -838,18 +858,9 @@ export default function DashboardScreen() {
                   </TouchableOpacity>
                   {forecastAccordion === 'creditCard' && (
                     <View style={styles.accordionContent}>
-                      {forecast.creditCardBills.map((item) => (
-                        <View key={`fcc-${item.id}`} style={[styles.forecastRow, { borderBottomColor: colors.border }]}>
-                          <View style={[styles.forecastDot, { backgroundColor: '#ec4899' }]} />
-                          <View style={styles.forecastRowInfo}>
-                            <Text style={[styles.forecastRowName, { color: colors.text }]} numberOfLines={1}>{item.name}</Text>
-                            <Text style={[styles.forecastRowMeta, { color: colors.textMuted }]}>
-                              {item.dueDate ? `Due: ${item.dueDate}${getOrdinalSuffix(item.dueDate)}` : ''}
-                              {item.creditLimit ? ` · Limit: ${formatCurrency(item.creditLimit)}` : ''}
-                            </Text>
-                          </View>
-                          <Text style={[styles.forecastRowAmt, { color: '#ef4444' }]}>-{formatCurrency(item.amount)}</Text>
-                        </View>
+                      {forecast.creditCardBills.map((item) => renderForecastRow(
+                        item, 'credit_card_bill', '#ec4899', 'fcc',
+                        `${item.dueDate ? `Due: ${item.dueDate}${getOrdinalSuffix(item.dueDate)}` : ''}${item.creditLimit ? ` · Limit: ${formatCurrency(item.creditLimit)}` : ''}`
                       ))}
                       <View style={styles.forecastTabTotal}>
                         <Text style={[styles.forecastTabTotalLabel, { color: colors.textMuted }]}>Total</Text>
@@ -1148,10 +1159,18 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+    paddingHorizontal: 40,
   },
   loadingText: {
-    marginTop: 12,
-    fontSize: 14,
+    marginTop: 16,
+    fontSize: 15,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
+  loadingSubtext: {
+    marginTop: 6,
+    fontSize: 12,
+    textAlign: 'center',
   },
 
   mainCard: {
@@ -1875,6 +1894,10 @@ const styles = StyleSheet.create({
   forecastRowAmt: {
     fontSize: 13,
     fontWeight: '700',
+  },
+  forecastToggleBtn: {
+    marginLeft: 8,
+    padding: 2,
   },
   forecastTabTotal: {
     flexDirection: 'row',

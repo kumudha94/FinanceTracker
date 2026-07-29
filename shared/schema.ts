@@ -1052,6 +1052,33 @@ export type InsuranceWithRelations = Insurance & {
   linkedInsurance?: Insurance | null;
 };
 
+// Forecast Exclusions — lets the user opt a specific item (scheduled payment, insurance premium,
+// loan EMI, or credit card bill) out of the Next Cycle Plan's Income/Outflow/Balance totals for
+// one specific upcoming cycle, without touching the underlying record. Scoped per-cycle (not a
+// permanent flag on the source row) so a one-off skip doesn't silently mute a recurring bill from
+// every future projection.
+export const forecastExclusions = pgTable("forecast_exclusions", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull().references(() => users.id),
+  itemType: varchar("item_type", { length: 20 }).notNull(), // 'scheduled_payment', 'insurance', 'loan', 'credit_card_bill'
+  itemId: varchar("item_id", { length: 50 }).notNull(), // source record id, or 'cc-auto-<accountId>' for auto-detected credit card bills
+  cycleStart: timestamp("cycle_start").notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+}, (table) => ({
+  userItemCycleUnique: uniqueIndex("forecast_exclusions_user_item_cycle_unique").on(table.userId, table.itemType, table.itemId, table.cycleStart),
+}));
+
+export const insertForecastExclusionSchema = createInsertSchema(forecastExclusions).omit({
+  id: true,
+  createdAt: true,
+}).extend({
+  itemType: z.enum(["scheduled_payment", "insurance", "loan", "credit_card_bill"]),
+  cycleStart: z.union([z.string(), z.date()]).transform((val) => new Date(val)),
+});
+
+export type InsertForecastExclusion = z.infer<typeof insertForecastExclusionSchema>;
+export type ForecastExclusion = typeof forecastExclusions.$inferSelect;
+
 // Extended transaction type with relations
 export type TransactionWithRelations = Transaction & {
   account?: Account | null;

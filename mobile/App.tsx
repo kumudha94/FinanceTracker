@@ -24,6 +24,7 @@ import AddBudgetScreen from './src/screens/AddBudgetScreen';
 import AddScheduledPaymentScreen from './src/screens/AddScheduledPaymentScreen';
 import ScanSMSScreen from './src/screens/ScanSMSScreen';
 import SmsAutoReadScreen from './src/screens/SmsAutoReadScreen';
+import RescanPreviewScreen from './src/screens/RescanPreviewScreen';
 import SavingsGoalsScreen from './src/screens/SavingsGoalsScreen';
 import SalaryScreen from './src/screens/SalaryScreen';
 import LoansScreen from './src/screens/LoansScreen';
@@ -83,7 +84,11 @@ export type MoreStackParamList = {
   AddBudget: { budgetId?: number; month?: number; year?: number } | undefined;
   CategoryTransactions: { categoryId: number; categoryName: string; month: number; year: number } | undefined;
   ScheduledPayments: undefined;
-  AddScheduledPayment: { paymentId?: number } | undefined;
+  AddScheduledPayment: {
+    paymentId?: number;
+    linkBillMappingId?: number;
+    prefill?: { name?: string; amount?: string; dueDate?: number };
+  } | undefined;
   SavingsGoals: undefined;
   Salary: undefined;
   Loans: undefined;
@@ -97,6 +102,7 @@ export type MoreStackParamList = {
   Settings: undefined;
   ScanSMS: undefined;
   SmsAutoRead: undefined;
+  RescanPreview: { messages: { sender: string; message: string; receivedAt: string }[] };
   ImportStatement: undefined;
   InstitutionMappings: undefined;
   BillsInbox: undefined;
@@ -115,6 +121,13 @@ export type RootStackParamList = {
   ExpenseDetails: undefined;
   CreditCardDetails: undefined;
   Settings: undefined;
+  // Also reachable via the More tab's own menu (MoreStackParamList) — registered here too,
+  // same pattern as Settings, so a direct link from Dashboard pushes onto the root stack
+  // (proper back/tab-switch behavior) instead of leaving stale state inside the More tab's
+  // nested navigator (which persists across tab switches by default in React Navigation).
+  InstitutionMappings: undefined;
+  BillsInbox: undefined;
+  Salary: undefined;
 };
 
 export type TabParamList = {
@@ -194,6 +207,11 @@ function MoreStackNavigator() {
         name="SmsAutoRead"
         component={SmsAutoReadScreen}
         options={{ title: 'Auto-Read SMS' }}
+      />
+      <MoreStack.Screen
+        name="RescanPreview"
+        component={RescanPreviewScreen}
+        options={{ title: 'Review Found Messages' }}
       />
       <MoreStack.Screen 
         name="SavingsGoals" 
@@ -467,14 +485,41 @@ function MainApp() {
           component={CreditCardDetailsScreen}
           options={{ headerShown: false }}
         />
-        <RootStack.Screen 
-          name="Settings" 
+        <RootStack.Screen
+          name="Settings"
           component={SettingsScreen}
-          options={{ 
+          options={{
             title: 'Settings',
             headerStyle: {
               backgroundColor: colors.primary,
             },
+            headerTintColor: '#fff',
+          }}
+        />
+        <RootStack.Screen
+          name="InstitutionMappings"
+          component={InstitutionMappingsScreen}
+          options={{
+            title: 'New Accounts Detected',
+            headerStyle: { backgroundColor: colors.primary },
+            headerTintColor: '#fff',
+          }}
+        />
+        <RootStack.Screen
+          name="BillsInbox"
+          component={BillsInboxScreen}
+          options={{
+            title: 'Bills Inbox',
+            headerStyle: { backgroundColor: colors.primary },
+            headerTintColor: '#fff',
+          }}
+        />
+        <RootStack.Screen
+          name="Salary"
+          component={SalaryScreen}
+          options={{
+            title: 'Salary & Income',
+            headerStyle: { backgroundColor: colors.primary },
             headerTintColor: '#fff',
           }}
         />

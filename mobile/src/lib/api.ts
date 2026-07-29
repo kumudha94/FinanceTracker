@@ -1,6 +1,6 @@
 import type { 
   Account, Category, Transaction, Budget, ScheduledPayment, 
-  User, DashboardData, DashboardSummary, NextMonthForecast, InsertAccount, InsertTransaction, 
+  User, DashboardData, DashboardSummary, NextMonthForecast, ForecastItemType, InsertAccount, InsertTransaction,
   InsertBudget, InsertScheduledPayment, PaymentOccurrence,
   SavingsGoal, SavingsContribution, InsertSavingsGoal, InsertSavingsContribution,
   SalaryProfile, SalaryCycle, InsertSalaryProfile,
@@ -15,6 +15,11 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:5000';
 console.log('API_BASE_URL', API_BASE_URL);
+
+// The SMS-parsing endpoints (/api/parse-sms, /api/parse-sms-batch, /api/parse-sms-preview) are
+// gated by validateApiKey, not the usual session Bearer token — they need to work from
+// contexts (like the headless background SMS task) that can't reliably do a token refresh.
+export const TASKER_API_KEY = process.env.EXPO_PUBLIC_TASKER_API_KEY || '';
 
 const STORAGE_KEYS = {
   ACCESS_TOKEN: '@finance_tracker_access_token',
@@ -263,6 +268,11 @@ export const api = {
   getDashboard: () => apiRequest<DashboardData>('/api/dashboard'),
   getDashboardSummary: () => apiRequest<DashboardSummary>('/api/dashboard-summary'),
   getNextMonthForecast: () => apiRequest<NextMonthForecast>('/api/next-month-forecast'),
+  toggleForecastExclusion: (itemType: ForecastItemType, itemId: number | string) =>
+    apiRequest<{ excluded: boolean }>('/api/forecast-exclusions/toggle', {
+      method: 'POST',
+      body: JSON.stringify({ itemType, itemId }),
+    }),
   
   getAccounts: () => apiRequest<Account[]>('/api/accounts'),
   createAccount: (data: InsertAccount) => 
@@ -366,8 +376,22 @@ export const api = {
       method: 'POST', body: JSON.stringify({ description }) 
     }),
 
-  parseSms: (message: string, sender?: string) => 
-    apiRequest<{
+  // Uses X-API-Key directly (not apiRequest's Bearer auth) — this endpoint is gated by
+  // validateApiKey, which never looks at the session token.
+  parseSms: async (message: string, sender?: string) => {
+    const response = await fetch(`${API_BASE_URL}/api/parse-sms`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-API-Key': TASKER_API_KEY,
+      },
+      body: JSON.stringify({ message, sender, receivedAt: new Date().toISOString() }),
+    });
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(errorText || `Failed to parse SMS (${response.status})`);
+    }
+    return response.json() as Promise<{
       success: boolean;
       transaction?: Transaction;
       parsed?: {
@@ -379,13 +403,24 @@ export const api = {
         date?: string;
       };
       message?: string;
-    }>('/api/parse-sms', { 
-      method: 'POST', 
-      body: JSON.stringify({ message, sender, receivedAt: new Date().toISOString() }) 
-    }),
+    }>;
+  },
 
-  parseSmsBatch: (messages: string[]) =>
-    apiRequest<{
+  // Same X-API-Key requirement as parseSms above.
+  parseSmsBatch: async (messages: string[]) => {
+    const response = await fetch(`${API_BASE_URL}/api/parse-sms-batch`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-API-Key': TASKER_API_KEY,
+      },
+      body: JSON.stringify({ messages }),
+    });
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(errorText || `Failed to parse SMS batch (${response.status})`);
+    }
+    return response.json() as Promise<{
       total: number;
       successful: number;
       failed: number;
@@ -395,10 +430,8 @@ export const api = {
         message: string;
         error?: string;
       }>;
-    }>('/api/parse-sms-batch', {
-      method: 'POST',
-      body: JSON.stringify({ messages })
-    }),
+    }>;
+  },
 
   getSavingsGoals: () => apiRequest<SavingsGoal[]>('/api/savings-goals'),
   createSavingsGoal: (data: InsertSavingsGoal) => 

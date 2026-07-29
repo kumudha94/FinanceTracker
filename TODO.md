@@ -1,0 +1,47 @@
+# Future Plans
+
+## Section:1. Scheduled Payment **Deployed in prod done**
+1. Few bill amount user may not be able to provide while creating a payment. For example Electricity bill. So we need to allow user to create record if amount is not provided.
+2. Few bill dates are different, Let's take phone recharge usually they're providing 84d, 56d, 7d like that how can a user provide scheduled cycle here
+3. Mobile app's Add Scheduled Payment screen is missing variable-amount and day-interval support entirely — points 1 and 2 above were only ever built into the web app. Mobile form only has fixed amount + monthly/quarterly/half-yearly/yearly/custom-months/one-time frequency. Not started. **Pending**
+
+## Section:2. Insurance **Deployed in prod done**
+1. **HDFC ABSLI Market Policy:** No separate monthly payment is required. The Finance team automatically invests the monthly benefit generated from my HDFC ABSLI Main Policy into the Market Policy (my selected option). I only pay the Main Policy premium. How we can link the policies so only Main policy we need to take control, subpolicy we no need to worry.
+
+## Section:3. Credit Card tracking **Deployed in prod done**
+1. Sample Message: "Dear Customer, Your YES BANK Credit Card x2613 has dues of Rs. 9,629.90.
+Convert it into EMIs with no hidden charges.
+Confirm: ccybl.in/YESBNK/MAt7Sk1jgU -YES BANK LTD" System need to read this SMS, this nothing but a due for credit card, check against with our due amount if any issues found we need to update with whatever comes in the SMS.
+
+## Section:4. Message Re-scan
+1. Case: What if user asks to rescan the SMS for past days, for example, max 3 (can be reduced based on the scope) custom limit (only today or from date - to date) Action: Read SMS look for our paseTransaction pattern (debited / credited) and check for duplicate and add transaction - ** Development completed **
+> Concern : How can we spot duplicate transaction ?
+2. Current Scan SMS (read user pasted SMS) is failing with "Failed to parse SMS. Please check your connection and try again" error. Render logs below - ** Development completed **
+>11:36:22 AM [express] GET /api/accounts 304 in 167ms :: [{"id":34,"userId":8,"name":"HDFC CC","type":…
+>11:36:26 AM [express] POST /api/parse-sms 401 in 0ms :: {"error":"API key required","hint":"Include X…
+>11:36:27 AM [express] POST /api/auth/refresh-token 200 in 1ms :: {"success":true,"accessToken":"eyJhb…
+>11:36:27 AM [express] POST /api/parse-sms 401 in 1ms :: {"error":"API key required","hint":"Include X…
+3. Different message scanning. provided sample messages below - ** Development completed ** (message 3 already parsed correctly, no change needed there)
+>1. Update! INR 1,86,162.00 deposited in HDFC Bank A/c XX7900 on 29-JUL-26 for NEFT Cr-CITI0000003-COMCAST INDIA ENGG CTR I LLP-SEZ-Kumudha Glory-CITIN26705118988.Avl bal INR 1,87,592.10. Cheque deposits in A/C are subject to clearing
+>2. E-Mandate!
+>Rs.139.00 will be deducted on 31/07/26, 00:00:00
+>For SPOTIFY INDIA PVT LTD mandate
+>UMN 4d226b3fcc966fe1e063e9eee20ae2fc@okhdfcbank
+>Maintain Balance
+>-HDFC Bank
+>3. Sent Rs.1200.00
+>From HDFC Bank A/C *7900
+>To Christian Missions Charit
+>On 29/07/26
+>Ref 127035397455
+>Not You?
+>Call 18002586161/SMS BLOCK UPI to 7308080808
+
+## Section:5. Dashboard screen
+1. Current cycle card - Savings tab has three major parts TOTAL | MONTHLY | SAVED, Need to know how it is calculated. - ** Development completed **
+2. In Next Cycle Plan we are properly showing scheduled payment for the next cycle, Insurance if any, loans if any, credit card bill if any, but we are not adding total amount that needs to be added. Can we show small + and - symbol near each row, whatever is added (+) do the calculation of Income, Outflow and Balance calculation. - ** Development completed **
+3. Loading symbol enhancement - Currently dashboard screen is taking 30+ secs to load. It will make the user more tired. option 1: need to understand what takes time and reduce it. option 2: instead of showing loading symbol we can show beautiful UI loader with active changing messsages like (setting up current month finance , thinking on next cycle plans, fetching last 5 transactions something like that) so user will read and do something instead of waiting - ** Development completed **
+4. Refer screenshot: In Current month card Bills section showing overdue. Consider Today's date July 29 Salary credit date and my scheduled payment from Bills section due is 1st of every month, so Aug 1 is in this cycle is not overdue it is pending.
+
+## Section:6. Screen Movement
+1. Dashboard screen -> showing new account detected card -> clicked that card redirected me to the **New Accounts Detected screen** -> I performed my preferred action -> trying to come back. Expectation: Coming back to **More** screen then dashboard screen. Actual: Back button is landing me to the dashboad screen after that If I try to go to **More** section Directly it is going **New Accounts Detected screen** menu not able to comeback and see other menu even if I jump to **Account** or **Transaction** screen I am not able see **More** section other menu. I forcefully close the app and reopen freshly to see other menus from **More** menu - ** Development completed **

@@ -212,17 +212,21 @@ export interface DashboardSummary {
   totalEMI: number;
   activeLoansCount: number;
   lastTransactions: Transaction[];
+  savedThisCycle: number;
   cycleInfo?: CycleInfo;
 }
 
 export interface NextMonthForecastItem {
-  id: number;
+  id: number | string; // auto-detected credit card bills use a synthetic string id ("cc-auto-<accountId>")
   name: string;
   amount: number;
   dueDate: number | null;
   subLabel?: string;
   creditLimit?: number | null;
+  excluded: boolean;
 }
+
+export type ForecastItemType = 'scheduled_payment' | 'insurance' | 'loan' | 'credit_card_bill';
 
 export interface NextMonthForecast {
   monthLabel: string;

@@ -1,7 +1,9 @@
 import { useEffect, useState, useCallback } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Switch, Alert, Linking } from 'react-native';
-import { useFocusEffect } from '@react-navigation/native';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Switch, Alert, Linking, Platform, ActivityIndicator } from 'react-native';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
+import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import { getThemedColors } from '../lib/utils';
 import { useTheme } from '../contexts/ThemeContext';
 import {
@@ -10,13 +12,32 @@ import {
   hasSmsPermission,
   requestSmsAndNotificationPermissions,
 } from '../lib/smsAutoReader';
+import { scanInboxForRange, validateRescanRange } from '../lib/smsRescan';
 import { API_BASE_URL } from '../lib/api';
+import { MoreStackParamList } from '../../App';
+
+type NavigationProp = NativeStackNavigationProp<MoreStackParamList>;
+
+function startOfDay(date: Date): Date {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0);
+}
+
+function endOfDay(date: Date): Date {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate(), 23, 59, 59, 999);
+}
 
 export default function SmsAutoReadScreen() {
+  const navigation = useNavigation<NavigationProp>();
   const { resolvedTheme } = useTheme();
   const colors = getThemedColors(resolvedTheme);
   const [enabled, setEnabled] = useState(false);
   const [permissionGranted, setPermissionGranted] = useState(false);
+  const [scanning, setScanning] = useState(false);
+  const [showCustomRange, setShowCustomRange] = useState(false);
+  const [customFrom, setCustomFrom] = useState(new Date());
+  const [customTo, setCustomTo] = useState(new Date());
+  const [showFromPicker, setShowFromPicker] = useState(false);
+  const [showToPicker, setShowToPicker] = useState(false);
 
   const refreshStatus = useCallback(async () => {
     const [autoReadOn, smsGranted] = await Promise.all([isAutoReadEnabled(), hasSmsPermission()]);
@@ -64,6 +85,55 @@ export default function SmsAutoReadScreen() {
 
     await setAutoReadEnabled(true);
     setEnabled(true);
+  };
+
+  const runRescan = async (fromDate: Date, toDate: Date) => {
+    if (Platform.OS !== 'android') {
+      Alert.alert('Android Only', 'Rescanning past SMS is only available on Android.');
+      return;
+    }
+
+    const rangeError = validateRescanRange(fromDate, toDate);
+    if (rangeError) {
+      Alert.alert('Invalid Range', rangeError);
+      return;
+    }
+
+    const hasPermission = await hasSmsPermission();
+    if (!hasPermission) {
+      const { smsGranted } = await requestSmsAndNotificationPermissions();
+      if (!smsGranted) {
+        Alert.alert(
+          'SMS Permission Required',
+          'Rescanning needs SMS access to read past messages — open Settings to grant it manually.',
+          [
+            { text: 'Cancel', style: 'cancel' },
+            { text: 'Open Settings', onPress: () => Linking.openSettings() },
+          ]
+        );
+        return;
+      }
+    }
+
+    setScanning(true);
+    try {
+      const messages = await scanInboxForRange(fromDate, toDate);
+      if (messages.length === 0) {
+        Alert.alert('No Messages Found', 'No debited/credited SMS were found in that date range.');
+        return;
+      }
+      navigation.navigate('RescanPreview', { messages });
+    } catch (error: any) {
+      Alert.alert('Scan Failed', error.message || 'Could not read SMS messages.');
+    } finally {
+      setScanning(false);
+    }
+  };
+
+  const runPresetRescan = (days: number) => {
+    const to = endOfDay(new Date());
+    const from = startOfDay(new Date(Date.now() - (days - 1) * 24 * 60 * 60 * 1000));
+    runRescan(from, to);
   };
 
   return (
@@ -133,6 +203,91 @@ export default function SmsAutoReadScreen() {
             </View>
             <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
           </TouchableOpacity>
+        )}
+      </View>
+
+      <Text style={[styles.sectionTitle, { color: colors.textMuted }]}>Rescan Past Messages</Text>
+      <View style={[styles.section, { backgroundColor: colors.card }]}>
+        <Text style={[styles.bulletText, { color: colors.textMuted }, { marginBottom: 4 }]}>
+          Missed a transaction from before Auto-Read was on? Rescan your inbox for a date range — you'll
+          review what's found before anything is added.
+        </Text>
+
+        {scanning ? (
+          <View style={styles.scanningRow}>
+            <ActivityIndicator color={colors.primary} />
+            <Text style={[styles.settingSubtitle, { color: colors.textMuted }]}>Scanning…</Text>
+          </View>
+        ) : (
+          <>
+            <View style={styles.presetRow}>
+              <TouchableOpacity
+                style={[styles.presetButton, { borderColor: colors.border }]}
+                onPress={() => runPresetRescan(1)}
+                data-testid="button-rescan-today"
+              >
+                <Text style={[styles.presetButtonText, { color: colors.primary }]}>Today</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.presetButton, { borderColor: colors.border }]}
+                onPress={() => runPresetRescan(3)}
+                data-testid="button-rescan-3days"
+              >
+                <Text style={[styles.presetButtonText, { color: colors.primary }]}>Last 3 Days</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.presetButton, { borderColor: colors.border }]}
+                onPress={() => setShowCustomRange(!showCustomRange)}
+                data-testid="button-rescan-custom"
+              >
+                <Text style={[styles.presetButtonText, { color: colors.primary }]}>Custom Range</Text>
+              </TouchableOpacity>
+            </View>
+
+            {showCustomRange && (
+              <View style={styles.customRangeBox}>
+                <TouchableOpacity style={styles.dateRow} onPress={() => setShowFromPicker(true)}>
+                  <Text style={[styles.settingSubtitle, { color: colors.textMuted }]}>From</Text>
+                  <Text style={[styles.settingTitle, { color: colors.text, fontSize: 14 }]}>
+                    {customFrom.toDateString()}
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.dateRow} onPress={() => setShowToPicker(true)}>
+                  <Text style={[styles.settingSubtitle, { color: colors.textMuted }]}>To</Text>
+                  <Text style={[styles.settingTitle, { color: colors.text, fontSize: 14 }]}>
+                    {customTo.toDateString()}
+                  </Text>
+                </TouchableOpacity>
+                {showFromPicker && (
+                  <DateTimePicker
+                    value={customFrom}
+                    mode="date"
+                    onChange={(_, date) => {
+                      setShowFromPicker(false);
+                      if (date) setCustomFrom(date);
+                    }}
+                  />
+                )}
+                {showToPicker && (
+                  <DateTimePicker
+                    value={customTo}
+                    mode="date"
+                    onChange={(_, date) => {
+                      setShowToPicker(false);
+                      if (date) setCustomTo(date);
+                    }}
+                  />
+                )}
+                <TouchableOpacity
+                  style={[styles.scanButton, { backgroundColor: colors.primary }]}
+                  onPress={() => runRescan(startOfDay(customFrom), endOfDay(customTo))}
+                  data-testid="button-rescan-custom-scan"
+                >
+                  <Text style={styles.scanButtonText}>Scan</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+          </>
         )}
       </View>
 
@@ -221,6 +376,47 @@ const styles = StyleSheet.create({
   settingSubtitle: {
     fontSize: 13,
     marginTop: 2,
+  },
+  scanningRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 8,
+  },
+  presetRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  presetButton: {
+    flex: 1,
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingVertical: 10,
+    alignItems: 'center',
+  },
+  presetButtonText: {
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  customRangeBox: {
+    marginTop: 12,
+    gap: 10,
+  },
+  dateRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  scanButton: {
+    borderRadius: 8,
+    paddingVertical: 12,
+    alignItems: 'center',
+    marginTop: 4,
+  },
+  scanButtonText: {
+    color: '#fff',
+    fontSize: 15,
+    fontWeight: '600',
   },
   privacyLink: {
     flexDirection: 'row',

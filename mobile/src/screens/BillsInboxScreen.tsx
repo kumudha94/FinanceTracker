@@ -1,6 +1,8 @@
 import { useState, useMemo } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, TextInput, ActivityIndicator, Modal, Alert } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, ActivityIndicator, Modal, Alert } from 'react-native';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useNavigation } from '@react-navigation/native';
+import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
 import Toast from 'react-native-toast-message';
 import { format } from 'date-fns';
@@ -8,17 +10,17 @@ import { getThemedColors, formatCurrency } from '../lib/utils';
 import { useTheme } from '../contexts/ThemeContext';
 import { api } from '../lib/api';
 import type { PendingBillMapping } from '../lib/types';
+import { MoreStackParamList } from '../../App';
+
+type NavigationProp = NativeStackNavigationProp<MoreStackParamList>;
 
 export default function BillsInboxScreen() {
+  const navigation = useNavigation<NavigationProp>();
   const { resolvedTheme } = useTheme();
   const colors = useMemo(() => getThemedColors(resolvedTheme), [resolvedTheme]);
   const queryClient = useQueryClient();
 
   const [linkModalMapping, setLinkModalMapping] = useState<PendingBillMapping | null>(null);
-  const [createModalMapping, setCreateModalMapping] = useState<PendingBillMapping | null>(null);
-  const [newName, setNewName] = useState('');
-  const [newAmount, setNewAmount] = useState('');
-  const [newDueDate, setNewDueDate] = useState('1');
 
   const { data: mappings = [], isLoading } = useQuery({
     queryKey: ['/api/bill-mappings/pending'],
@@ -49,19 +51,6 @@ export default function BillsInboxScreen() {
     },
   });
 
-  const createMutation = useMutation({
-    mutationFn: ({ mappingId, data }: { mappingId: number; data: any }) =>
-      api.createScheduledPaymentForBillMapping(mappingId, data),
-    onSuccess: () => {
-      invalidateAfterResolve();
-      setCreateModalMapping(null);
-      Toast.show({ type: 'success', text1: 'Scheduled Payment Created', text2: 'Linked to this sender', position: 'bottom' });
-    },
-    onError: () => {
-      Toast.show({ type: 'error', text1: 'Failed to Create Payment', position: 'bottom' });
-    },
-  });
-
   const ignoreMutation = useMutation({
     mutationFn: (mappingId: number) => api.ignoreBillMapping(mappingId),
     onSuccess: () => {
@@ -73,11 +62,18 @@ export default function BillsInboxScreen() {
     },
   });
 
-  const openCreateModal = (mapping: PendingBillMapping) => {
-    setNewName(mapping.suggestedName || mapping.institutionKey);
-    setNewAmount(mapping.latestAmount != null ? mapping.latestAmount.toString() : '');
-    setNewDueDate(mapping.latestDueDate ? String(new Date(mapping.latestDueDate).getDate()) : '1');
-    setCreateModalMapping(mapping);
+  // Hands off to the full Add Scheduled Payment form (frequency, category, day-interval, variable
+  // amount, everything) instead of a lightweight inline form — prefilled with what the SMS gave us,
+  // and linked back to this mapping on save via linkBillMappingId.
+  const openCreateFlow = (mapping: PendingBillMapping) => {
+    navigation.navigate('AddScheduledPayment', {
+      linkBillMappingId: mapping.id,
+      prefill: {
+        name: mapping.suggestedName || mapping.institutionKey,
+        amount: mapping.latestAmount != null ? mapping.latestAmount.toString() : undefined,
+        dueDate: mapping.latestDueDate ? new Date(mapping.latestDueDate).getDate() : undefined,
+      },
+    });
   };
 
   const handleIgnore = (mapping: PendingBillMapping) => {
@@ -89,27 +85,6 @@ export default function BillsInboxScreen() {
         { text: 'Dismiss', style: 'destructive', onPress: () => ignoreMutation.mutate(mapping.id) },
       ]
     );
-  };
-
-  const handleCreateSubmit = () => {
-    if (!createModalMapping) return;
-    if (!newName.trim()) {
-      Toast.show({ type: 'error', text1: 'Enter a bill name', position: 'bottom' });
-      return;
-    }
-    if (!newAmount || parseFloat(newAmount) <= 0) {
-      Toast.show({ type: 'error', text1: 'Enter a valid amount', position: 'bottom' });
-      return;
-    }
-    createMutation.mutate({
-      mappingId: createModalMapping.id,
-      data: {
-        name: newName.trim(),
-        amount: newAmount,
-        dueDate: parseInt(newDueDate) || 1,
-        frequency: 'monthly',
-      },
-    });
   };
 
   if (isLoading) {
@@ -169,7 +144,7 @@ export default function BillsInboxScreen() {
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={[styles.actionButton, { borderColor: colors.border }]}
-                  onPress={() => openCreateModal(mapping)}
+                  onPress={() => openCreateFlow(mapping)}
                 >
                   <Ionicons name="add-circle-outline" size={16} color={colors.primary} />
                   <Text style={[styles.actionButtonText, { color: colors.primary }]}>New payment</Text>
@@ -226,70 +201,6 @@ export default function BillsInboxScreen() {
         </View>
       </Modal>
 
-      {/* Create new scheduled payment modal */}
-      <Modal visible={!!createModalMapping} animationType="slide" transparent onRequestClose={() => setCreateModalMapping(null)}>
-        <View style={styles.modalOverlay}>
-          <View style={[styles.modalContent, { backgroundColor: colors.background }]}>
-            <View style={styles.modalHeader}>
-              <Text style={[styles.modalTitle, { color: colors.text }]}>New Scheduled Payment</Text>
-              <TouchableOpacity onPress={() => setCreateModalMapping(null)}>
-                <Ionicons name="close" size={24} color={colors.text} />
-              </TouchableOpacity>
-            </View>
-            <ScrollView style={styles.modalBody}>
-              <Text style={[styles.fieldLabel, { color: colors.textMuted }]}>Payment Name</Text>
-              <TextInput
-                style={[styles.input, { backgroundColor: colors.card, color: colors.text, borderColor: colors.border }]}
-                value={newName}
-                onChangeText={setNewName}
-                placeholder="e.g. Jio Recharge"
-                placeholderTextColor={colors.textMuted}
-              />
-
-              <Text style={[styles.fieldLabel, { color: colors.textMuted }]}>Amount</Text>
-              <View style={[styles.amountInputContainer, { backgroundColor: colors.card, borderColor: colors.border }]}>
-                <Text style={[styles.currencyPrefix, { color: colors.textMuted }]}>₹</Text>
-                <TextInput
-                  style={[styles.amountInput, { color: colors.text }]}
-                  value={newAmount}
-                  onChangeText={setNewAmount}
-                  placeholder="0"
-                  placeholderTextColor={colors.textMuted}
-                  keyboardType="numeric"
-                />
-              </View>
-
-              <Text style={[styles.fieldLabel, { color: colors.textMuted }]}>Due Day of Month</Text>
-              <TextInput
-                style={[styles.input, { backgroundColor: colors.card, color: colors.text, borderColor: colors.border }]}
-                value={newDueDate}
-                onChangeText={setNewDueDate}
-                placeholder="1-28"
-                placeholderTextColor={colors.textMuted}
-                keyboardType="numeric"
-              />
-              {createModalMapping?.latestAmount != null && (
-                <Text style={[styles.hint, { color: colors.textMuted }]}>
-                  Pre-filled from the latest SMS — edit if it's not right.
-                </Text>
-              )}
-
-              <TouchableOpacity
-                style={[styles.submitButton, { backgroundColor: colors.primary }, createMutation.isPending && styles.submitButtonDisabled]}
-                onPress={handleCreateSubmit}
-                disabled={createMutation.isPending}
-              >
-                {createMutation.isPending ? (
-                  <ActivityIndicator color="#fff" />
-                ) : (
-                  <Text style={styles.submitButtonText}>Create & Link</Text>
-                )}
-              </TouchableOpacity>
-              <View style={{ height: 24 }} />
-            </ScrollView>
-          </View>
-        </View>
-      </Modal>
     </View>
   );
 }
@@ -418,51 +329,5 @@ const styles = StyleSheet.create({
   accountRowMeta: {
     fontSize: 12,
     marginTop: 2,
-  },
-  fieldLabel: {
-    fontSize: 13,
-    fontWeight: '500',
-    marginBottom: 8,
-    marginTop: 16,
-  },
-  input: {
-    borderRadius: 12,
-    padding: 14,
-    fontSize: 15,
-    borderWidth: 1,
-  },
-  amountInputContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    borderWidth: 1,
-  },
-  currencyPrefix: {
-    fontSize: 16,
-    marginRight: 6,
-  },
-  amountInput: {
-    flex: 1,
-    paddingVertical: 14,
-    fontSize: 15,
-  },
-  hint: {
-    fontSize: 11,
-    marginTop: 6,
-  },
-  submitButton: {
-    padding: 16,
-    borderRadius: 12,
-    alignItems: 'center',
-    marginTop: 20,
-  },
-  submitButtonDisabled: {
-    opacity: 0.7,
-  },
-  submitButtonText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '600',
   },
 });
