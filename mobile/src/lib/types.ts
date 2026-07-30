@@ -98,6 +98,7 @@ export interface ScheduledPayment {
   name: string;
   paymentType?: string;
   amount: string;
+  variableAmount?: boolean | null;
   dueDateType?: 'fixed_day' | 'salary_day';
   dueDate: number | null;
   categoryId: number | null;
@@ -105,6 +106,7 @@ export interface ScheduledPayment {
   creditCardAccountId?: number | null;
   frequency?: string | null;
   customIntervalMonths?: number | null;
+  customIntervalDays?: number | null;
   startMonth?: number | null;
   status: 'active' | 'inactive';
   notes: string | null;

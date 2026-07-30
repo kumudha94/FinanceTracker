@@ -150,7 +150,7 @@ export default function SmsAutoReadScreen() {
         <View style={styles.bulletRow}>
           <Ionicons name="checkmark-circle-outline" size={18} color={colors.primary} />
           <Text style={[styles.bulletText, { color: colors.text }]}>
-            Only SMS containing words like "debited" or "credited" are processed — everything else is ignored on your device.
+            Only SMS containing words like "debited," "credited," or "deposited" are processed — everything else is ignored on your device.
           </Text>
         </View>
         <View style={styles.bulletRow}>

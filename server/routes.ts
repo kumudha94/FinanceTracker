@@ -2247,9 +2247,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const allPayments = await storage.getAllScheduledPayments(userId);
       const activePayments = allPayments.filter(p => p.status === 'active');
-      const today = now.getDate();
-      const currentMonth = now.getMonth() + 1;
-      const currentYear = now.getFullYear();
+      // The cycle (startOfMonth..endOfMonth) can span two calendar months (e.g. Jul 28 - Aug 30),
+      // so "due on the 1st" resolves to Aug 1st here, not July 1st — same convention already used
+      // by getCyclePrimaryMonth's other caller (next-month-forecast) for this exact ambiguity.
+      const { month: currentMonth, year: currentYear } = getCyclePrimaryMonth(startOfMonth, endOfMonth);
+      // Resolves a scheduled payment's day-of-month due date to the actual calendar date it falls
+      // on within this cycle, so overdue/pending/upcoming comparisons are against a real date
+      // instead of naively comparing day-of-month numbers across a cycle that crosses months.
+      const resolveDueDate = (day: number) => new Date(currentYear, currentMonth - 1, day);
 
       const isPaymentDueThisMonth = (payment: any): boolean => {
         const frequency = payment.frequency || 'monthly';
@@ -2300,14 +2305,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
         p.paymentType !== 'credit_card_bill' && isPaymentDueThisMonth(p)
       );
 
+      const sevenDaysOut = new Date(startOfToday.getTime() + 7 * 24 * 60 * 60 * 1000);
+
       const billsDue = dueThisMonth
-        .filter(p => (p.dueDate || 0) >= today)
+        .filter(p => p.dueDate && resolveDueDate(p.dueDate) >= startOfToday)
         .reduce((sum, p) => sum + parseFloat(p.amount || '0'), 0);
 
       const upcomingBills = dueThisMonth
         .filter(p => {
-          const dueDay = p.dueDate || 0;
-          return dueDay >= today && dueDay <= today + 7;
+          if (!p.dueDate) return false;
+          const dueDateObj = resolveDueDate(p.dueDate);
+          return dueDateObj >= startOfToday && dueDateObj <= sevenDaysOut;
         })
         .sort((a, b) => (a.dueDate || 0) - (b.dueDate || 0))
         .slice(0, 5);
@@ -2461,7 +2469,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             frequency: p.frequency || 'monthly',
             isPaid,
             paidAmount,
-            status: isPaid ? 'paid' : (p.dueDate && p.dueDate < today ? 'overdue' : 'pending'),
+            status: isPaid ? 'paid' : (p.dueDate && resolveDueDate(p.dueDate) < startOfToday ? 'overdue' : 'pending'),
           },
         };
       }));
@@ -2484,7 +2492,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             const billingDay = card.billingDate!;
             let prevCycleStart: Date;
             let prevCycleEnd: Date;
-            if (today >= billingDay) {
+            if (now.getDate() >= billingDay) {
               prevCycleStart = new Date(now.getFullYear(), now.getMonth() - 1, billingDay, 0, 0, 0);
               prevCycleEnd = new Date(now.getFullYear(), now.getMonth(), billingDay - 1, 23, 59, 59);
             } else {
@@ -2511,7 +2519,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               frequency: 'monthly',
               isPaid: false,
               paidAmount: 0,
-              status: billingDay < today ? 'overdue' : billingDay === today ? 'due_today' : 'pending',
+              status: billingDay < now.getDate() ? 'overdue' : billingDay === now.getDate() ? 'due_today' : 'pending',
               creditLimit,
               bankName: card.bankName || '',
               isAutoCalculated: true,
@@ -2538,7 +2546,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           dueDate: loan.emiDay,
           isPaid: currentInstallment?.status === 'paid',
           paidAmount: currentInstallment?.paidAmount ? parseFloat(currentInstallment.paidAmount) : 0,
-          status: currentInstallment?.status || (loan.emiDay && loan.emiDay < today ? 'overdue' : 'pending'),
+          status: currentInstallment?.status || (loan.emiDay && resolveDueDate(loan.emiDay) < startOfToday ? 'overdue' : 'pending'),
           lenderName: loan.lenderName || '',
         };
       }));

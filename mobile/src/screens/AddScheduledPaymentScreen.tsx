@@ -1,8 +1,9 @@
 import { useState, useMemo } from 'react';
-import { View, Text, StyleSheet, TextInput, TouchableOpacity, ScrollView, Alert, ActivityIndicator, Switch } from 'react-native';
+import { View, Text, StyleSheet, TextInput, TouchableOpacity, ScrollView, Alert, ActivityIndicator, Switch, Platform } from 'react-native';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import Toast from 'react-native-toast-message';
 import { api } from '../lib/api';
 import { getThemedColors } from '../lib/utils';
@@ -26,6 +27,7 @@ export default function AddScheduledPaymentScreen() {
 
   const [name, setName] = useState(prefill?.name || '');
   const [amount, setAmount] = useState(prefill?.amount || '');
+  const [variableAmount, setVariableAmount] = useState(false);
   const [dueDateType, setDueDateType] = useState<'fixed_day' | 'salary_day'>('fixed_day');
   const [dueDate, setDueDate] = useState(prefill?.dueDate?.toString() || '');
   const [notes, setNotes] = useState('');
@@ -40,6 +42,9 @@ export default function AddScheduledPaymentScreen() {
   const [showCreditCardPicker, setShowCreditCardPicker] = useState(false);
   const [frequency, setFrequency] = useState<string>('monthly');
   const [customIntervalMonths, setCustomIntervalMonths] = useState('');
+  const [customIntervalDays, setCustomIntervalDays] = useState('');
+  const [lastPaidDate, setLastPaidDate] = useState(new Date());
+  const [showLastPaidDatePicker, setShowLastPaidDatePicker] = useState(false);
   const [showFrequencyPicker, setShowFrequencyPicker] = useState(false);
   const [startMonth, setStartMonth] = useState<number | null>(null);
   const [showMonthPicker, setShowMonthPicker] = useState(false);
@@ -82,6 +87,7 @@ export default function AddScheduledPaymentScreen() {
       if (payment) {
         setName(payment.name);
         setAmount(payment.amount);
+        setVariableAmount(payment.variableAmount ?? false);
         setDueDateType(payment.dueDateType || 'fixed_day');
         setDueDate(payment.dueDate?.toString() || '');
         setNotes(payment.notes || '');
@@ -94,6 +100,9 @@ export default function AddScheduledPaymentScreen() {
         setFrequency(payment.frequency || 'monthly');
         if (payment.customIntervalMonths) {
           setCustomIntervalMonths(payment.customIntervalMonths.toString());
+        }
+        if (payment.customIntervalDays) {
+          setCustomIntervalDays(payment.customIntervalDays.toString());
         }
         if (payment.startMonth) {
           setStartMonth(payment.startMonth);
@@ -181,8 +190,9 @@ export default function AddScheduledPaymentScreen() {
       return;
     }
     
-    // Amount is required only for regular payments
-    if (paymentType === 'regular' && (!amount || parseFloat(amount) <= 0)) {
+    // Amount is required only for regular, fixed-amount payments — variable-amount bills
+    // (e.g. electricity) are entered per-cycle instead, and credit card bills auto-calculate.
+    if (paymentType === 'regular' && !variableAmount && (!amount || parseFloat(amount) <= 0)) {
       Toast.show({
         type: 'error',
         text1: 'Validation Error',
@@ -205,14 +215,29 @@ export default function AddScheduledPaymentScreen() {
       return;
     }
     
-    // Validate due date only if dueDateType is 'fixed_day'
-    if (dueDateType === 'fixed_day') {
+    // Day-interval payments are anchored by an actual date, not a day-of-month — dueDate
+    // doesn't apply to them.
+    if (dueDateType === 'fixed_day' && frequency !== 'day_interval') {
       const dueDateNum = parseInt(dueDate);
       if (!dueDate || isNaN(dueDateNum) || dueDateNum < 1 || dueDateNum > 31) {
         Toast.show({
           type: 'error',
           text1: 'Invalid Due Date',
           text2: 'Due date must be between 1 and 31',
+          position: 'bottom',
+          visibilityTime: 3000,
+        });
+        return;
+      }
+    }
+
+    if (frequency === 'day_interval') {
+      const interval = parseInt(customIntervalDays);
+      if (!customIntervalDays || isNaN(interval) || interval < 1 || interval > 365) {
+        Toast.show({
+          type: 'error',
+          text1: 'Validation Error',
+          text2: 'Interval must be between 1 and 365 days',
           position: 'bottom',
           visibilityTime: 3000,
         });
@@ -248,9 +273,10 @@ export default function AddScheduledPaymentScreen() {
 
     mutation.mutate({
       name: name.trim(),
-      amount: amount || undefined,
+      amount: variableAmount ? undefined : (amount || undefined),
+      variableAmount,
       dueDateType,
-      dueDate: dueDateType === 'fixed_day' ? parseInt(dueDate) : null,
+      dueDate: dueDateType === 'fixed_day' && frequency !== 'day_interval' ? parseInt(dueDate) : null,
       notes: notes.trim() || null,
       categoryId: selectedCategoryId,
       accountId: selectedAccountId,
@@ -261,6 +287,10 @@ export default function AddScheduledPaymentScreen() {
       creditCardAccountId: paymentType === 'credit_card_bill' ? creditCardAccountId : null,
       frequency,
       customIntervalMonths: frequency === 'custom' ? parseInt(customIntervalMonths) : null,
+      customIntervalDays: frequency === 'day_interval' ? parseInt(customIntervalDays) : null,
+      // Only meaningful on create — the server anchors the first occurrence off this date.
+      // Editing an existing day-interval payment doesn't recompute occurrences.
+      ...(frequency === 'day_interval' && !isEditMode ? { lastPaidDate: lastPaidDate.toISOString() } : {}),
       startMonth: needsStartMonth ? startMonth : null,
     });
   };
@@ -386,96 +416,164 @@ export default function AddScheduledPaymentScreen() {
         />
       </View>
 
-      <View style={styles.field}>
-        <Text style={[styles.label, { color: colors.textMuted }]}>
-          Amount {paymentType === 'credit_card_bill' && '(optional)'}
-        </Text>
-        {paymentType === 'credit_card_bill' && (
-          <View style={[styles.infoBox, { backgroundColor: colors.card, borderColor: colors.border, marginBottom: 8 }]}>
-            <Ionicons name="information-circle-outline" size={20} color={colors.primary} style={styles.infoIcon} />
-            <Text style={[styles.infoText, { color: colors.textMuted }]}>
-              Leave blank to auto-calculate from your actual spending each billing cycle. Or enter a fixed amount to pay monthly.
-            </Text>
+      {paymentType === 'regular' && (
+        <View style={[styles.toggleContainer, { backgroundColor: colors.card, marginBottom: 20 }]}>
+          <View style={styles.toggleRow}>
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.toggleLabel, { color: colors.text }]}>This bill's amount varies each time</Text>
+              <Text style={[styles.toggleDescription, { color: colors.textMuted }]}>e.g. electricity — you'll enter the actual amount each cycle</Text>
+            </View>
+            <Switch
+              value={variableAmount}
+              onValueChange={(v) => { setVariableAmount(v); if (v) setAmount(''); }}
+              trackColor={{ false: colors.border, true: colors.primary }}
+              thumbColor="#fff"
+            />
           </View>
-        )}
-        <View style={[styles.amountInputContainer, { backgroundColor: colors.card }]}>
-          <Text style={[styles.currencyPrefix, { color: colors.textMuted }]}>₹</Text>
-          <TextInput
-            style={[styles.amountInput, { color: colors.text }]}
-            placeholder={paymentType === 'credit_card_bill' ? "Auto-calculated" : "0"}
-            placeholderTextColor={colors.textMuted}
-            keyboardType="numeric"
-            value={amount}
-            onChangeText={setAmount}
-          />
         </View>
-      </View>
+      )}
 
-      <View style={styles.field}>
-        <Text style={[styles.label, { color: colors.textMuted }]}>Due Date Type</Text>
-        <View style={styles.paymentTypeRow}>
-          <TouchableOpacity
-            style={[
-              styles.paymentTypeButton,
-              { backgroundColor: dueDateType === 'fixed_day' ? colors.primary : colors.card, borderColor: colors.border }
-            ]}
-            onPress={() => setDueDateType('fixed_day')}
-          >
-            <Ionicons 
-              name="calendar-number-outline" 
-              size={20} 
-              color={dueDateType === 'fixed_day' ? '#fff' : colors.text} 
-            />
-            <Text style={[
-              styles.paymentTypeText,
-              { color: dueDateType === 'fixed_day' ? '#fff' : colors.text }
-            ]}>
-              Fixed Day
-            </Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[
-              styles.paymentTypeButton,
-              { backgroundColor: dueDateType === 'salary_day' ? colors.primary : colors.card, borderColor: colors.border }
-            ]}
-            onPress={() => setDueDateType('salary_day')}
-          >
-            <Ionicons 
-              name="cash-outline" 
-              size={20} 
-              color={dueDateType === 'salary_day' ? '#fff' : colors.text} 
-            />
-            <Text style={[
-              styles.paymentTypeText,
-              { color: dueDateType === 'salary_day' ? '#fff' : colors.text }
-            ]}>
-              Salary Day
-            </Text>
-          </TouchableOpacity>
-        </View>
-      </View>
-
-      {dueDateType === 'fixed_day' ? (
+      {!variableAmount && (
         <View style={styles.field}>
-          <Text style={[styles.label, { color: colors.textMuted }]}>Due Date (Day of Month)</Text>
-          <TextInput
-            style={[styles.input, { backgroundColor: colors.card, color: colors.text, borderColor: colors.border }]}
-            placeholder="e.g., 1, 15, 28"
-            placeholderTextColor={colors.textMuted}
-            keyboardType="numeric"
-            maxLength={2}
-            value={dueDate}
-            onChangeText={setDueDate}
-          />
-        </View>
-      ) : (
-        <View style={[styles.infoBox, { backgroundColor: colors.card, borderColor: colors.border }]}>
-          <Ionicons name="information-circle-outline" size={20} color={colors.primary} style={styles.infoIcon} />
-          <Text style={[styles.infoText, { color: colors.textMuted }]}>
-            Payment will be scheduled on the same day as your salary (as per your salary profile settings).
-            This will affect only from next month's payment onwards.
+          <Text style={[styles.label, { color: colors.textMuted }]}>
+            Amount {paymentType === 'credit_card_bill' && '(optional)'}
           </Text>
+          {paymentType === 'credit_card_bill' && (
+            <View style={[styles.infoBox, { backgroundColor: colors.card, borderColor: colors.border, marginBottom: 8 }]}>
+              <Ionicons name="information-circle-outline" size={20} color={colors.primary} style={styles.infoIcon} />
+              <Text style={[styles.infoText, { color: colors.textMuted }]}>
+                Leave blank to auto-calculate from your actual spending each billing cycle. Or enter a fixed amount to pay monthly.
+              </Text>
+            </View>
+          )}
+          <View style={[styles.amountInputContainer, { backgroundColor: colors.card }]}>
+            <Text style={[styles.currencyPrefix, { color: colors.textMuted }]}>₹</Text>
+            <TextInput
+              style={[styles.amountInput, { color: colors.text }]}
+              placeholder={paymentType === 'credit_card_bill' ? "Auto-calculated" : "0"}
+              placeholderTextColor={colors.textMuted}
+              keyboardType="numeric"
+              value={amount}
+              onChangeText={setAmount}
+            />
+          </View>
         </View>
+      )}
+
+      {frequency !== 'day_interval' ? (
+        <>
+          <View style={styles.field}>
+            <Text style={[styles.label, { color: colors.textMuted }]}>Due Date Type</Text>
+            <View style={styles.paymentTypeRow}>
+              <TouchableOpacity
+                style={[
+                  styles.paymentTypeButton,
+                  { backgroundColor: dueDateType === 'fixed_day' ? colors.primary : colors.card, borderColor: colors.border }
+                ]}
+                onPress={() => setDueDateType('fixed_day')}
+              >
+                <Ionicons
+                  name="calendar-number-outline"
+                  size={20}
+                  color={dueDateType === 'fixed_day' ? '#fff' : colors.text}
+                />
+                <Text style={[
+                  styles.paymentTypeText,
+                  { color: dueDateType === 'fixed_day' ? '#fff' : colors.text }
+                ]}>
+                  Fixed Day
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  styles.paymentTypeButton,
+                  { backgroundColor: dueDateType === 'salary_day' ? colors.primary : colors.card, borderColor: colors.border }
+                ]}
+                onPress={() => setDueDateType('salary_day')}
+              >
+                <Ionicons
+                  name="cash-outline"
+                  size={20}
+                  color={dueDateType === 'salary_day' ? '#fff' : colors.text}
+                />
+                <Text style={[
+                  styles.paymentTypeText,
+                  { color: dueDateType === 'salary_day' ? '#fff' : colors.text }
+                ]}>
+                  Salary Day
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          {dueDateType === 'fixed_day' ? (
+            <View style={styles.field}>
+              <Text style={[styles.label, { color: colors.textMuted }]}>Due Date (Day of Month)</Text>
+              <TextInput
+                style={[styles.input, { backgroundColor: colors.card, color: colors.text, borderColor: colors.border }]}
+                placeholder="e.g., 1, 15, 28"
+                placeholderTextColor={colors.textMuted}
+                keyboardType="numeric"
+                maxLength={2}
+                value={dueDate}
+                onChangeText={setDueDate}
+              />
+            </View>
+          ) : (
+            <View style={[styles.infoBox, { backgroundColor: colors.card, borderColor: colors.border }]}>
+              <Ionicons name="information-circle-outline" size={20} color={colors.primary} style={styles.infoIcon} />
+              <Text style={[styles.infoText, { color: colors.textMuted }]}>
+                Payment will be scheduled on the same day as your salary (as per your salary profile settings).
+                This will affect only from next month's payment onwards.
+              </Text>
+            </View>
+          )}
+        </>
+      ) : (
+        <>
+          <View style={styles.field}>
+            <Text style={[styles.label, { color: colors.textMuted }]}>Interval (days)</Text>
+            <TextInput
+              style={[styles.input, { backgroundColor: colors.card, color: colors.text, borderColor: colors.border }]}
+              placeholder="e.g., 84"
+              placeholderTextColor={colors.textMuted}
+              keyboardType="numeric"
+              maxLength={3}
+              value={customIntervalDays}
+              onChangeText={setCustomIntervalDays}
+            />
+          </View>
+          {!isEditMode && (
+            <View style={styles.field}>
+              <Text style={[styles.label, { color: colors.textMuted }]}>Last recharged/paid on</Text>
+              <TouchableOpacity
+                style={[styles.datePickerButton, { backgroundColor: colors.card, borderColor: colors.border }]}
+                onPress={() => setShowLastPaidDatePicker(true)}
+              >
+                <Ionicons name="calendar-outline" size={20} color={colors.text} />
+                <Text style={[styles.datePickerText, { color: colors.text }]}>
+                  {lastPaidDate.toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' })}
+                </Text>
+              </TouchableOpacity>
+              {showLastPaidDatePicker && (
+                <DateTimePicker
+                  value={lastPaidDate}
+                  mode="date"
+                  display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                  themeVariant={resolvedTheme === 'dark' ? 'dark' : 'light'}
+                  textColor={colors.text}
+                  onChange={(event, selectedDate) => {
+                    setShowLastPaidDatePicker(Platform.OS === 'ios');
+                    if (selectedDate) setLastPaidDate(selectedDate);
+                  }}
+                />
+              )}
+              <Text style={[styles.monthHint, { color: colors.textMuted }]}>
+                Next due date will be {customIntervalDays || 'N'} days after this
+              </Text>
+            </View>
+          )}
+        </>
       )}
 
       <View style={styles.field}>
@@ -491,6 +589,8 @@ export default function AddScheduledPaymentScreen() {
              frequency === 'half_yearly' ? 'Every 6 Months' :
              frequency === 'yearly' ? 'Every Year' :
              frequency === 'one_time' ? 'One Time' :
+             frequency === 'day_interval' && customIntervalDays ? `Every ${customIntervalDays} Days` :
+             frequency === 'day_interval' ? 'Every N Days' :
              frequency === 'custom' && customIntervalMonths ? `Every ${customIntervalMonths} Months` :
              'Custom Interval'}
           </Text>
@@ -504,6 +604,7 @@ export default function AddScheduledPaymentScreen() {
               { value: 'half_yearly', label: 'Every 6 Months', desc: 'Semi-annual payments' },
               { value: 'yearly', label: 'Every Year', desc: 'Annual renewals' },
               { value: 'custom', label: 'Custom Interval', desc: 'Set your own interval in months' },
+              { value: 'day_interval', label: 'Every N Days', desc: 'Phone recharge, prepaid plans, etc.' },
               { value: 'one_time', label: 'One Time', desc: 'Single payment only' },
             ].map((opt) => (
               <TouchableOpacity
@@ -512,14 +613,15 @@ export default function AddScheduledPaymentScreen() {
                   styles.dropdownItem,
                   frequency === opt.value && { backgroundColor: `${colors.primary}15` }
                 ]}
-                onPress={() => { 
-                  setFrequency(opt.value); 
+                onPress={() => {
+                  setFrequency(opt.value);
                   if (opt.value !== 'custom') setCustomIntervalMonths('');
-                  if (opt.value === 'monthly' || opt.value === 'one_time') {
+                  if (opt.value !== 'day_interval') setCustomIntervalDays('');
+                  if (opt.value === 'monthly' || opt.value === 'one_time' || opt.value === 'day_interval') {
                     setStartMonth(null);
                     setShowMonthPicker(false);
                   }
-                  setShowFrequencyPicker(false); 
+                  setShowFrequencyPicker(false);
                 }}
               >
                 <View style={{ flex: 1 }}>
@@ -926,5 +1028,17 @@ const styles = StyleSheet.create({
     fontSize: 11,
     marginTop: 6,
     fontStyle: 'italic',
+  },
+  datePickerButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    borderWidth: 1,
+    borderRadius: 8,
+    padding: 12,
+  },
+  datePickerText: {
+    fontSize: 16,
+    flex: 1,
   },
 });

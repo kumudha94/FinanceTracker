@@ -39,6 +39,9 @@ function getFrequencyLabel(payment: any): string {
     if (months === 12) return 'Yearly';
     return `Every ${months} Months`;
   }
+  if (payment.frequency === 'day_interval') {
+    return `Every ${payment.customIntervalDays ?? '?'} Days`;
+  }
   return FREQUENCY_OPTIONS[payment.frequency || 'monthly'] || 'Monthly';
 }
 
@@ -595,13 +598,25 @@ export default function ScheduledPaymentsScreen() {
     }
 
     const isCreditCardBill = selectedOccurrence.scheduledPayment?.paymentType === 'credit_card_bill';
+    const isVariableAmount = !!selectedOccurrence.scheduledPayment?.variableAmount;
+
+    if (isVariableAmount && (!paymentAmount || parseFloat(paymentAmount) <= 0)) {
+      Toast.show({
+        type: 'error',
+        text1: 'Amount Required',
+        text2: 'Enter this cycle\'s bill amount before marking it paid',
+        position: 'bottom',
+      });
+      return;
+    }
+
     markAsPaidMutation.mutate({
       occurrenceId: selectedOccurrence.id,
       accountId: selectedAccountId,
       date: paymentDate.toISOString(),
       createTransaction: paymentCreateTransaction,
       affectBalance: paymentAffectBalance,
-      customAmount: isCreditCardBill && paymentAmount ? paymentAmount : undefined,
+      customAmount: (isCreditCardBill || isVariableAmount) && paymentAmount ? paymentAmount : undefined,
     });
   };
 
@@ -870,9 +885,11 @@ export default function ScheduledPaymentsScreen() {
                 {selectedOccurrence?.scheduledPayment?.name}
               </Text>
               
-              {selectedOccurrence?.scheduledPayment?.paymentType === 'credit_card_bill' ? (
+              {selectedOccurrence?.scheduledPayment?.paymentType === 'credit_card_bill' || selectedOccurrence?.scheduledPayment?.variableAmount ? (
                 <View style={styles.modalField}>
-                  <Text style={[styles.modalFieldLabel, { color: colors.textMuted }]}>Amount (Editable)</Text>
+                  <Text style={[styles.modalFieldLabel, { color: colors.textMuted }]}>
+                    {selectedOccurrence?.scheduledPayment?.variableAmount ? "This cycle's amount" : 'Amount (Editable)'}
+                  </Text>
                   <View style={[styles.amountInputContainer, { backgroundColor: colors.card, borderColor: colors.border }]}>
                     <Text style={[styles.currencySymbol, { color: colors.primary }]}>₹</Text>
                     <TextInput

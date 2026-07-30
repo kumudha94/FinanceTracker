@@ -70,8 +70,13 @@ export async function hasSmsPermission(): Promise<boolean> {
   return granted;
 }
 
+// Cheap on-device pre-filter so we don't ship every OTP/promo SMS to the server for parsing.
+// Must stay a superset of the debit/credit keywords server/smsParser.ts actually parses on
+// (currently: debited, deducted, withdrawn, spent, used for, paid, purchase, charged, sent,
+// credited, received, deposited, refunded, added, reversed) — anything missing here is silently
+// dropped before the server ever sees it, which is worse than one extra discarded network call.
 function looksFinancial(body: string): boolean {
-  return /debited|credited/i.test(body);
+  return /debited|deducted|withdrawn|spent|used for|paid|purchase|charged|sent|credited|received|deposited|refunded|added|reversed/i.test(body);
 }
 
 async function getProcessedIds(): Promise<string[]> {
