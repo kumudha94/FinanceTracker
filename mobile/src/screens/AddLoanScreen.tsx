@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import { View, Text, StyleSheet, ScrollView, TextInput, TouchableOpacity, ActivityIndicator, Switch, Platform, Modal, Keyboard } from 'react-native';
 import { KeyboardAwareScrollView } from 'react-native-keyboard-aware-scroll-view';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -100,8 +100,11 @@ export default function AddLoanScreen() {
   });
 
   // Populate form with existing loan data
+  const hasHydratedRef = useRef(false);
+
   useEffect(() => {
-    if (existingLoan && isEditMode) {
+    if (existingLoan && isEditMode && !hasHydratedRef.current) {
+      hasHydratedRef.current = true;
       setFormData({
         name: existingLoan.name,
         type: existingLoan.loanType || existingLoan.type || 'personal_loan',

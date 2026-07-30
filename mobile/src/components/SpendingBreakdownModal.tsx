@@ -150,7 +150,14 @@ export default function SpendingBreakdownModal({ loanId, visible, onClose }: Spe
                 </View>
                 <TouchableOpacity
                   style={[styles.saveButton, { backgroundColor: colors.primary }]}
-                  onPress={() => saveReceivedAmountMutation.mutate(receivedAmountInput)}
+                  onPress={() => {
+                    const newReceived = parseFloat(receivedAmountInput);
+                    if (!isNaN(newReceived) && newReceived < allocated) {
+                      Toast.show({ type: 'error', text1: 'Cannot lower below allocated amount', text2: `You've already allocated ${formatCurrency(allocated)}`, position: 'bottom' });
+                      return;
+                    }
+                    saveReceivedAmountMutation.mutate(receivedAmountInput);
+                  }}
                   disabled={saveReceivedAmountMutation.isPending}
                 >
                   {saveReceivedAmountMutation.isPending ? (
@@ -163,9 +170,11 @@ export default function SpendingBreakdownModal({ loanId, visible, onClose }: Spe
             </View>
 
             {received !== null && (
-              <Text style={[styles.allocatedText, { color: colors.textMuted }]}>
+              <Text style={[styles.allocatedText, { color: remaining! < 0 ? '#ef4444' : colors.textMuted }]}>
                 {formatCurrency(allocated)} of {formatCurrency(received)} allocated
-                {remaining! >= 0 ? `, ${formatCurrency(remaining!)} unaccounted` : ''}
+                {remaining! >= 0
+                  ? `, ${formatCurrency(remaining!)} unaccounted`
+                  : `, ${formatCurrency(Math.abs(remaining!))} over-allocated — lower this by adjusting entries or raising the received amount`}
               </Text>
             )}
 

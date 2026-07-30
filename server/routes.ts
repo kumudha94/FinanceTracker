@@ -4535,9 +4535,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/loans/:loanId/spending-entries", async (req, res) => {
+  app.get("/api/loans/:loanId/spending-entries", authenticateToken, async (req, res) => {
     try {
-      const entries = await storage.getLoanSpendingEntries(parseInt(req.params.loanId));
+      const userId = req.user!.userId;
+      const loanId = parseInt(req.params.loanId);
+
+      const loan = await storage.getLoan(loanId);
+      if (!loan || loan.userId !== userId) {
+        return res.status(404).json({ error: "Loan not found" });
+      }
+
+      const entries = await storage.getLoanSpendingEntries(loanId);
       res.json(entries);
     } catch (error) {
       res.status(500).json({ error: "Failed to fetch spending entries" });
