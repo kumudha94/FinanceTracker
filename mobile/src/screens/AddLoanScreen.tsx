@@ -11,6 +11,7 @@ import { getThemedColors } from '../lib/utils';
 import { api } from '../lib/api';
 import { useTheme } from '../contexts/ThemeContext';
 import type { Account, InsertLoan, Loan } from '../lib/types';
+import SpendingBreakdownModal from '../components/SpendingBreakdownModal';
 
 const LOAN_TYPES = [
   { value: 'home_loan', label: 'Home Loan' },
@@ -54,6 +55,7 @@ export default function AddLoanScreen() {
   const [showEndDatePicker, setShowEndDatePicker] = useState(false);
   const [showNextEmiDatePicker, setShowNextEmiDatePicker] = useState(false);
   const [showAccountPicker, setShowAccountPicker] = useState(false);
+  const [spendingBreakdownVisible, setSpendingBreakdownVisible] = useState(false);
   const [isExistingLoan, setIsExistingLoan] = useState(false);
   const [createTransaction, setCreateTransaction] = useState(false);
   const [affectBalance, setAffectBalance] = useState(false);
@@ -346,7 +348,18 @@ export default function AddLoanScreen() {
             </Text>
           </View>
         )}
-        
+
+        {isEditMode && loanId && (
+          <TouchableOpacity
+            style={[styles.dropdownButton, { backgroundColor: colors.card, borderColor: colors.border, marginBottom: 20 }]}
+            onPress={() => setSpendingBreakdownVisible(true)}
+          >
+            <Ionicons name="pie-chart-outline" size={20} color="#8b5cf6" />
+            <Text style={[styles.dropdownText, { color: colors.text, flex: 1 }]}>Spending Breakdown</Text>
+            <Ionicons name="chevron-forward" size={16} color={colors.textMuted} />
+          </TouchableOpacity>
+        )}
+
         <View style={styles.field}>
           <Text style={[styles.label, { color: colors.textMuted }]}>Loan Name *</Text>
           <TextInput
@@ -957,6 +970,13 @@ export default function AddLoanScreen() {
 
       <View style={{ height: 40 }} />
         </KeyboardAwareScrollView>
+      )}
+      {loanId && (
+        <SpendingBreakdownModal
+          loanId={loanId}
+          visible={spendingBreakdownVisible}
+          onClose={() => setSpendingBreakdownVisible(false)}
+        />
       )}
     </View>
   );
