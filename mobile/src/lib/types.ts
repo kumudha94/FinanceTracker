@@ -382,6 +382,7 @@ export interface Loan {
   loanType?: 'home_loan' | 'personal_loan' | 'credit_card_loan' | 'item_emi'; // alias for compatibility
   principalAmount: string;
   outstandingAmount: string;
+  receivedAmount: string | null;
   interestRate: string;
   tenure?: number; // backend field name (remaining tenure for existing loans)
   tenureMonths?: number; // frontend alias
@@ -437,6 +438,19 @@ export interface LoanInstallment {
   createdAt: string;
 }
 
+export interface LoanSpendingEntry {
+  id: number;
+  loanId: number;
+  amount: string;
+  reason: string | null;
+  createdAt: string;
+}
+
+export interface InsertLoanSpendingEntry {
+  amount: string;
+  reason?: string | null;
+}
+
 export interface CardDetails {
   id: number;
   accountId: number;
@@ -482,6 +496,7 @@ export interface InsertLoan {
   name: string;
   loanType: 'home_loan' | 'personal_loan' | 'credit_card_loan' | 'item_emi';
   principalAmount: string;
+  receivedAmount?: string | null;
   interestRate: string;
   tenureMonths: number;
   emiAmount: string;
