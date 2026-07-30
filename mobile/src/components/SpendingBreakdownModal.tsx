@@ -37,11 +37,24 @@ export default function SpendingBreakdownModal({ loanId, visible, onClose }: Spe
 
   // Pre-fill the input with the loan's principal the first time it's opened for a loan that
   // has no receivedAmount saved yet — the stored value stays null until the user hits Save.
+  // Re-syncs from the server value whenever the modal opens, discarding any unsaved typed
+  // text left over from a prior open/close cycle (this component stays mounted across
+  // visibility toggles so it can be reused across screens).
   useEffect(() => {
-    if (loan) {
+    if (visible && loan) {
       setReceivedAmountInput(loan.receivedAmount ?? loan.principalAmount);
     }
-  }, [loan?.id, loan?.receivedAmount]);
+  }, [visible, loan?.id, loan?.receivedAmount]);
+
+  // Reset the Add Entry mini-form whenever the modal opens, so a half-filled, unsubmitted
+  // form doesn't persist across close/reopen.
+  useEffect(() => {
+    if (visible) {
+      setShowAddForm(false);
+      setNewEntryAmount('');
+      setNewEntryReason('');
+    }
+  }, [visible]);
 
   const saveReceivedAmountMutation = useMutation({
     mutationFn: (amount: string) => api.updateLoan(loanId, { receivedAmount: amount }),
