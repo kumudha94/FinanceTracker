@@ -1,7 +1,7 @@
 import { 
   users, accounts, categories, transactions, budgets, scheduledPayments, smsLogs,
   paymentOccurrences, savingsGoals, savingsContributions, salaryProfiles, salaryCycles,
-  loans, loanComponents, loanInstallments, loanTerms, loanPayments, loanBtAllocations, cardDetails,
+  loans, loanComponents, loanInstallments, loanSpendingEntries, loanTerms, loanPayments, loanBtAllocations, cardDetails,
   insurances, insurancePremiums, creditCardStatements, senderInstitutionMappings, billSenderMappings,
   forecastExclusions,
   type User, type InsertUser,
@@ -18,6 +18,7 @@ import {
   type Loan, type InsertLoan, type LoanWithRelations,
   type LoanComponent, type InsertLoanComponent,
   type LoanInstallment, type InsertLoanInstallment,
+  type LoanSpendingEntry, type InsertLoanSpendingEntry,
   type LoanTerm, type InsertLoanTerm,
   type LoanPayment, type InsertLoanPayment,
   type LoanBtAllocation, type InsertLoanBtAllocation,
@@ -195,6 +196,11 @@ export interface IStorage {
   updateLoanInstallment(id: number, installment: Partial<InsertLoanInstallment>): Promise<LoanInstallment | undefined>;
   generateLoanInstallments(loanId: number): Promise<LoanInstallment[]>;
   markInstallmentPaid(id: number, paidAmount: string, transactionId?: number): Promise<LoanInstallment | undefined>;
+
+  // Loan Spending Entries
+  getLoanSpendingEntries(loanId: number): Promise<LoanSpendingEntry[]>;
+  createLoanSpendingEntry(entry: InsertLoanSpendingEntry): Promise<LoanSpendingEntry>;
+  deleteLoanSpendingEntry(id: number): Promise<boolean>;
 
   // Card Details
   getCardDetails(accountId: number): Promise<CardDetails | undefined>;
@@ -1938,6 +1944,7 @@ export class DatabaseStorage implements IStorage {
       loanAccountNumber: loans.loanAccountNumber,
       principalAmount: loans.principalAmount,
       outstandingAmount: loans.outstandingAmount,
+      receivedAmount: loans.receivedAmount,
       interestRate: loans.interestRate,
       tenure: loans.tenure,
       emiAmount: loans.emiAmount,
@@ -1977,6 +1984,7 @@ export class DatabaseStorage implements IStorage {
       loanAccountNumber: loans.loanAccountNumber,
       principalAmount: loans.principalAmount,
       outstandingAmount: loans.outstandingAmount,
+      receivedAmount: loans.receivedAmount,
       interestRate: loans.interestRate,
       tenure: loans.tenure,
       emiAmount: loans.emiAmount,
@@ -2045,6 +2053,7 @@ export class DatabaseStorage implements IStorage {
     // Delete related records first (due to foreign key constraints)
     await db.delete(loanPayments).where(eq(loanPayments.loanId, id));
     await db.delete(loanInstallments).where(eq(loanInstallments.loanId, id));
+    await db.delete(loanSpendingEntries).where(eq(loanSpendingEntries.loanId, id));
     await db.delete(loanTerms).where(eq(loanTerms.loanId, id));
     await db.delete(loanComponents).where(eq(loanComponents.loanId, id));
     // Delete BT allocations where this loan is either source or target
@@ -2275,6 +2284,23 @@ export class DatabaseStorage implements IStorage {
     }
 
     return updated || undefined;
+  }
+
+  // Loan Spending Entries
+  async getLoanSpendingEntries(loanId: number): Promise<LoanSpendingEntry[]> {
+    return db.select().from(loanSpendingEntries)
+      .where(eq(loanSpendingEntries.loanId, loanId))
+      .orderBy(desc(loanSpendingEntries.createdAt));
+  }
+
+  async createLoanSpendingEntry(entry: InsertLoanSpendingEntry): Promise<LoanSpendingEntry> {
+    const [newEntry] = await db.insert(loanSpendingEntries).values(entry).returning();
+    return newEntry;
+  }
+
+  async deleteLoanSpendingEntry(id: number): Promise<boolean> {
+    const result = await db.delete(loanSpendingEntries).where(eq(loanSpendingEntries.id, id)).returning();
+    return result.length > 0;
   }
 
   // Card Details
