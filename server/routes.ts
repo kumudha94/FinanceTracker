@@ -28,6 +28,7 @@ import { deriveInstitutionKey, parseDueSms } from "./smsParser";
 import multer from "multer";
 // pdf-parse is imported dynamically at usage site to avoid pdfjs-dist crashing on startup
 import { getPaydayForMonth, getNextPaydays, getPastPaydays, getCurrentCycleDates, getNextCycleDates, getCyclePrimaryMonth } from "./salaryUtils";
+import { validateNewSpendingEntry } from "./loanSpendingValidation";
 import { generateOTP, storeOTP, verifyOTP, sendOTP } from "./emailService";
 import { generateTokenPair, generateAccessToken } from "./jwtService";
 import { authenticateToken } from "./authMiddleware";
@@ -4531,6 +4532,70 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
     } catch (error: any) {
       res.status(400).json({ error: error.message || "Invalid installment data" });
+    }
+  });
+
+  app.get("/api/loans/:loanId/spending-entries", async (req, res) => {
+    try {
+      const entries = await storage.getLoanSpendingEntries(parseInt(req.params.loanId));
+      res.json(entries);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch spending entries" });
+    }
+  });
+
+  app.post("/api/loans/:loanId/spending-entries", authenticateToken, async (req, res) => {
+    try {
+      const userId = req.user!.userId;
+      const loanId = parseInt(req.params.loanId);
+
+      const loan = await storage.getLoan(loanId);
+      if (!loan || loan.userId !== userId) {
+        return res.status(404).json({ error: "Loan not found" });
+      }
+
+      const { amount, reason } = req.body;
+      const existingEntries = await storage.getLoanSpendingEntries(loanId);
+      const validationError = validateNewSpendingEntry(loan.receivedAmount, existingEntries, parseFloat(amount));
+      if (validationError) {
+        return res.status(400).json({ error: validationError });
+      }
+
+      const entry = await storage.createLoanSpendingEntry({ loanId, amount, reason: reason || null });
+      res.status(201).json(entry);
+    } catch (error: any) {
+      res.status(400).json({ error: error.message || "Invalid spending entry data" });
+    }
+  });
+
+  app.delete("/api/spending-entries/:id", authenticateToken, async (req, res) => {
+    try {
+      const userId = req.user!.userId;
+      const entryId = parseInt(req.params.id);
+
+      // No direct getLoanSpendingEntry(id) lookup exists — fetch via the loan's list instead,
+      // matching the pattern used for other sub-resources that lack a single-row getter.
+      const allLoans = await storage.getAllLoans(userId);
+      let owned = false;
+      for (const loan of allLoans) {
+        const entries = await storage.getLoanSpendingEntries(loan.id);
+        if (entries.some(e => e.id === entryId)) {
+          owned = true;
+          break;
+        }
+      }
+      if (!owned) {
+        return res.status(404).json({ error: "Spending entry not found" });
+      }
+
+      const deleted = await storage.deleteLoanSpendingEntry(entryId);
+      if (deleted) {
+        res.status(204).send();
+      } else {
+        res.status(404).json({ error: "Spending entry not found" });
+      }
+    } catch (error) {
+      res.status(500).json({ error: "Failed to delete spending entry" });
     }
   });
 
