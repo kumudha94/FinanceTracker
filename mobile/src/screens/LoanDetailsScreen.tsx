@@ -11,6 +11,7 @@ import { api } from '../lib/api';
 import { useTheme } from '../contexts/ThemeContext';
 import type { Loan, LoanInstallment, LoanTerm, LoanPayment, LoanBtAllocation } from '../lib/types';
 import DateTimePicker from '@react-native-community/datetimepicker';
+import SpendingBreakdownModal from '../components/SpendingBreakdownModal';
 
 type RouteParams = {
   LoanDetails: {
@@ -33,6 +34,7 @@ export default function LoanDetailsScreen() {
   const [regenerateModalVisible, setRegenerateModalVisible] = useState(false);
   const [preclosureModalVisible, setPreclosureModalVisible] = useState(false);
   const [topupModalVisible, setTopupModalVisible] = useState(false);
+  const [spendingBreakdownVisible, setSpendingBreakdownVisible] = useState(false);
   const [addTermModalVisible, setAddTermModalVisible] = useState(false);
   const [addPaymentModalVisible, setAddPaymentModalVisible] = useState(false);
   const [editPaymentModalVisible, setEditPaymentModalVisible] = useState(false);
@@ -809,6 +811,21 @@ export default function LoanDetailsScreen() {
                 <Text style={[styles.preclosureButtonTitle, { color: colors.text }]}>Part Payment</Text>
                 <Text style={[styles.preclosureButtonSubtitle, { color: colors.textMuted }]}>
                   Pay extra to reduce outstanding faster
+                </Text>
+              </View>
+              <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
+            </TouchableOpacity>
+
+            {/* Spending Breakdown Action */}
+            <TouchableOpacity
+              style={[styles.loanActionButton, { backgroundColor: colors.card, borderColor: '#8b5cf6' }]}
+              onPress={() => setSpendingBreakdownVisible(true)}
+            >
+              <Ionicons name="pie-chart-outline" size={20} color="#8b5cf6" />
+              <View style={styles.preclosureButtonContent}>
+                <Text style={[styles.preclosureButtonTitle, { color: colors.text }]}>Spending Breakdown</Text>
+                <Text style={[styles.preclosureButtonSubtitle, { color: colors.textMuted }]}>
+                  Track how the received amount was used
                 </Text>
               </View>
               <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
@@ -2346,6 +2363,12 @@ export default function LoanDetailsScreen() {
           </View>
         </View>
       </Modal>
+
+      <SpendingBreakdownModal
+        loanId={loanId}
+        visible={spendingBreakdownVisible}
+        onClose={() => setSpendingBreakdownVisible(false)}
+      />
     </View>
   );
 }

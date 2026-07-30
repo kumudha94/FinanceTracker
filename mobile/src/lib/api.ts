@@ -4,7 +4,7 @@ import type {
   InsertBudget, InsertScheduledPayment, PaymentOccurrence,
   SavingsGoal, SavingsContribution, InsertSavingsGoal, InsertSavingsContribution,
   SalaryProfile, SalaryCycle, InsertSalaryProfile,
-  Loan, LoanInstallment, InsertLoan, LoanBtAllocation,
+  Loan, LoanInstallment, InsertLoan, LoanBtAllocation, LoanSpendingEntry, InsertLoanSpendingEntry,
   CardDetails, InsertCardDetails,
   LoanTerm, LoanPayment, InsertLoanTerm, InsertLoanPayment, LoanWithDetails,
   Insurance, InsurancePremium, InsertInsurance, InsertInsurancePremium,
@@ -500,10 +500,16 @@ export const api = {
     apiRequest<Loan>(`/api/loans/${id}/part-payment`, { method: 'POST', body: JSON.stringify(data) }),
   getLoanInstallments: (loanId: number) => 
     apiRequest<LoanInstallment[]>(`/api/loans/${loanId}/installments`),
-  updateInstallment: (loanId: number, installmentId: number, data: Partial<LoanInstallment>) => 
-    apiRequest<LoanInstallment>(`/api/loans/${loanId}/installments/${installmentId}`, { 
-      method: 'PATCH', body: JSON.stringify(data) 
+  updateInstallment: (loanId: number, installmentId: number, data: Partial<LoanInstallment>) =>
+    apiRequest<LoanInstallment>(`/api/loans/${loanId}/installments/${installmentId}`, {
+      method: 'PATCH', body: JSON.stringify(data)
     }),
+  getLoanSpendingEntries: (loanId: number) =>
+    apiRequest<LoanSpendingEntry[]>(`/api/loans/${loanId}/spending-entries`),
+  createLoanSpendingEntry: (loanId: number, data: InsertLoanSpendingEntry) =>
+    apiRequest<LoanSpendingEntry>(`/api/loans/${loanId}/spending-entries`, { method: 'POST', body: JSON.stringify(data) }),
+  deleteLoanSpendingEntry: (id: number) =>
+    apiRequest<void>(`/api/spending-entries/${id}`, { method: 'DELETE' }),
   generateInstallments: (loanId: number) => 
     apiRequest<LoanInstallment[]>(`/api/loans/${loanId}/generate-installments`, { method: 'POST' }),
   regenerateInstallments: (loanId: number) => {
