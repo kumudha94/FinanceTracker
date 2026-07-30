@@ -37,11 +37,9 @@ test("accepts a valid entry with no existing entries", () => {
   assert.equal(result, null);
 });
 
-test("accepts an entry that exactly fills the remaining balance", () => {
+test("rejects an entry that would push the total 0.0001 over the received amount", () => {
   const result = validateNewSpendingEntry("792000", [{ amount: "792000" }], 0.0001);
-  // Note: amount must be > 0, and 792000 + 0.0001 > 792000, so this should still reject —
-  // exact-fill boundary is tested properly below with a non-degenerate example.
-  assert.notEqual(result, undefined);
+  assert.notEqual(result, null);
 });
 
 test("accepts an entry that exactly fills the remaining balance (non-degenerate)", () => {
