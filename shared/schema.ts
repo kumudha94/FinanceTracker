@@ -556,6 +556,7 @@ export const loans = pgTable("loans", {
   loanAccountNumber: varchar("loan_account_number", { length: 100 }), // stored encrypted
   principalAmount: decimal("principal_amount", { precision: 14, scale: 2 }).notNull(),
   outstandingAmount: decimal("outstanding_amount", { precision: 14, scale: 2 }).notNull(),
+  receivedAmount: decimal("received_amount", { precision: 14, scale: 2 }), // actual amount credited after deductions (processing fees etc.) — null until the user sets it via Spending Breakdown
   interestRate: decimal("interest_rate", { precision: 5, scale: 2 }).notNull(), // ROI in percentage
   tenure: integer("tenure").notNull(), // in months (original for new loans, remaining for existing)
   emiAmount: decimal("emi_amount", { precision: 12, scale: 2 }),
@@ -594,6 +595,7 @@ export const insertLoanSchema = createInsertSchema(loans).omit({
   type: z.enum(["home_loan", "personal_loan", "credit_card_loan", "item_emi"]),
   principalAmount: z.string().min(1, "Principal amount is required"),
   outstandingAmount: z.string().min(1, "Outstanding amount is required"),
+  receivedAmount: z.string().optional(),
   interestRate: z.string().min(1, "Interest rate is required"),
   tenure: z.number().min(1, "Tenure is required"),
   emiAmount: z.string().optional(),
@@ -732,6 +734,31 @@ export const insertLoanInstallmentSchema = createInsertSchema(loanInstallments).
 
 export type InsertLoanInstallment = z.infer<typeof insertLoanInstallmentSchema>;
 export type LoanInstallment = typeof loanInstallments.$inferSelect;
+
+// Loan Spending Entries (how a loan's received amount was actually spent — pure record-keeping,
+// no transaction or account-balance link)
+export const loanSpendingEntries = pgTable("loan_spending_entries", {
+  id: serial("id").primaryKey(),
+  loanId: integer("loan_id").references(() => loans.id).notNull(),
+  amount: decimal("amount", { precision: 14, scale: 2 }).notNull(),
+  reason: text("reason"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const loanSpendingEntriesRelations = relations(loanSpendingEntries, ({ one }) => ({
+  loan: one(loans, { fields: [loanSpendingEntries.loanId], references: [loans.id] }),
+}));
+
+export const insertLoanSpendingEntrySchema = createInsertSchema(loanSpendingEntries).omit({
+  id: true,
+  createdAt: true,
+}).extend({
+  amount: z.string().min(1, "Amount is required"),
+  reason: z.string().optional(),
+});
+
+export type InsertLoanSpendingEntry = z.infer<typeof insertLoanSpendingEntrySchema>;
+export type LoanSpendingEntry = typeof loanSpendingEntries.$inferSelect;
 
 // Card Details (encrypted storage for debit/credit cards)
 export const cardDetails = pgTable("card_details", {
