@@ -27,7 +27,7 @@ import { suggestCategory, parseSmsMessage, parseStatementPDF, ExtractedTransacti
 import { deriveInstitutionKey, parseDueSms } from "./smsParser";
 import multer from "multer";
 // pdf-parse is imported dynamically at usage site to avoid pdfjs-dist crashing on startup
-import { getPaydayForMonth, getNextPaydays, getPastPaydays, getCurrentCycleDates, getNextCycleDates, getCyclePrimaryMonth } from "./salaryUtils";
+import { getPaydayForMonth, getNextPaydays, getPastPaydays, getCurrentCycleDates, getNextCycleDates, getCyclePrimaryMonth, findOccurrenceInCycle } from "./salaryUtils";
 import { validateNewSpendingEntry } from "./loanSpendingValidation";
 import { generateOTP, storeOTP, verifyOTP, sendOTP } from "./emailService";
 import { generateTokenPair, generateAccessToken } from "./jwtService";
@@ -2431,12 +2431,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // (this loop alone can be a dozen+ sequential round-trips to Neon on a real account).
       const duePaymentsThisMonth = activePayments.filter(isPaymentDueThisMonth);
       const billItems = await Promise.all(duePaymentsThisMonth.map(async (p) => {
-        const occurrences = await storage.getPaymentOccurrences({
-          scheduledPaymentId: p.id,
-          month: currentMonth,
-          year: currentYear,
-        });
-        const occurrence = occurrences.length > 0 ? occurrences[0] : null;
+        // Match by actual dueDate falling within this cycle, not by an exact {month, year}
+        // bucket — the Scheduled Payments checklist buckets occurrences by plain calendar
+        // month, which diverges from this cycle's primary month whenever the cycle spans a
+        // month boundary. An exact bucket match would miss an occurrence the user already
+        // marked paid on that screen. See findOccurrenceInCycle for details.
+        const occurrences = await storage.getPaymentOccurrences({ scheduledPaymentId: p.id });
+        const occurrence = findOccurrenceInCycle(occurrences, startOfMonth, endOfMonth) ?? null;
         const isPaid = occurrence?.status === 'paid';
         const paidAmount = occurrence?.paidAmount ? parseFloat(occurrence.paidAmount) : 0;
 
@@ -2816,6 +2817,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
 
+      const activeSavingsGoals = (await storage.getAllSavingsGoals(userId)).filter(
+        (g) => g.status === 'active' && parseFloat(g.monthlyExpectedAmount || '0') > 0
+      );
+      const savingsItems: any[] = activeSavingsGoals.map((g) => ({
+        id: g.id,
+        name: g.name,
+        amount: parseFloat(g.monthlyExpectedAmount || '0'),
+        dueDate: null,
+        subLabel: 'Savings Goal',
+        excluded: isExcluded('savings_goal', g.id),
+      }));
+      const totalSavings = savingsItems.filter(item => !item.excluded).reduce((sum, item) => sum + item.amount, 0);
+
       const allAccounts = await storage.getAllAccounts(userId);
       const ccCards = allAccounts.filter(a => a.type === 'credit_card' && a.isActive && a.billingDate);
       const manualCCIds = new Set(
@@ -2905,7 +2919,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const creditCardBillItems: any[] = [...autoCcItems, ...manualCcItems];
       const totalCreditCardBills = creditCardBillItems.filter(item => !item.excluded).reduce((sum, item) => sum + item.amount, 0);
 
-      const totalOutflow = totalScheduled + totalLoans + totalInsurance + totalCreditCardBills;
+      const totalOutflow = totalScheduled + totalLoans + totalInsurance + totalCreditCardBills + totalSavings;
 
       res.json({
         monthLabel,
@@ -2914,6 +2928,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         loans: loanItems.sort((a, b) => (a.dueDate || 99) - (b.dueDate || 99)),
         insurance: insuranceItems.sort((a, b) => (a.dueDate || 99) - (b.dueDate || 99)),
         creditCardBills: creditCardBillItems.sort((a, b) => (a.dueDate || 99) - (b.dueDate || 99)),
+        savings: savingsItems,
         totalIncome,
         totalOutflow,
         net: totalIncome - totalOutflow,
@@ -2921,6 +2936,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         totalLoans,
         totalInsurance,
         totalCreditCardBills,
+        totalSavings,
         cycleInfo: {
           cycleStartFormatted: nextCycle.cycleStartFormatted,
           cycleEndFormatted: nextCycle.cycleEndFormatted,
