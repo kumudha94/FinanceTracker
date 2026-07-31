@@ -353,6 +353,26 @@ export function getCyclePrimaryMonth(cycleStart: Date, cycleEnd: Date): { month:
 }
 
 /**
+ * Find the payment occurrence that belongs to a given cycle by its actual dueDate, rather than
+ * by an exact {month, year} bucket match. Occurrences can be created under a different month
+ * bucket than the cycle's primary month (e.g. the Scheduled Payments checklist buckets by plain
+ * calendar month, while dashboard cycle math buckets by the cycle's midpoint month) — comparing
+ * the real due date against the cycle's date range is robust to that mismatch. When more than
+ * one occurrence's dueDate falls in range, the most recently created one wins.
+ */
+export function findOccurrenceInCycle<T extends { dueDate: Date; createdAt?: Date | null }>(
+  occurrences: T[],
+  cycleStart: Date,
+  cycleEnd: Date
+): T | undefined {
+  const inRange = occurrences.filter(o => o.dueDate >= cycleStart && o.dueDate <= cycleEnd);
+  if (inRange.length <= 1) return inRange[0];
+  return inRange.reduce((latest, current) =>
+    (current.createdAt ?? current.dueDate) > (latest.createdAt ?? latest.dueDate) ? current : latest
+  );
+}
+
+/**
  * Calculate credit card billing cycle dates based on billing date
  * Billing cycle runs from billingDate of previous month to billingDate-1 of current month
  * Example: billingDate=17 means cycle from Jan 17 to Feb 16
