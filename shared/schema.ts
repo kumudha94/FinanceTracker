@@ -1099,7 +1099,7 @@ export const insertForecastExclusionSchema = createInsertSchema(forecastExclusio
   id: true,
   createdAt: true,
 }).extend({
-  itemType: z.enum(["scheduled_payment", "insurance", "loan", "credit_card_bill"]),
+  itemType: z.enum(["scheduled_payment", "insurance", "loan", "credit_card_bill", "savings_goal"]),
   cycleStart: z.union([z.string(), z.date()]).transform((val) => new Date(val)),
 });
 
