@@ -25,7 +25,7 @@ type NavigationProp = CompositeNavigationProp<
 
 type ActiveTab = 'income' | 'expense' | 'bills';
 type BillsAccordion = 'scheduled' | 'creditCard' | 'loans' | 'insurance' | 'billsInbox' | null;
-type ForecastAccordion = 'scheduled' | 'insurance' | 'loans' | 'creditCard' | null;
+type ForecastAccordion = 'scheduled' | 'insurance' | 'loans' | 'creditCard' | 'savings' | null;
 
 const LOADING_MESSAGES = [
   'Setting up your current month finances…',
@@ -871,7 +871,38 @@ export default function DashboardScreen() {
                 </View>
               )}
 
-              {forecast.scheduledPayments.length === 0 && forecast.loans.length === 0 && forecast.insurance.length === 0 && forecast.creditCardBills.length === 0 && (
+              {forecast.savings.length > 0 && (
+                <View>
+                  <TouchableOpacity
+                    style={[styles.accordionHeader, { borderBottomColor: colors.border }]}
+                    onPress={() => toggleForecastAccordion('savings')}
+                    activeOpacity={0.7}
+                  >
+                    <View style={[styles.accordionIconWrap, { backgroundColor: '#22c55e' + '15' }]}>
+                      <Ionicons name="trending-up-outline" size={16} color="#22c55e" />
+                    </View>
+                    <View style={styles.accordionTitleArea}>
+                      <Text style={[styles.accordionTitle, { color: colors.text }]}>Savings Plan</Text>
+                      <Text style={[styles.accordionSubtitle, { color: colors.textMuted }]}>{forecast.savings.length} goal{forecast.savings.length > 1 ? 's' : ''}</Text>
+                    </View>
+                    <View style={styles.accordionRight}>
+                      <Text style={[styles.accordionTotal, { color: colors.text }]}>{formatCurrency(forecast.totalSavings)}</Text>
+                      <Ionicons name={forecastAccordion === 'savings' ? 'chevron-up' : 'chevron-down'} size={14} color={colors.textMuted} />
+                    </View>
+                  </TouchableOpacity>
+                  {forecastAccordion === 'savings' && (
+                    <View style={styles.accordionContent}>
+                      {forecast.savings.map((item) => renderForecastRow(item, 'savings_goal', '#22c55e', 'fsav'))}
+                      <View style={styles.forecastTabTotal}>
+                        <Text style={[styles.forecastTabTotalLabel, { color: colors.textMuted }]}>Total</Text>
+                        <Text style={[styles.forecastTabTotalValue, { color: '#ef4444' }]}>-{formatCurrency(forecast.totalSavings)}</Text>
+                      </View>
+                    </View>
+                  )}
+                </View>
+              )}
+
+              {forecast.scheduledPayments.length === 0 && forecast.loans.length === 0 && forecast.insurance.length === 0 && forecast.creditCardBills.length === 0 && forecast.savings.length === 0 && (
                 <View style={styles.emptyState}>
                   <Ionicons name="information-circle-outline" size={20} color={colors.textMuted} />
                   <Text style={[styles.emptyText, { color: colors.textMuted }]}>No outflow planned for {forecast.monthLabel}</Text>
