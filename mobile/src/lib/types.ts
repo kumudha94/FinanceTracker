@@ -228,7 +228,7 @@ export interface NextMonthForecastItem {
   excluded: boolean;
 }
 
-export type ForecastItemType = 'scheduled_payment' | 'insurance' | 'loan' | 'credit_card_bill';
+export type ForecastItemType = 'scheduled_payment' | 'insurance' | 'loan' | 'credit_card_bill' | 'savings_goal';
 
 export interface NextMonthForecast {
   monthLabel: string;
@@ -244,6 +244,7 @@ export interface NextMonthForecast {
   loans: NextMonthForecastItem[];
   insurance: NextMonthForecastItem[];
   creditCardBills: NextMonthForecastItem[];
+  savings: NextMonthForecastItem[];
   totalIncome: number;
   totalOutflow: number;
   net: number;
@@ -251,6 +252,7 @@ export interface NextMonthForecast {
   totalLoans: number;
   totalInsurance: number;
   totalCreditCardBills: number;
+  totalSavings: number;
   cycleInfo?: CycleInfo;
 }
 
