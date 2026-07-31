@@ -70,6 +70,11 @@ export default function DashboardScreen() {
     queryFn: api.getSalaryProfile,
   });
 
+  const { data: accounts = [] } = useQuery({
+    queryKey: ['/api/accounts'],
+    queryFn: api.getAccounts,
+  });
+
   const { data: pendingInstitutionMappings = [] } = useQuery({
     queryKey: ['/api/institution-mappings/pending'],
     queryFn: api.getPendingInstitutionMappings,
@@ -103,6 +108,7 @@ export default function DashboardScreen() {
       queryClient.invalidateQueries({ queryKey: ['/api/savings-goals'] });
       queryClient.invalidateQueries({ queryKey: ['/api/institution-mappings/pending'] });
       queryClient.invalidateQueries({ queryKey: ['/api/bill-mappings/pending'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/accounts'] });
     }, [queryClient])
   );
 
@@ -114,6 +120,7 @@ export default function DashboardScreen() {
       queryClient.refetchQueries({ queryKey: ['/api/savings-goals'] }),
       queryClient.refetchQueries({ queryKey: ['/api/institution-mappings/pending'] }),
       queryClient.refetchQueries({ queryKey: ['/api/bill-mappings/pending'] }),
+      queryClient.refetchQueries({ queryKey: ['/api/accounts'] }),
     ]);
     setRefreshing(false);
   }, [queryClient]);
@@ -422,6 +429,8 @@ export default function DashboardScreen() {
             </View>
           </View>
 
+          {accounts.length > 0 ? (
+          <>
           {!salaryProfile && (
             <TouchableOpacity
               style={[styles.salaryBanner, { backgroundColor: '#f59e0b18', borderColor: '#f59e0b40' }]}
@@ -694,10 +703,31 @@ export default function DashboardScreen() {
               )}
             </View>
           </View>
+          </>
+          ) : (
+            <View style={styles.getStartedContainer}>
+              <View style={[styles.getStartedIconWrap, { backgroundColor: colors.primary + '15' }]}>
+                <Ionicons name="wallet-outline" size={32} color={colors.primary} />
+              </View>
+              <Text style={[styles.getStartedTitle, { color: colors.text }]}>Welcome to My Tracker!</Text>
+              <Text style={[styles.getStartedSubtitle, { color: colors.textMuted }]}>
+                Add your first account to start tracking your money.
+              </Text>
+              <TouchableOpacity
+                style={[styles.getStartedButton, { backgroundColor: colors.primary }]}
+                onPress={() => navigation.navigate('AddAccount')}
+                activeOpacity={0.8}
+                data-testid="button-get-started-add-account"
+              >
+                <Ionicons name="add" size={18} color="#fff" />
+                <Text style={styles.getStartedButtonText}>Add Account</Text>
+              </TouchableOpacity>
+            </View>
+          )}
         </View>
 
         {/* ===== Next Month Plan (Main Card → Sub Card → Tabs) ===== */}
-        {forecast && (
+        {accounts.length > 0 && forecast && (
           <View style={[styles.mainCard, { backgroundColor: colors.card }]}>
             <View style={styles.mainCardHeader}>
               <View style={styles.mainCardHeaderLeft}>
@@ -1247,6 +1277,45 @@ const styles = StyleSheet.create({
   salaryBannerSub: {
     fontSize: 12,
     marginTop: 1,
+  },
+  getStartedContainer: {
+    alignItems: 'center',
+    paddingVertical: 32,
+    paddingHorizontal: 16,
+  },
+  getStartedIconWrap: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  getStartedTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    marginBottom: 6,
+    textAlign: 'center',
+  },
+  getStartedSubtitle: {
+    fontSize: 13,
+    textAlign: 'center',
+    marginBottom: 20,
+    paddingHorizontal: 12,
+  },
+  getStartedButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+    borderRadius: 12,
+    gap: 6,
+  },
+  getStartedButtonText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#fff',
   },
   savingsSummaryRow: {
     flexDirection: 'row',
