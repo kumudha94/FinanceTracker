@@ -1,50 +1,66 @@
 # Future Plans
 
-## Section:1. Scheduled Payment 
-1. Few bill amount user may not be able to provide while creating a payment. For example Electricity bill. So we need to allow user to create record if amount is not provided. **Development completed | Deployed in prod | Test Failed:It is expecting amount to be filled** — Covered by fix for item 3 below (mobile Add Scheduled Payment now has the variable-amount toggle). Please retest on mobile after your next app build.
-2. Few bill dates are different, Let's take phone recharge usually they're providing 84d, 56d, 7d like that how can a user provide scheduled cycle here **Development completed | Deployed in prod | Test Failed:I didn't see any field to provide days range** — Covered by fix for item 3 below (mobile Add Scheduled Payment now has "Every N Days" frequency). Please retest on mobile after your next app build.
-3. Mobile app's Add Scheduled Payment screen is missing variable-amount and day-interval support entirely — points 1 and 2 above were only ever built into the web app. Mobile form only has fixed amount + monthly/quarterly/half-yearly/yearly/custom-months/one-time frequency. Not started. **It is required for mobile - I am mainly using Mobile - Focus only one mobile** — Implemented 2026-07-30: `AddScheduledPaymentScreen.tsx` now has the "amount varies each time" toggle and an "Every N Days" frequency option (interval + last-paid date, matching the web app and existing server support — no backend changes were needed). Also extended the "Record Payment" modal in `ScheduledPaymentsScreen.tsx` so a variable-amount bill's actual figure can be entered at pay-time (previously that input only existed for credit card bills), and fixed the frequency label in the payments list so day-interval payments don't show as "Monthly". **Needs a new EAS build + Play Store update before you can test it.**
+## Section:1. Scheduled Payment
+
+1. Few bill amount user may not be able to provide while creating a payment. For example Electricity bill. So we need to allow user to create record if amount is not provided. **Development completed | Deployed in prod | Test   Success** (mobile Add Scheduled Payment now has the variable-amount toggle)
+2. Few bill dates are different, Let's take phone recharge usually they're providing 84d, 56d, 7d like that how can a user provide scheduled cycle here **Development completed | Deployed in prod | Test   Success** (mobile Add Scheduled Payment now has "Every N Days" frequency)
+3. Above "Every N Days" - App now knows this bill will be for every 84 days. but if we wanted to show in schduled payments (This Month(x) active tab) we need to know the last payment date like "Starting Month" in the current design (If user selects custom intercal in Payment Frequency we will show this field to understand from when we need to start tracking this scheduled payment if user selects Aug from aug every 2 months we will repeat this scheduled payment) likewise we need to know what is the starting date of this day wise plan. so that we can add N (84 days) then will come to know next payment date to show this payment in This Month(x) active tab. - **New-Priority:High1 | Development done**
 
 ## Section:2. Insurance
+
 1. **HDFC ABSLI Market Policy:** No separate monthly payment is required. The Finance team automatically invests the monthly benefit generated from my HDFC ABSLI Main Policy into the Market Policy (my selected option). I only pay the Main Policy premium. How we can link the policies so only Main policy we need to take control, subpolicy we no need to worry. **Development completed | Deployed in prod | Test Success**
 
-## Section:3. Credit Card tracking 
+## Section:3. Credit Card tracking
+
 1. Sample Message: "Dear Customer, Your YES BANK Credit Card x2613 has dues of Rs. 9,629.90.
 Convert it into EMIs with no hidden charges.
-Confirm: ccybl.in/YESBNK/MAt7Sk1jgU -YES BANK LTD" System need to read this SMS, this nothing but a due for credit card, check against with our due amount if any issues found we need to update with whatever comes in the SMS. **Development completed | Deployed in prod | Tested Pending**
+Confirm: ccybl.in/YESBNK/MAt7Sk1jgU -YES BANK LTD" System need to read this SMS, this nothing but a due for credit card, check against with our due amount if any issues found we need to update with whatever comes in the SMS. **Development completed | Deployed in prod | Test Pending**
 
 ## Section:4. Message Re-scan
-1. Case: What if user asks to rescan the SMS for past days, for example, max 3 (can be reduced based on the scope) custom limit (only today or from date - to date) Action: Read SMS look for our paseTransaction pattern (debited / credited) and check for duplicate and add transaction - **Development completed | Deployed in prod | Test Partial Success - It is reading SMS but depostied and other keyword are not considered** — Root cause found 2026-07-30: `mobile/src/lib/smsRescan.ts` and `smsAutoReader.ts` had an on-device pre-filter (`looksFinancial`) that only matched "debited"/"credited" before ever sending the SMS to the server — so "deposited", "sent", "received", etc. were silently dropped on the phone, never reaching the (already-correct) server parser. Fixed the filter to cover the full keyword set. **No OTA updates configured for this app — fix needs a new EAS build + Play Store update before it reaches your phone.**
-> Concern : How can we spot duplicate transaction ? - Addressed
-2. Current Scan SMS (read user pasted SMS) is failing with "Failed to parse SMS. Please check your connection and try again" error. Render logs below - **Development completed | Deployed in prod | Tested Success**
->11:36:22 AM [express] GET /api/accounts 304 in 167ms :: [{"id":34,"userId":8,"name":"HDFC CC","type":…
->11:36:26 AM [express] POST /api/parse-sms 401 in 0ms :: {"error":"API key required","hint":"Include X…
->11:36:27 AM [express] POST /api/auth/refresh-token 200 in 1ms :: {"success":true,"accessToken":"eyJhb…
->11:36:27 AM [express] POST /api/parse-sms 401 in 1ms :: {"error":"API key required","hint":"Include X…
-3. Different message scanning. provided sample messages below - **Development completed | Deployed in prod | Tested Pending** (message 3 already parsed correctly, no change needed there) — Investigated 2026-07-30: message 1 (deposit/NEFT) parses correctly once it reaches the server — it was being blocked by the same on-device pre-filter bug fixed in item 1 above. Message 2 (e-mandate "will be deducted") is intentionally NOT recorded as a transaction — it describes a future/upcoming deduction, not a completed one, so the server correctly returns null for it. **Please retest after your next app build/update.**
->1. Update! INR 1,86,162.00 deposited in HDFC Bank A/c XX7900 on 29-JUL-26 for NEFT Cr-CITI0000003-COMCAST INDIA ENGG CTR I LLP-SEZ-Kumudha Glory-CITIN26705118988.Avl bal INR 1,87,592.10. Cheque deposits in A/C are subject to clearing
->2. E-Mandate!
->Rs.139.00 will be deducted on 31/07/26, 00:00:00
->For SPOTIFY INDIA PVT LTD mandate
->UMN 4d226b3fcc966fe1e063e9eee20ae2fc@okhdfcbank
->Maintain Balance
->-HDFC Bank
->3. Sent Rs.1200.00
->From HDFC Bank A/C *7900
->To Christian Missions Charit
->On 29/07/26
->Ref 127035397455
->Not You?
->Call 18002586161/SMS BLOCK UPI to 7308080808
 
-## Section:5. Dashboard screen **Deployed in prod done**
+1. Case: What if user asks to rescan the SMS for past days, for example, max 3 (can be reduced based on the scope) custom limit (only today or from date - to date) Action: Read SMS look for our paseTransaction pattern (debited / credited) and check for duplicate and add transaction - **Development completed | Deployed in prod | Test Success**
+2. Current Scan SMS (read user pasted SMS) is failing with "Failed to parse SMS. Please check your connection and try again" error. Render logs below - **Development completed | Deployed in prod | Test Success**
+   >11:36:22 AM [express] GET /api/accounts 304 in 167ms :: [{"id":34,"userId":8,"name":"HDFC CC","type":…
+   >11:36:26 AM [express] POST /api/parse-sms 401 in 0ms :: {"error":"API key required","hint":"Include X…
+   >11:36:27 AM [express] POST /api/auth/refresh-token 200 in 1ms :: {"success":true,"accessToken":"eyJhb…
+   >11:36:27 AM [express] POST /api/parse-sms 401 in 1ms :: {"error":"API key required","hint":"Include X…
+
+3. Different message scanning. provided sample messages below - **Development completed | Deployed in prod | Test Success**
+
+   > 1. Update! INR 1,86,162.00 deposited in HDFC Bank A/c XX7900 on 29-JUL-26 for NEFT Cr-CITI0000003-COMCAST INDIA ENGG CTR I LLP-SEZ-Kumudha Glory-CITIN26705118988.Avl bal INR 1,87,592.10. Cheque deposits in A/C are subject to clearing
+   > 2. E-Mandate!
+   > Rs.139.00 will be deducted on 31/07/26, 00:00:00
+   > For SPOTIFY INDIA PVT LTD mandate
+   > UMN 4d226b3fcc966fe1e063e9eee20ae2fc@okhdfcbank
+   > Maintain Balance
+   > -HDFC Bank
+   > 3. Sent Rs.1200.00
+   > From HDFC Bank A/C *7900
+   > To Christian Missions Charit
+   > On 29/07/26
+   > Ref 127035397455
+   > Not You?
+   > Call 18002586161/SMS BLOCK UPI to 7308080808
+
+## Section:5. Dashboard screen
+
 1. Current cycle card - Savings tab has three major parts TOTAL | MONTHLY | SAVED, Need to know how it is calculated. - **Development completed | Deployed in prod | Test Success**
 2. In Next Cycle Plan we are properly showing scheduled payment for the next cycle, Insurance if any, loans if any, credit card bill if any, but we are not adding total amount that needs to be added. Can we show small + and - symbol near each row, whatever is added (+) do the calculation of Income, Outflow and Balance calculation. - **Development completed  | Deployed in prod | Test Success**
 3. Loading symbol enhancement - Currently dashboard screen is taking 30+ secs to load. It will make the user more tired. option 1: need to understand what takes time and reduce it. option 2: instead of showing loading symbol we can show beautiful UI loader with active changing messsages like (setting up current month finance , thinking on next cycle plans, fetching last 5 transactions something like that) so user will read and do something instead of waiting - **Development completed | Deployed in prod | Test Success**
-4. Refer screenshot: In Current month card Bills section showing overdue. Consider Today's date July 29 Salary credit date and my scheduled payment from Bills section due is 1st of every month, so Aug 1 is in this cycle is not overdue it is pending. — Root cause found & fixed 2026-07-30: `/api/dashboard-summary` (server/routes.ts) computed each bill's status by comparing raw day-of-month numbers (`p.dueDate < today`, e.g. `1 < 29`) instead of resolving which actual calendar date "due on the 1st" falls on within your cycle (Jul 28 - Aug 30 → Aug 1st, still upcoming). Fixed by resolving each due-day to a real date within the cycle's primary month before comparing — same convention the Next Cycle Plan forecast already used. Also fixed the same bug for credit card bills, loan EMIs, and the "Bills Due"/"upcoming bills" totals, which were undercounting for the same reason. Web dashboard uses a separate endpoint (`getDashboardStats`) that's calendar-month scoped rather than cycle-aware and doesn't render an "Overdue" badge at all, so it wasn't exposed to this bug. **This is a backend-only fix (no mobile rebuild needed) but is not yet committed/deployed — please retest the mobile Bills card once it's pushed.**
+4. Refer screenshot: In Current month card Bills section showing overdue. Consider Today's date July 29 Salary credit date and my scheduled payment from Bills section due is 1st of every month, so Aug 1 is in this cycle is not overdue it is pending. - **Development completed | Deployed in prod | Test Success**
+5. Next Cycle plan card - Add savings plan along with Scheduled Payment, Loan EMIs, Credit Card Bills with same +,_ symbol. so that if required user can add/remove plan. - **New-Priority:Medium | Development done**
+6. I completed few scheduled payments for this cycle, it shows completed in Scheduled payment screen but pending in dashboard - current cycle - Bills tab - scheduled payments section. **New-Priority:High2 | Development done**
 
 ## Section:6. Screen Movement **Deployed in prod done**
+
 1. Dashboard screen -> showing new account detected card -> clicked that card redirected me to the **New Accounts Detected screen** -> I performed my preferred action -> trying to come back. Expectation: Coming back to **More** screen then dashboard screen. Actual: Back button is landing me to the dashboad screen after that If I try to go to **More** section Directly it is going **New Accounts Detected screen** menu not able to comeback and see other menu even if I jump to **Account** or **Transaction** screen I am not able see **More** section other menu. I forcefully close the app and reopen freshly to see other menus from **More** menu - **Development completed | Deployed in prod | Test Success**
 
 ## Section:7. Loan Screen
-1. When a user adds a loan, display a **Spending Breakdown** icon on both the **Loan Details** and **Edit Loan** screens. Clicking the icon should open a popup or side panel where the user can record how the received loan amount was spent. The popup should display the **Loan Amount** (read-only) and allow the user to enter the **Received Amount**, which may be lower than the loan amount due to deductions such as processing fees (e.g., Loan Amount: ₹8,00,000, Received Amount: ₹7,92,000). The user should be able to add multiple spending entries using **Add** and **Delete** actions, with each entry containing an **Amount** and an optional **Reason/Notes** for future reference. The only validation required is that the total of all spending amounts must not exceed the **Received Amount**. It is not mandatory for the user to account for the entire received amount, so partial spending entries are allowed. **Development completed | Not yet deployed** — Implemented 2026-07-30 (mobile only, per your Section 1 direction): "Spending Breakdown" action row added to both Loan Details and Edit Loan (edit mode only — hidden while creating a new loan, since there's no ID yet to attach entries to). Modal shows Loan Amount, an editable Received Amount (pre-fills to Loan Amount, explicit Save button), a running "allocated / unaccounted" summary, and the entry list with Add/Delete. Total-vs-Received-Amount validation is enforced both client- and server-side. Pure record-keeping — no transaction or account-balance changes. Needs: migration `0021_add_loan_spending_entries.sql` applied to prod DB (`npm run db:push`, not yet run), plus a new EAS build + Play Store update before it reaches your phone, same as the other mobile work from today.
+
+1. When a user adds a loan, display a **Spending Breakdown** icon on both the **Loan Details** and **Edit Loan** screens. Clicking the icon should open a popup or side panel where the user can record how the received loan amount was spent. The popup should display the **Loan Amount** (read-only) and allow the user to enter the **Received Amount**, which may be lower than the loan amount due to deductions such as processing fees (e.g., Loan Amount: ₹8,00,000, Received Amount: ₹7,92,000). The user should be able to add multiple spending entries using **Add** and **Delete** actions, with each entry containing an **Amount** and an optional **Reason/Notes** for future reference. The only validation required is that the total of all spending amounts must not exceed the **Received Amount**. It is not mandatory for the user to account for the entire received amount, so partial spending entries are allowed.- **Development completed | Deployed in prod | Test Success**
+
+## Section:8. General
+
+1. Is it possible to add a Widget of (credit card tracking, Top spending tracking, Budget tracking) few tracking. - **New-Priority:Low**
+2. Need to add some Finance Assistent support. If this option is enabled from the More section. Application should act as a assistent. For example. With the specified income, How can we save amount, linking saving with insurance, Planning for Loan easy closing (like paying one extra EMI every year) linking it with savings. First question Is this required? adding this would be enhance the app or collapse the app?. - **New-Priority:Low**
+3. If a fresh user comes to the app, it is difficult to understand what to do in our app since it has lot of feature. Instead of showing Current cycle plan, Next cycle plan, we can provide tips to the user to getting started with our application. User needs to create a default Account, then they need to set Salary setup. a small animation OR what might be the best plan coz on this part I don't have any points to share. - **New-Priority:Low**
