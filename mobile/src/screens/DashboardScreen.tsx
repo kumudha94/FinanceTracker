@@ -306,6 +306,20 @@ export default function DashboardScreen() {
   const effectiveAmount = (itemType: ForecastItemType, item: NextMonthForecastItem) =>
     whatIfAmounts[whatIfKey(itemType, item.id)] ?? item.amount;
 
+  const effectiveCreditCardTotal = useMemo(() => {
+    if (!forecast) return 0;
+    return forecast.creditCardBills
+      .filter(item => !item.excluded)
+      .reduce((sum, item) => sum + effectiveAmount('credit_card_bill', item), 0);
+  }, [forecast, whatIfAmounts]);
+
+  const effectiveSavingsTotal = useMemo(() => {
+    if (!forecast) return 0;
+    return forecast.savings
+      .filter(item => !item.excluded)
+      .reduce((sum, item) => sum + effectiveAmount('savings_goal', item), 0);
+  }, [forecast, whatIfAmounts]);
+
   const renderForecastRow = (item: NextMonthForecastItem, itemType: ForecastItemType, dotColor: string, keyPrefix: string, metaText?: string, editable?: boolean) => {
     const key = whatIfKey(itemType, item.id);
     const hasOverride = whatIfAmounts[key] !== undefined;
@@ -945,7 +959,7 @@ export default function DashboardScreen() {
                       <Text style={[styles.accordionSubtitle, { color: colors.textMuted }]}>{forecast.creditCardBills.length} bill{forecast.creditCardBills.length > 1 ? 's' : ''}</Text>
                     </View>
                     <View style={styles.accordionRight}>
-                      <Text style={[styles.accordionTotal, { color: colors.text }]}>{formatCurrency(forecast.totalCreditCardBills)}</Text>
+                      <Text style={[styles.accordionTotal, { color: colors.text }]}>{formatCurrency(effectiveCreditCardTotal)}</Text>
                       <Ionicons name={forecastAccordion === 'creditCard' ? 'chevron-up' : 'chevron-down'} size={14} color={colors.textMuted} />
                     </View>
                   </TouchableOpacity>
@@ -958,7 +972,7 @@ export default function DashboardScreen() {
                       ))}
                       <View style={styles.forecastTabTotal}>
                         <Text style={[styles.forecastTabTotalLabel, { color: colors.textMuted }]}>Total</Text>
-                        <Text style={[styles.forecastTabTotalValue, { color: '#ef4444' }]}>-{formatCurrency(forecast.totalCreditCardBills)}</Text>
+                        <Text style={[styles.forecastTabTotalValue, { color: '#ef4444' }]}>-{formatCurrency(effectiveCreditCardTotal)}</Text>
                       </View>
                     </View>
                   )}
@@ -980,7 +994,7 @@ export default function DashboardScreen() {
                       <Text style={[styles.accordionSubtitle, { color: colors.textMuted }]}>{forecast.savings.length} goal{forecast.savings.length > 1 ? 's' : ''}</Text>
                     </View>
                     <View style={styles.accordionRight}>
-                      <Text style={[styles.accordionTotal, { color: colors.text }]}>{formatCurrency(forecast.totalSavings)}</Text>
+                      <Text style={[styles.accordionTotal, { color: colors.text }]}>{formatCurrency(effectiveSavingsTotal)}</Text>
                       <Ionicons name={forecastAccordion === 'savings' ? 'chevron-up' : 'chevron-down'} size={14} color={colors.textMuted} />
                     </View>
                   </TouchableOpacity>
@@ -989,7 +1003,7 @@ export default function DashboardScreen() {
                       {forecast.savings.map((item) => renderForecastRow(item, 'savings_goal', '#22c55e', 'fsav', undefined, true))}
                       <View style={styles.forecastTabTotal}>
                         <Text style={[styles.forecastTabTotalLabel, { color: colors.textMuted }]}>Total</Text>
-                        <Text style={[styles.forecastTabTotalValue, { color: '#ef4444' }]}>-{formatCurrency(forecast.totalSavings)}</Text>
+                        <Text style={[styles.forecastTabTotalValue, { color: '#ef4444' }]}>-{formatCurrency(effectiveSavingsTotal)}</Text>
                       </View>
                     </View>
                   )}
