@@ -107,6 +107,21 @@ export default function DashboardScreen() {
     },
   });
 
+  const saveOthersDraftMutation = useMutation({
+    mutationFn: (draft: OthersDraft) =>
+      api.createScheduledPayment({
+        name: draft.name,
+        amount: draft.amount.toString(),
+        frequency: 'one_time',
+        startMonth: forecast?.nextMonth,
+        dueDate: null,
+      }),
+    onSuccess: (_data, draft) => {
+      setOthersDrafts(prev => prev.filter(d => d.id !== draft.id));
+      queryClient.invalidateQueries({ queryKey: ['/api/next-month-forecast'] });
+    },
+  });
+
   useFocusEffect(
     useCallback(() => {
       clearWhatIf();
@@ -457,6 +472,13 @@ export default function DashboardScreen() {
       <Text style={[styles.forecastRowAmt, { color: '#ef4444' }]}>
         -{formatCurrency(draft.amount)}
       </Text>
+      <TouchableOpacity
+        onPress={() => saveOthersDraftMutation.mutate(draft)}
+        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        style={styles.forecastToggleBtn}
+      >
+        <Ionicons name="save-outline" size={18} color={colors.primary} />
+      </TouchableOpacity>
       <TouchableOpacity
         onPress={() => removeOthersDraft(draft.id)}
         hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
