@@ -2738,7 +2738,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           case 'one_time': {
             if (startMonth) {
               const createdYear = (payment.createdAt instanceof Date ? payment.createdAt : new Date(payment.createdAt)).getFullYear();
-              return nextMonth === startMonth && nextYear >= createdYear;
+              return nextMonth === startMonth && nextYear === createdYear;
             }
             return false;
           }
@@ -2923,6 +2923,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       res.json({
         monthLabel,
+        nextMonth,
+        nextYear,
         salary: salaryItems,
         scheduledPayments: scheduledPaymentItems.sort((a, b) => (a.dueDate || 99) - (b.dueDate || 99)),
         loans: loanItems.sort((a, b) => (a.dueDate || 99) - (b.dueDate || 99)),
