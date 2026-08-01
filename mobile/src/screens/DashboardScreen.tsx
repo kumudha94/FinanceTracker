@@ -105,6 +105,7 @@ export default function DashboardScreen() {
 
   useFocusEffect(
     useCallback(() => {
+      setWhatIfAmounts({});
       queryClient.invalidateQueries({ queryKey: ['/api/dashboard-summary'] });
       queryClient.invalidateQueries({ queryKey: ['/api/next-month-forecast'] });
       queryClient.invalidateQueries({ queryKey: ['/api/salary-profile'] });
@@ -116,6 +117,7 @@ export default function DashboardScreen() {
   );
 
   const onRefresh = useCallback(async () => {
+    setWhatIfAmounts({});
     setRefreshing(true);
     await Promise.all([
       queryClient.refetchQueries({ queryKey: ['/api/dashboard-summary'] }),
@@ -305,6 +307,9 @@ export default function DashboardScreen() {
 
   const effectiveAmount = (itemType: ForecastItemType, item: NextMonthForecastItem) =>
     whatIfAmounts[whatIfKey(itemType, item.id)] ?? item.amount;
+
+  const clearWhatIf = () => setWhatIfAmounts({});
+  const hasWhatIf = Object.keys(whatIfAmounts).length > 0;
 
   const effectiveCreditCardTotal = useMemo(() => {
     if (!forecast) return 0;
@@ -829,6 +834,14 @@ export default function DashboardScreen() {
                 <Text style={[styles.cycleBadgeText, { color: colors.primary }]}>{forecast.monthLabel}</Text>
               </View>
             </View>
+
+            {hasWhatIf && (
+              <TouchableOpacity onPress={clearWhatIf} style={[styles.whatIfBanner, { backgroundColor: colors.warning + '18' }]} activeOpacity={0.7}>
+                <Ionicons name="flask-outline" size={13} color={colors.warning} />
+                <Text style={[styles.whatIfBannerText, { color: colors.warning }]}>Viewing a what-if scenario</Text>
+                <Text style={[styles.whatIfResetText, { color: colors.warning }]}>Reset</Text>
+              </TouchableOpacity>
+            )}
 
             <View style={styles.forecastSummaryRow}>
               <View style={styles.forecastSummaryStat}>
@@ -2022,6 +2035,25 @@ const styles = StyleSheet.create({
     borderRadius: 15,
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  whatIfBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    marginBottom: 12,
+  },
+  whatIfBannerText: {
+    fontSize: 11,
+    fontWeight: '600',
+    flex: 1,
+  },
+  whatIfResetText: {
+    fontSize: 11,
+    fontWeight: '700',
+    textDecorationLine: 'underline',
   },
   forecastSummaryRow: {
     flexDirection: 'row',
