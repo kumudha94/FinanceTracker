@@ -105,7 +105,7 @@ export default function DashboardScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      setWhatIfAmounts({});
+      clearWhatIf();
       queryClient.invalidateQueries({ queryKey: ['/api/dashboard-summary'] });
       queryClient.invalidateQueries({ queryKey: ['/api/next-month-forecast'] });
       queryClient.invalidateQueries({ queryKey: ['/api/salary-profile'] });
@@ -117,7 +117,7 @@ export default function DashboardScreen() {
   );
 
   const onRefresh = useCallback(async () => {
-    setWhatIfAmounts({});
+    clearWhatIf();
     setRefreshing(true);
     await Promise.all([
       queryClient.refetchQueries({ queryKey: ['/api/dashboard-summary'] }),
@@ -149,6 +149,42 @@ export default function DashboardScreen() {
   const activeGoals = useMemo(() => savingsGoals?.filter(g => g.status === 'active') || [], [savingsGoals]);
   const monthlyExpectedSavings = useMemo(() => activeGoals.reduce((acc, goal) => acc + parseFloat(goal.monthlyExpectedAmount || "0"), 0), [activeGoals]);
   const savedThisCycle = summary?.savedThisCycle ?? 0;
+
+  const whatIfKey = (itemType: ForecastItemType, itemId: number | string) => `${itemType}:${itemId}`;
+
+  const effectiveAmount = (itemType: ForecastItemType, item: NextMonthForecastItem) =>
+    whatIfAmounts[whatIfKey(itemType, item.id)] ?? item.amount;
+
+  const clearWhatIf = () => {
+    setWhatIfAmounts({});
+    setEditingRowKey(null);
+    setEditingText('');
+  };
+  const hasWhatIf = Object.keys(whatIfAmounts).length > 0;
+
+  const effectiveCreditCardTotal = useMemo(() => {
+    if (!forecast) return 0;
+    return forecast.creditCardBills
+      .filter(item => !item.excluded)
+      .reduce((sum, item) => sum + effectiveAmount('credit_card_bill', item), 0);
+  }, [forecast, whatIfAmounts]);
+
+  const effectiveSavingsTotal = useMemo(() => {
+    if (!forecast) return 0;
+    return forecast.savings
+      .filter(item => !item.excluded)
+      .reduce((sum, item) => sum + effectiveAmount('savings_goal', item), 0);
+  }, [forecast, whatIfAmounts]);
+
+  const effectiveTotalOutflow = useMemo(() => {
+    if (!forecast) return 0;
+    return forecast.totalOutflow - forecast.totalCreditCardBills - forecast.totalSavings + effectiveCreditCardTotal + effectiveSavingsTotal;
+  }, [forecast, effectiveCreditCardTotal, effectiveSavingsTotal]);
+
+  const effectiveNet = useMemo(() => {
+    if (!forecast) return 0;
+    return forecast.totalIncome - effectiveTotalOutflow;
+  }, [forecast, effectiveTotalOutflow]);
 
   useEffect(() => {
     if (!isLoading) return;
@@ -303,38 +339,6 @@ export default function DashboardScreen() {
     );
   };
 
-  const whatIfKey = (itemType: ForecastItemType, itemId: number | string) => `${itemType}:${itemId}`;
-
-  const effectiveAmount = (itemType: ForecastItemType, item: NextMonthForecastItem) =>
-    whatIfAmounts[whatIfKey(itemType, item.id)] ?? item.amount;
-
-  const clearWhatIf = () => setWhatIfAmounts({});
-  const hasWhatIf = Object.keys(whatIfAmounts).length > 0;
-
-  const effectiveCreditCardTotal = useMemo(() => {
-    if (!forecast) return 0;
-    return forecast.creditCardBills
-      .filter(item => !item.excluded)
-      .reduce((sum, item) => sum + effectiveAmount('credit_card_bill', item), 0);
-  }, [forecast, whatIfAmounts]);
-
-  const effectiveSavingsTotal = useMemo(() => {
-    if (!forecast) return 0;
-    return forecast.savings
-      .filter(item => !item.excluded)
-      .reduce((sum, item) => sum + effectiveAmount('savings_goal', item), 0);
-  }, [forecast, whatIfAmounts]);
-
-  const effectiveTotalOutflow = useMemo(() => {
-    if (!forecast) return 0;
-    return forecast.totalOutflow - forecast.totalCreditCardBills - forecast.totalSavings + effectiveCreditCardTotal + effectiveSavingsTotal;
-  }, [forecast, effectiveCreditCardTotal, effectiveSavingsTotal]);
-
-  const effectiveNet = useMemo(() => {
-    if (!forecast) return 0;
-    return forecast.totalIncome - effectiveTotalOutflow;
-  }, [forecast, effectiveTotalOutflow]);
-
   const renderForecastRow = (item: NextMonthForecastItem, itemType: ForecastItemType, dotColor: string, keyPrefix: string, metaText?: string, editable?: boolean) => {
     const key = whatIfKey(itemType, item.id);
     const hasOverride = whatIfAmounts[key] !== undefined;
@@ -404,7 +408,7 @@ export default function DashboardScreen() {
           </TouchableOpacity>
         )}
         <TouchableOpacity
-          onPress={() => toggleExclusionMutation.mutate({ itemType, itemId: item.id })}
+          onPress={() => { resetRow(); toggleExclusionMutation.mutate({ itemType, itemId: item.id }); }}
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           style={styles.forecastToggleBtn}
         >
