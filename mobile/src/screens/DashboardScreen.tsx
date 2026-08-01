@@ -1,4 +1,4 @@
-import { View, Text, ScrollView, StyleSheet, TouchableOpacity, ActivityIndicator, RefreshControl, LayoutAnimation, Platform, UIManager, Modal, Alert } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, TouchableOpacity, TextInput, ActivityIndicator, RefreshControl, LayoutAnimation, Platform, UIManager, Modal, Alert } from 'react-native';
 import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query';
 import { useNavigation, CompositeNavigationProp, useFocusEffect } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -49,6 +49,9 @@ export default function DashboardScreen() {
   const [forecastAccordion, setForecastAccordion] = useState<ForecastAccordion>(null);
   const [hideBalance, setHideBalance] = useState(true);
   const [showCycleInfoModal, setShowCycleInfoModal] = useState(false);
+  const [whatIfAmounts, setWhatIfAmounts] = useState<Record<string, number>>({});
+  const [editingRowKey, setEditingRowKey] = useState<string | null>(null);
+  const [editingText, setEditingText] = useState('');
 
   const { data: summary, isLoading } = useQuery({
     queryKey: ['/api/dashboard-summary'],
@@ -298,33 +301,93 @@ export default function DashboardScreen() {
     );
   };
 
-  const renderForecastRow = (item: NextMonthForecastItem, itemType: ForecastItemType, dotColor: string, keyPrefix: string, metaText?: string) => (
-    <View key={`${keyPrefix}-${item.id}`} style={[styles.forecastRow, { borderBottomColor: colors.border }, item.excluded && { opacity: 0.5 }]}>
-      <View style={[styles.forecastDot, { backgroundColor: dotColor }]} />
-      <View style={styles.forecastRowInfo}>
-        <Text style={[styles.forecastRowName, { color: colors.text }, item.excluded && { textDecorationLine: 'line-through' }]} numberOfLines={1}>
-          {item.name}
-        </Text>
-        <Text style={[styles.forecastRowMeta, { color: colors.textMuted }]}>
-          {metaText ?? `${item.subLabel || ''}${item.dueDate ? ` · Due: ${item.dueDate}${getOrdinalSuffix(item.dueDate)}` : ''}`}
-        </Text>
+  const whatIfKey = (itemType: ForecastItemType, itemId: number | string) => `${itemType}:${itemId}`;
+
+  const effectiveAmount = (itemType: ForecastItemType, item: NextMonthForecastItem) =>
+    whatIfAmounts[whatIfKey(itemType, item.id)] ?? item.amount;
+
+  const renderForecastRow = (item: NextMonthForecastItem, itemType: ForecastItemType, dotColor: string, keyPrefix: string, metaText?: string, editable?: boolean) => {
+    const key = whatIfKey(itemType, item.id);
+    const hasOverride = whatIfAmounts[key] !== undefined;
+    const amount = effectiveAmount(itemType, item);
+    const isEditingThisRow = editingRowKey === key;
+
+    const startEditing = () => {
+      if (!editable || item.excluded) return;
+      setEditingText(String(amount));
+      setEditingRowKey(key);
+    };
+
+    const commitEdit = () => {
+      const parsed = parseFloat(editingText);
+      setWhatIfAmounts(prev => {
+        const next = { ...prev };
+        if (!isNaN(parsed) && parsed >= 0 && parsed !== item.amount) {
+          next[key] = parsed;
+        } else {
+          delete next[key];
+        }
+        return next;
+      });
+      setEditingRowKey(null);
+    };
+
+    const resetRow = () => {
+      setWhatIfAmounts(prev => {
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      });
+    };
+
+    return (
+      <View key={`${keyPrefix}-${item.id}`} style={[styles.forecastRow, { borderBottomColor: colors.border }, item.excluded && { opacity: 0.5 }]}>
+        <View style={[styles.forecastDot, { backgroundColor: dotColor }]} />
+        <View style={styles.forecastRowInfo}>
+          <Text style={[styles.forecastRowName, { color: colors.text }, item.excluded && { textDecorationLine: 'line-through' }]} numberOfLines={1}>
+            {item.name}
+          </Text>
+          <Text style={[styles.forecastRowMeta, { color: colors.textMuted }]}>
+            {metaText ?? `${item.subLabel || ''}${item.dueDate ? ` · Due: ${item.dueDate}${getOrdinalSuffix(item.dueDate)}` : ''}`}
+          </Text>
+        </View>
+        {isEditingThisRow ? (
+          <TextInput
+            style={[styles.forecastRowAmtInput, { color: colors.text, borderColor: colors.primary }]}
+            value={editingText}
+            onChangeText={setEditingText}
+            onBlur={commitEdit}
+            onSubmitEditing={commitEdit}
+            keyboardType="numeric"
+            autoFocus
+            selectTextOnFocus
+          />
+        ) : (
+          <TouchableOpacity onPress={startEditing} disabled={!editable || item.excluded} hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}>
+            <Text style={[styles.forecastRowAmt, { color: item.excluded ? colors.textMuted : hasOverride ? colors.primary : '#ef4444' }]}>
+              -{formatCurrency(amount)}
+            </Text>
+          </TouchableOpacity>
+        )}
+        {hasOverride && !isEditingThisRow && (
+          <TouchableOpacity onPress={resetRow} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} style={styles.forecastToggleBtn}>
+            <Ionicons name="refresh-outline" size={16} color={colors.primary} />
+          </TouchableOpacity>
+        )}
+        <TouchableOpacity
+          onPress={() => toggleExclusionMutation.mutate({ itemType, itemId: item.id })}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          style={styles.forecastToggleBtn}
+        >
+          <Ionicons
+            name={item.excluded ? 'add-circle' : 'remove-circle'}
+            size={20}
+            color={item.excluded ? '#10b981' : colors.textMuted}
+          />
+        </TouchableOpacity>
       </View>
-      <Text style={[styles.forecastRowAmt, { color: item.excluded ? colors.textMuted : '#ef4444' }]}>
-        -{formatCurrency(item.amount)}
-      </Text>
-      <TouchableOpacity
-        onPress={() => toggleExclusionMutation.mutate({ itemType, itemId: item.id })}
-        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-        style={styles.forecastToggleBtn}
-      >
-        <Ionicons
-          name={item.excluded ? 'add-circle' : 'remove-circle'}
-          size={20}
-          color={item.excluded ? '#10b981' : colors.textMuted}
-        />
-      </TouchableOpacity>
-    </View>
-  );
+    );
+  };
 
   const renderBillsInboxSection = () => {
     if (pendingBillMappings.length === 0) return null;
@@ -890,7 +953,8 @@ export default function DashboardScreen() {
                     <View style={styles.accordionContent}>
                       {forecast.creditCardBills.map((item) => renderForecastRow(
                         item, 'credit_card_bill', '#ec4899', 'fcc',
-                        `${item.dueDate ? `Due: ${item.dueDate}${getOrdinalSuffix(item.dueDate)}` : ''}${item.creditLimit ? ` · Limit: ${formatCurrency(item.creditLimit)}` : ''}`
+                        `${item.dueDate ? `Due: ${item.dueDate}${getOrdinalSuffix(item.dueDate)}` : ''}${item.creditLimit ? ` · Limit: ${formatCurrency(item.creditLimit)}` : ''}`,
+                        true
                       ))}
                       <View style={styles.forecastTabTotal}>
                         <Text style={[styles.forecastTabTotalLabel, { color: colors.textMuted }]}>Total</Text>
@@ -922,7 +986,7 @@ export default function DashboardScreen() {
                   </TouchableOpacity>
                   {forecastAccordion === 'savings' && (
                     <View style={styles.accordionContent}>
-                      {forecast.savings.map((item) => renderForecastRow(item, 'savings_goal', '#22c55e', 'fsav'))}
+                      {forecast.savings.map((item) => renderForecastRow(item, 'savings_goal', '#22c55e', 'fsav', undefined, true))}
                       <View style={styles.forecastTabTotal}>
                         <Text style={[styles.forecastTabTotalLabel, { color: colors.textMuted }]}>Total</Text>
                         <Text style={[styles.forecastTabTotalValue, { color: '#ef4444' }]}>-{formatCurrency(forecast.totalSavings)}</Text>
@@ -1994,6 +2058,15 @@ const styles = StyleSheet.create({
   forecastRowAmt: {
     fontSize: 13,
     fontWeight: '700',
+  },
+  forecastRowAmtInput: {
+    fontSize: 13,
+    fontWeight: '700',
+    borderBottomWidth: 1,
+    minWidth: 70,
+    textAlign: 'right',
+    paddingVertical: 0,
+    paddingHorizontal: 2,
   },
   forecastToggleBtn: {
     marginLeft: 8,
