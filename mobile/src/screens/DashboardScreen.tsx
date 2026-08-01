@@ -25,7 +25,8 @@ type NavigationProp = CompositeNavigationProp<
 
 type ActiveTab = 'income' | 'expense' | 'bills';
 type BillsAccordion = 'scheduled' | 'creditCard' | 'loans' | 'insurance' | 'billsInbox' | null;
-type ForecastAccordion = 'scheduled' | 'insurance' | 'loans' | 'creditCard' | 'savings' | null;
+type ForecastAccordion = 'scheduled' | 'insurance' | 'loans' | 'creditCard' | 'savings' | 'others' | null;
+type OthersDraft = { id: string; name: string; amount: number };
 
 const LOADING_MESSAGES = [
   'Setting up your current month finances…',
@@ -52,6 +53,9 @@ export default function DashboardScreen() {
   const [whatIfAmounts, setWhatIfAmounts] = useState<Record<string, number>>({});
   const [editingRowKey, setEditingRowKey] = useState<string | null>(null);
   const [editingText, setEditingText] = useState('');
+  const [othersDrafts, setOthersDrafts] = useState<OthersDraft[]>([]);
+  const [othersNameInput, setOthersNameInput] = useState('');
+  const [othersAmountInput, setOthersAmountInput] = useState('');
 
   const { data: summary, isLoading } = useQuery({
     queryKey: ['/api/dashboard-summary'],
@@ -106,6 +110,7 @@ export default function DashboardScreen() {
   useFocusEffect(
     useCallback(() => {
       clearWhatIf();
+      setOthersDrafts([]);
       queryClient.invalidateQueries({ queryKey: ['/api/dashboard-summary'] });
       queryClient.invalidateQueries({ queryKey: ['/api/next-month-forecast'] });
       queryClient.invalidateQueries({ queryKey: ['/api/salary-profile'] });
@@ -118,6 +123,7 @@ export default function DashboardScreen() {
 
   const onRefresh = useCallback(async () => {
     clearWhatIf();
+    setOthersDrafts([]);
     setRefreshing(true);
     await Promise.all([
       queryClient.refetchQueries({ queryKey: ['/api/dashboard-summary'] }),
@@ -176,10 +182,15 @@ export default function DashboardScreen() {
       .reduce((sum, item) => sum + effectiveAmount('savings_goal', item), 0);
   }, [forecast, whatIfAmounts]);
 
+  const othersTotal = useMemo(
+    () => othersDrafts.reduce((sum, d) => sum + d.amount, 0),
+    [othersDrafts]
+  );
+
   const effectiveTotalOutflow = useMemo(() => {
     if (!forecast) return 0;
-    return forecast.totalOutflow - forecast.totalCreditCardBills - forecast.totalSavings + effectiveCreditCardTotal + effectiveSavingsTotal;
-  }, [forecast, effectiveCreditCardTotal, effectiveSavingsTotal]);
+    return forecast.totalOutflow - forecast.totalCreditCardBills - forecast.totalSavings + effectiveCreditCardTotal + effectiveSavingsTotal + othersTotal;
+  }, [forecast, effectiveCreditCardTotal, effectiveSavingsTotal, othersTotal]);
 
   const effectiveNet = useMemo(() => {
     if (!forecast) return 0;
@@ -421,6 +432,40 @@ export default function DashboardScreen() {
       </View>
     );
   };
+
+  const removeOthersDraft = (id: string) => {
+    setOthersDrafts(prev => prev.filter(d => d.id !== id));
+  };
+
+  const addOthersDraft = () => {
+    const trimmedName = othersNameInput.trim();
+    const parsedAmount = parseFloat(othersAmountInput);
+    if (!trimmedName || isNaN(parsedAmount) || parsedAmount <= 0) return;
+    setOthersDrafts(prev => [...prev, { id: `${Date.now()}-${Math.random()}`, name: trimmedName, amount: parsedAmount }]);
+    setOthersNameInput('');
+    setOthersAmountInput('');
+  };
+
+  const renderOthersDraftRow = (draft: OthersDraft) => (
+    <View key={draft.id} style={[styles.forecastRow, { borderBottomColor: colors.border }]}>
+      <View style={[styles.forecastDot, { backgroundColor: '#0ea5e9' }]} />
+      <View style={styles.forecastRowInfo}>
+        <Text style={[styles.forecastRowName, { color: colors.text }]} numberOfLines={1}>
+          {draft.name}
+        </Text>
+      </View>
+      <Text style={[styles.forecastRowAmt, { color: '#ef4444' }]}>
+        -{formatCurrency(draft.amount)}
+      </Text>
+      <TouchableOpacity
+        onPress={() => removeOthersDraft(draft.id)}
+        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        style={styles.forecastToggleBtn}
+      >
+        <Ionicons name="remove-circle" size={20} color={colors.textMuted} />
+      </TouchableOpacity>
+    </View>
+  );
 
   const renderBillsInboxSection = () => {
     if (pendingBillMappings.length === 0) return null;
@@ -1043,6 +1088,60 @@ export default function DashboardScreen() {
                   <Text style={[styles.emptyText, { color: colors.textMuted }]}>No outflow planned for {forecast.monthLabel}</Text>
                 </View>
               )}
+
+              <View>
+                <TouchableOpacity
+                  style={[styles.accordionHeader, { borderBottomColor: colors.border }]}
+                  onPress={() => toggleForecastAccordion('others')}
+                  activeOpacity={0.7}
+                >
+                  <View style={[styles.accordionIconWrap, { backgroundColor: '#0ea5e9' + '15' }]}>
+                    <Ionicons name="receipt-outline" size={16} color="#0ea5e9" />
+                  </View>
+                  <View style={styles.accordionTitleArea}>
+                    <Text style={[styles.accordionTitle, { color: colors.text }]}>Others</Text>
+                    <Text style={[styles.accordionSubtitle, { color: colors.textMuted }]}>
+                      {othersDrafts.length > 0 ? `${othersDrafts.length} item${othersDrafts.length > 1 ? 's' : ''}` : 'Tap to add'}
+                    </Text>
+                  </View>
+                  <View style={styles.accordionRight}>
+                    <Text style={[styles.accordionTotal, { color: colors.text }]}>{formatCurrency(othersTotal)}</Text>
+                    <Ionicons name={forecastAccordion === 'others' ? 'chevron-up' : 'chevron-down'} size={14} color={colors.textMuted} />
+                  </View>
+                </TouchableOpacity>
+                {forecastAccordion === 'others' && (
+                  <View style={styles.accordionContent}>
+                    {othersDrafts.map((draft) => renderOthersDraftRow(draft))}
+                    <View style={styles.othersAddRow}>
+                      <TextInput
+                        style={[styles.othersNameInput, { color: colors.text, borderColor: colors.border }]}
+                        value={othersNameInput}
+                        onChangeText={setOthersNameInput}
+                        placeholder="Topic"
+                        placeholderTextColor={colors.textMuted}
+                      />
+                      <TextInput
+                        style={[styles.othersAmountInput, { color: colors.text, borderColor: colors.border }]}
+                        value={othersAmountInput}
+                        onChangeText={setOthersAmountInput}
+                        placeholder="Amount"
+                        placeholderTextColor={colors.textMuted}
+                        keyboardType="numeric"
+                        onSubmitEditing={addOthersDraft}
+                      />
+                      <TouchableOpacity onPress={addOthersDraft} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                        <Ionicons name="add-circle" size={22} color={colors.primary} />
+                      </TouchableOpacity>
+                    </View>
+                    {othersDrafts.length > 0 && (
+                      <View style={styles.forecastTabTotal}>
+                        <Text style={[styles.forecastTabTotalLabel, { color: colors.textMuted }]}>Total</Text>
+                        <Text style={[styles.forecastTabTotalValue, { color: '#ef4444' }]}>-{formatCurrency(othersTotal)}</Text>
+                      </View>
+                    )}
+                  </View>
+                )}
+              </View>
             </View>
           </View>
         )}
@@ -2131,6 +2230,28 @@ const styles = StyleSheet.create({
   forecastToggleBtn: {
     marginLeft: 8,
     padding: 2,
+  },
+  othersAddRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 8,
+    paddingLeft: 4,
+  },
+  othersNameInput: {
+    flex: 1,
+    fontSize: 13,
+    borderBottomWidth: 1,
+    paddingVertical: 2,
+    paddingHorizontal: 2,
+  },
+  othersAmountInput: {
+    width: 90,
+    fontSize: 13,
+    borderBottomWidth: 1,
+    textAlign: 'right',
+    paddingVertical: 2,
+    paddingHorizontal: 2,
   },
   forecastTabTotal: {
     flexDirection: 'row',
