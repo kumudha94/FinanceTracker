@@ -320,6 +320,16 @@ export default function DashboardScreen() {
       .reduce((sum, item) => sum + effectiveAmount('savings_goal', item), 0);
   }, [forecast, whatIfAmounts]);
 
+  const effectiveTotalOutflow = useMemo(() => {
+    if (!forecast) return 0;
+    return forecast.totalOutflow - forecast.totalCreditCardBills - forecast.totalSavings + effectiveCreditCardTotal + effectiveSavingsTotal;
+  }, [forecast, effectiveCreditCardTotal, effectiveSavingsTotal]);
+
+  const effectiveNet = useMemo(() => {
+    if (!forecast) return 0;
+    return forecast.totalIncome - effectiveTotalOutflow;
+  }, [forecast, effectiveTotalOutflow]);
+
   const renderForecastRow = (item: NextMonthForecastItem, itemType: ForecastItemType, dotColor: string, keyPrefix: string, metaText?: string, editable?: boolean) => {
     const key = whatIfKey(itemType, item.id);
     const hasOverride = whatIfAmounts[key] !== undefined;
@@ -828,13 +838,13 @@ export default function DashboardScreen() {
               <View style={[styles.loanDivider, { backgroundColor: colors.border }]} />
               <View style={styles.forecastSummaryStat}>
                 <Text style={[styles.forecastStatLabel, { color: colors.textMuted }]}>Outflow</Text>
-                <Text style={[styles.forecastStatValue, { color: '#ef4444' }]}>-{formatCurrency(forecast.totalOutflow)}</Text>
+                <Text style={[styles.forecastStatValue, { color: '#ef4444' }]}>-{formatCurrency(effectiveTotalOutflow)}</Text>
               </View>
               <View style={[styles.loanDivider, { backgroundColor: colors.border }]} />
               <View style={styles.forecastSummaryStat}>
                 <Text style={[styles.forecastStatLabel, { color: colors.textMuted }]}>Balance</Text>
                 <Text style={[styles.forecastStatValueSmall, { color: colors.text }]}>
-                  {forecast.net >= 0 ? '+' : ''}{formatCurrency(forecast.net)}
+                  {effectiveNet >= 0 ? '+' : ''}{formatCurrency(effectiveNet)}
                 </Text>
               </View>
             </View>
