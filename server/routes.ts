@@ -28,6 +28,7 @@ import { deriveInstitutionKey, parseDueSms } from "./smsParser";
 import multer from "multer";
 // pdf-parse is imported dynamically at usage site to avoid pdfjs-dist crashing on startup
 import { getPaydayForMonth, getNextPaydays, getPastPaydays, getCurrentCycleDates, getNextCycleDates, getCyclePrimaryMonth, findOccurrenceInCycle, getSpannedMonths, filterOccurrencesInCycle } from "./salaryUtils";
+import { getWeekBounds, getPreviousWeekBounds } from "./weekUtils";
 import { validateNewSpendingEntry } from "./loanSpendingValidation";
 import { generateOTP, storeOTP, verifyOTP, sendOTP } from "./emailService";
 import { generateTokenPair, generateAccessToken } from "./jwtService";
@@ -2741,6 +2742,66 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error fetching dashboard summary:", error);
       res.status(500).json({ error: "Failed to fetch dashboard summary" });
+    }
+  });
+
+  app.get("/api/dashboard/weekly-summary", authenticateToken, async (req, res) => {
+    try {
+      const userId = req.user!.userId;
+      const now = new Date();
+
+      const { weekStart, weekEnd } = getWeekBounds(now);
+      const { weekStart: lastWeekStart, weekEnd: lastWeekEnd } = getPreviousWeekBounds(now);
+
+      const [thisWeekTxns, lastWeekTxns] = await Promise.all([
+        storage.getAllTransactions({ userId, startDate: weekStart, endDate: weekEnd }),
+        storage.getAllTransactions({ userId, startDate: lastWeekStart, endDate: lastWeekEnd }),
+      ]);
+
+      const income = thisWeekTxns
+        .filter(t => t.type === 'credit')
+        .reduce((sum, t) => sum + parseFloat(t.amount), 0);
+      const expense = thisWeekTxns
+        .filter(t => t.type === 'debit')
+        .reduce((sum, t) => sum + parseFloat(t.amount), 0);
+      const spentFromCreditCard = thisWeekTxns
+        .filter(t => t.type === 'debit' && t.account?.type === 'credit_card')
+        .reduce((sum, t) => sum + parseFloat(t.amount), 0);
+      const spentFromAccount = expense - spentFromCreditCard;
+
+      const lastWeekIncome = lastWeekTxns
+        .filter(t => t.type === 'credit')
+        .reduce((sum, t) => sum + parseFloat(t.amount), 0);
+      const lastWeekExpense = lastWeekTxns
+        .filter(t => t.type === 'debit')
+        .reduce((sum, t) => sum + parseFloat(t.amount), 0);
+
+      const incomeChangePercent = lastWeekIncome > 0
+        ? ((income - lastWeekIncome) / lastWeekIncome) * 100
+        : null;
+      const expenseChangePercent = lastWeekExpense > 0
+        ? ((expense - lastWeekExpense) / lastWeekExpense) * 100
+        : null;
+
+      const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      const weekLabel = weekStart.getMonth() === weekEnd.getMonth()
+        ? `${monthNames[weekStart.getMonth()]} ${weekStart.getDate()} - ${weekEnd.getDate()}`
+        : `${monthNames[weekStart.getMonth()]} ${weekStart.getDate()} - ${monthNames[weekEnd.getMonth()]} ${weekEnd.getDate()}`;
+
+      res.json({
+        weekStart,
+        weekEnd,
+        weekLabel,
+        income,
+        expense,
+        spentFromAccount,
+        spentFromCreditCard,
+        incomeChangePercent,
+        expenseChangePercent,
+      });
+    } catch (error) {
+      console.error("Error fetching weekly summary:", error);
+      res.status(500).json({ error: "Failed to fetch weekly summary" });
     }
   });
 

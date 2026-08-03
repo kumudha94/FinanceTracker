@@ -1,6 +1,6 @@
 import type {
   Account, Category, Transaction, Budget, ScheduledPayment,
-  User, DashboardData, DashboardSummary, NextMonthForecast, ForecastItemType, InsertAccount, InsertTransaction,
+  User, DashboardData, DashboardSummary, WeeklySummary, NextMonthForecast, ForecastItemType, InsertAccount, InsertTransaction,
   InsertBudget, InsertScheduledPayment, PaymentOccurrence, PaymentOccurrencesCycleResponse,
   SavingsGoal, SavingsContribution, InsertSavingsGoal, InsertSavingsContribution,
   SalaryProfile, SalaryCycle, InsertSalaryProfile,
@@ -267,6 +267,7 @@ async function apiRequest<T>(
 export const api = {
   getDashboard: () => apiRequest<DashboardData>('/api/dashboard'),
   getDashboardSummary: () => apiRequest<DashboardSummary>('/api/dashboard-summary'),
+  getWeeklySummary: () => apiRequest<WeeklySummary>('/api/dashboard/weekly-summary'),
   getNextMonthForecast: () => apiRequest<NextMonthForecast>('/api/next-month-forecast'),
   toggleForecastExclusion: (itemType: ForecastItemType, itemId: number | string) =>
     apiRequest<{ excluded: boolean }>('/api/forecast-exclusions/toggle', {
