@@ -1300,7 +1300,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // ========== Credit Card Statements ==========
   app.get("/api/credit-card-statements/:accountId", authenticateToken, async (req, res) => {
     try {
+      const userId = req.user!.userId;
       const accountId = parseInt(req.params.accountId);
+      const account = await storage.getAccount(accountId);
+      if (!account || account.userId !== userId) {
+        return res.status(404).json({ error: "Account not found" });
+      }
       const statements = await storage.getCreditCardStatements(accountId);
       res.json(statements);
     } catch (error) {
@@ -1310,13 +1315,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get("/api/credit-card-statement/:id", authenticateToken, async (req, res) => {
     try {
+      const userId = req.user!.userId;
       const id = parseInt(req.params.id);
       const statement = await storage.getCreditCardStatement(id);
-      if (statement) {
-        res.json(statement);
-      } else {
-        res.status(404).json({ error: "Statement not found" });
+      if (!statement) {
+        return res.status(404).json({ error: "Statement not found" });
       }
+      const account = await storage.getAccount(statement.accountId);
+      if (!account || account.userId !== userId) {
+        return res.status(404).json({ error: "Statement not found" });
+      }
+      res.json(statement);
     } catch (error) {
       res.status(500).json({ error: "Failed to fetch statement" });
     }
@@ -1324,7 +1333,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/credit-card-statements/:accountId/current", authenticateToken, async (req, res) => {
     try {
+      const userId = req.user!.userId;
       const accountId = parseInt(req.params.accountId);
+      const account = await storage.getAccount(accountId);
+      if (!account || account.userId !== userId) {
+        return res.status(404).json({ error: "Account not found" });
+      }
       const statement = await storage.getOrCreateCurrentStatement(accountId);
       res.json(statement);
     } catch (error) {
@@ -1334,17 +1348,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/credit-card-statements/:id/payment", authenticateToken, async (req, res) => {
     try {
+      const userId = req.user!.userId;
       const statementId = parseInt(req.params.id);
       const { amount, paidDate } = req.body;
-      
+
       if (!amount || amount <= 0) {
         res.status(400).json({ error: "Valid payment amount is required" });
         return;
       }
 
+      const existingStatement = await storage.getCreditCardStatement(statementId);
+      if (!existingStatement) {
+        return res.status(404).json({ error: "Statement not found" });
+      }
+      const account = await storage.getAccount(existingStatement.accountId);
+      if (!account || account.userId !== userId) {
+        return res.status(404).json({ error: "Statement not found" });
+      }
+
       const statement = await storage.recordCreditCardPayment(
-        statementId, 
-        parseFloat(amount), 
+        statementId,
+        parseFloat(amount),
         paidDate ? new Date(paidDate) : new Date()
       );
 
@@ -2149,6 +2173,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const profile = await storage.getSalaryProfile(userId);
       if (!profile || !profile.accountId) {
         res.status(400).json({ error: "Salary profile or account not configured" });
+        return;
+      }
+
+      if (currentCycle.salaryProfileId !== profile.id) {
+        res.status(404).json({ error: "Salary cycle not found" });
         return;
       }
 
@@ -4126,7 +4155,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/user/reset-pin", authenticateToken, async (req, res) => {
     try {
-      await storage.updateUser(1, { pinHash: null });
+      const userId = req.user!.userId;
+      await storage.updateUser(userId, { pinHash: null });
       res.json({ success: true });
     } catch (error) {
       res.status(500).json({ error: "Failed to reset PIN" });
@@ -4144,10 +4174,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/loans/:id", async (req, res) => {
+  app.get("/api/loans/:id", authenticateToken, async (req, res) => {
     try {
+      const userId = req.user!.userId;
       const loan = await storage.getLoan(parseInt(req.params.id));
-      if (loan) {
+      if (loan && loan.userId === userId) {
         res.json(loan);
       } else {
         res.status(404).json({ error: "Loan not found" });
@@ -5095,9 +5126,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // ========== Card Details ==========
-  app.get("/api/accounts/:accountId/card", async (req, res) => {
+  app.get("/api/accounts/:accountId/card", authenticateToken, async (req, res) => {
     try {
-      const card = await storage.getCardDetails(parseInt(req.params.accountId));
+      const userId = req.user!.userId;
+      const accountId = parseInt(req.params.accountId);
+      const account = await storage.getAccount(accountId);
+      if (!account || account.userId !== userId) {
+        return res.status(404).json({ error: "Card not found" });
+      }
+      const card = await storage.getCardDetails(accountId);
       if (card) {
         // Return masked card number for security
         res.json({
@@ -5112,22 +5149,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/accounts/:accountId/card", async (req, res) => {
+  app.post("/api/accounts/:accountId/card", authenticateToken, async (req, res) => {
     try {
+      const userId = req.user!.userId;
+      const accountId = parseInt(req.params.accountId);
+      const account = await storage.getAccount(accountId);
+      if (!account || account.userId !== userId) {
+        return res.status(404).json({ error: "Account not found" });
+      }
+
       // Simple encryption for demo - in production use proper encryption
       const cardNumber = req.body.cardNumber.replace(/\s/g, '');
       const lastFourDigits = cardNumber.slice(-4);
-      
+
       // Basic encryption (in production, use AES-256-GCM or similar)
       const encryptedCardNumber = Buffer.from(cardNumber).toString('base64');
-      
+
       const validatedData = insertCardDetailsSchema.parse({
         ...req.body,
-        accountId: parseInt(req.params.accountId),
+        accountId,
         cardNumber: encryptedCardNumber,
         lastFourDigits
       });
-      
+
       const card = await storage.createCardDetails(validatedData);
       res.status(201).json({
         ...card,
@@ -5138,14 +5182,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.patch("/api/cards/:id", async (req, res) => {
+  app.patch("/api/cards/:id", authenticateToken, async (req, res) => {
     try {
+      const userId = req.user!.userId;
+      const existingCard = await storage.getCardDetailsById(parseInt(req.params.id));
+      if (!existingCard) {
+        return res.status(404).json({ error: "Card not found" });
+      }
+      const account = await storage.getAccount(existingCard.accountId);
+      if (!account || account.userId !== userId) {
+        return res.status(404).json({ error: "Card not found" });
+      }
+
       const updateData = { ...req.body };
       if (updateData.cardNumber) {
         updateData.cardNumber = Buffer.from(updateData.cardNumber.replace(/\s/g, '')).toString('base64');
         updateData.lastFourDigits = req.body.cardNumber.slice(-4);
       }
-      
+
       const card = await storage.updateCardDetails(parseInt(req.params.id), updateData);
       if (card) {
         res.json({
@@ -5160,8 +5214,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.delete("/api/cards/:id", async (req, res) => {
+  app.delete("/api/cards/:id", authenticateToken, async (req, res) => {
     try {
+      const userId = req.user!.userId;
+      const existingCard = await storage.getCardDetailsById(parseInt(req.params.id));
+      if (!existingCard) {
+        return res.status(404).json({ error: "Card not found" });
+      }
+      const account = await storage.getAccount(existingCard.accountId);
+      if (!account || account.userId !== userId) {
+        return res.status(404).json({ error: "Card not found" });
+      }
+
       const deleted = await storage.deleteCardDetails(parseInt(req.params.id));
       if (deleted) {
         res.status(204).send();
@@ -5174,9 +5238,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Secure endpoint to get full card number (requires PIN verification in real app)
-  app.get("/api/accounts/:accountId/card/full", async (req, res) => {
+  app.get("/api/accounts/:accountId/card/full", authenticateToken, async (req, res) => {
     try {
-      const card = await storage.getCardDetails(parseInt(req.params.accountId));
+      const userId = req.user!.userId;
+      const accountId = parseInt(req.params.accountId);
+      const account = await storage.getAccount(accountId);
+      if (!account || account.userId !== userId) {
+        return res.status(404).json({ error: "Card not found" });
+      }
+      const card = await storage.getCardDetails(accountId);
       if (card) {
         // Decrypt card number
         const decryptedCardNumber = Buffer.from(card.cardNumber, 'base64').toString('utf8');
@@ -5204,10 +5274,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/insurances/:id", async (req, res) => {
+  app.get("/api/insurances/:id", authenticateToken, async (req, res) => {
     try {
+      const userId = req.user!.userId;
       const insurance = await storage.getInsurance(parseInt(req.params.id));
-      if (insurance) {
+      if (insurance && insurance.userId === userId) {
         res.json(insurance);
       } else {
         res.status(404).json({ error: "Insurance not found" });

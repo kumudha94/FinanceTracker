@@ -204,6 +204,7 @@ export interface IStorage {
 
   // Card Details
   getCardDetails(accountId: number): Promise<CardDetails | undefined>;
+  getCardDetailsById(id: number): Promise<CardDetails | undefined>;
   createCardDetails(card: InsertCardDetails): Promise<CardDetails>;
   updateCardDetails(id: number, card: Partial<InsertCardDetails>): Promise<CardDetails | undefined>;
   deleteCardDetails(id: number): Promise<boolean>;
@@ -2308,6 +2309,11 @@ export class DatabaseStorage implements IStorage {
   // Card Details
   async getCardDetails(accountId: number): Promise<CardDetails | undefined> {
     const [card] = await db.select().from(cardDetails).where(eq(cardDetails.accountId, accountId));
+    return card || undefined;
+  }
+
+  async getCardDetailsById(id: number): Promise<CardDetails | undefined> {
+    const [card] = await db.select().from(cardDetails).where(eq(cardDetails.id, id));
     return card || undefined;
   }
 

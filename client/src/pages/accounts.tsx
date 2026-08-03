@@ -9,6 +9,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, Dialog
 import { Skeleton } from "@/components/ui/skeleton";
 import { Plus, Building2, CreditCard, Trash2, Wallet, Eye, EyeOff } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { authenticatedFetch } from "@/lib/auth";
 import { useToast } from "@/hooks/use-toast";
 import type { Account, CardDetails } from "@shared/schema";
 
@@ -35,7 +36,7 @@ function CardDetailsDisplay({ accountId, onDelete }: { accountId: number; onDele
   const { data: card, isLoading } = useQuery<CardDetails & { cardNumber: string }>({
     queryKey: ["/api/accounts", accountId, "card"],
     queryFn: async () => {
-      const response = await fetch(`/api/accounts/${accountId}/card`);
+      const response = await authenticatedFetch(`/api/accounts/${accountId}/card`);
       if (!response.ok) {
         if (response.status === 404) return null;
         throw new Error('Failed to fetch card');
@@ -47,7 +48,7 @@ function CardDetailsDisplay({ accountId, onDelete }: { accountId: number; onDele
   const { data: fullCard, refetch: fetchFullCard } = useQuery<CardDetails & { cardNumber: string }>({
     queryKey: ["/api/accounts", accountId, "card", "full"],
     queryFn: async () => {
-      const response = await fetch(`/api/accounts/${accountId}/card/full`);
+      const response = await authenticatedFetch(`/api/accounts/${accountId}/card/full`);
       if (!response.ok) throw new Error('Failed to fetch card details');
       return response.json();
     },
