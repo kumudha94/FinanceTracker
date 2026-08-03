@@ -54,8 +54,10 @@ Confirm: ccybl.in/YESBNK/MAt7Sk1jgU -YES BANK LTD" System need to read this SMS,
 4. Refer screenshot: In Current month card Bills section showing overdue. Consider Today's date July 29 Salary credit date and my scheduled payment from Bills section due is 1st of every month, so Aug 1 is in this cycle is not overdue it is pending. - **Development completed | Deployed in prod | Test Success**
 5. Next Cycle plan card - Add savings plan along with Scheduled Payment, Loan EMIs, Credit Card Bills with same +,_ symbol. so that if required user can add/remove plan. -  **Development completed | Deployed in prod | Test Success**
 6. I completed few scheduled payments for this cycle, it shows completed in Scheduled payment screen but pending in dashboard - current cycle - Bills tab - scheduled payments section. **Development completed | Deployed in prod | Test Success**
-7. Next Cycle Plan-> Credit card bills and Savings Plan allow user to click and edit the amount for each row.**New Priority:High1 | Development ?**
-8. Weeky Summary Notification or card - I will attach screenshot for reference when we dicuss about it **New Priority: Medium1 | Development NotStarted**
+7. Next Cycle Plan-> Credit card bills and Savings Plan allow user to click and edit the amount for each row.**Development completed | Test Pending**
+8. Weeky Summary Notification or card - I will attach screenshot for reference when we dicuss about it. No need for notification like this but need some card in dashboard screen with stats like, Weekly income, expense, how much spent from account, credit card, 12% more than last week thses kind of small info. **Development Inprogress**
+9. + and - symbol in Next cycle plan -> credit card bills + Savings Plan + Others -> once user clicked + or - symbol it is taking few sec to do the calculation, so inbetween user is clicking it multiple time, so show loading symbol till the calculations done and show other button. **Development completed | Test Pending**
+10. remove + Symbol form the Dashboard screen which helps redirect to *Add Transaction*. **Development completed | Test Pending**
 
 ## Section:6. Screen Movement
 
@@ -73,11 +75,21 @@ Confirm: ccybl.in/YESBNK/MAt7Sk1jgU -YES BANK LTD" System need to read this SMS,
 4. We dropped Plans 1 & 2 due to the high development scope and large codebase changes. Introduce a new **Financial Planner** menu that reuses existing financial data to provide "What if?" planning features such as Loan Optimization, Savings Planning, Credit Card Optimization, Emergency Fund Tracking, Big Purchase Planning, Financial Calendar, and Smart Financial Suggestions, helping users make better financial decisions with minimal implementation effort. - **Development Drop due to wide scope**
 5. When planning finance I end up doing the math myself with a calculator or notepad, scribbling stuff outside the app. The app should reduce that. Idea: inside the Next Cycle Plan card, alongside Scheduled Payment, Credit Card Bill, etc., allow an **Others** section where I can add ad-hoc spending entries as a topic + amount, e.g.:
    > Scheduled Payment 1000
-   > - test pay1 500
-   > - test pay2 500
+   > + test pay1 500
+   > + test pay2 500
    > Others 5000 (+)
-   > - pay1 3000 (-)
-   > - pay2 2000 (-)
+   > + pay1 3000 (-)
+   > + pay2 2000 (-)
 
-   A save icon lets me keep an entry for future reference; if not saved, it's discarded. Open question: does "saved" mean it becomes a real one-time scheduled payment (reduces from account/reporting later, disappears once paid) or something simpler that's cosmetic to this card only.**New Priority:High3 | Development ?**
-6. auto-read bank sms should be enabled (mandatory), whenever app is opening, check the setting if it is disabled encourage the user to enable it by showing a popup **New Priority:High4**
+   A save icon lets me keep an entry for future reference; if not saved, it's discarded. Resolved: "saved" means it becomes a real one-time scheduled payment reusing existing infra (shows under Scheduled Payments, gets the normal mark-paid/include-exclude flow) — the "Others" section itself never persists anything, it's a local scratchpad only. **Development completed | Test Pending**
+6. auto-read bank sms should be enabled (mandatory), whenever app is opening, check the setting if it is disabled encourage the user to enable it by showing a popup **Development completed | Test Pending**
+7. How old records will get archived / deleted in DB (may be old 6 month of records we can remove) or we can plan like 6 month main table then move to archieve, after 1 year delete. Plan this.**Development Inprogress**
+
+## Section:9. Settings
+
+1. Biometric Login not working.**Development completed | Test Pending**
+2. PIN set successful, but while opening the app, app is not asking user to enter the PIN for authentication. While setting and removing PIN options from setting there is a option with *Use Face ID* actually faceid is not enabled in my phone only bio metric is enabled, I don't know how we are showing this.**Development completed | Test Pending**
+
+## Section:10. Transaction
+
+1. If I update Category check the DB if the same merchant is available more than once, show the list to the user once confirmed update category for all the transaction from that merchant. I will show example screenshot.**New Priority:High | Development NotStarted**

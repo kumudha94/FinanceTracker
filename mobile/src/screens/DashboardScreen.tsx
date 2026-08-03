@@ -8,7 +8,6 @@ import { format } from 'date-fns';
 import { api } from '../lib/api';
 import { formatCurrency, getThemedColors } from '../lib/utils';
 import { RootStackParamList, TabParamList } from '../../App';
-import { FABButton } from '../components/FABButton';
 import { useState, useCallback, useMemo, useEffect } from 'react';
 import { useTheme } from '../contexts/ThemeContext';
 import { useAuth } from '../contexts/AuthContext';
@@ -58,6 +57,7 @@ export default function DashboardScreen() {
   const [othersNameInput, setOthersNameInput] = useState('');
   const [othersAmountInput, setOthersAmountInput] = useState('');
   const [savingDraftId, setSavingDraftId] = useState<string | null>(null);
+  const [togglingKey, setTogglingKey] = useState<string | null>(null);
   const [showSmsNudgeModal, setShowSmsNudgeModal] = useState(false);
 
   const { data: summary, isLoading } = useQuery({
@@ -447,15 +447,25 @@ export default function DashboardScreen() {
           </TouchableOpacity>
         )}
         <TouchableOpacity
-          onPress={() => { resetRow(); toggleExclusionMutation.mutate({ itemType, itemId: item.id }); }}
+          onPress={() => {
+            if (togglingKey) return;
+            setTogglingKey(key);
+            resetRow();
+            toggleExclusionMutation.mutate({ itemType, itemId: item.id }, { onSettled: () => setTogglingKey(null) });
+          }}
+          disabled={togglingKey === key}
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           style={styles.forecastToggleBtn}
         >
-          <Ionicons
-            name={item.excluded ? 'add-circle' : 'remove-circle'}
-            size={20}
-            color={item.excluded ? '#10b981' : colors.textMuted}
-          />
+          {togglingKey === key ? (
+            <ActivityIndicator size="small" color={colors.textMuted} />
+          ) : (
+            <Ionicons
+              name={item.excluded ? 'add-circle' : 'remove-circle'}
+              size={20}
+              color={item.excluded ? '#10b981' : colors.textMuted}
+            />
+          )}
         </TouchableOpacity>
       </View>
     );
@@ -1379,8 +1389,6 @@ export default function DashboardScreen() {
 
         <View style={{ height: 80 }} />
       </ScrollView>
-
-      <FABButton onPress={() => navigation.navigate('AddTransaction')} />
 
       <Modal
         visible={showCycleInfoModal}
