@@ -15,7 +15,7 @@ export default function PinSetupScreen() {
   const navigation = useNavigation<PinSetupNavigationProp>();
   const { resolvedTheme } = useTheme();
   const colors = useMemo(() => getThemedColors(resolvedTheme), [resolvedTheme]);
-  const { user } = useAuth();
+  const { user, setUser } = useAuth();
   
   const [step, setStep] = useState<'enter' | 'confirm'>('enter');
   const [pin, setPin] = useState(['', '', '', '']);
@@ -80,6 +80,7 @@ export default function PinSetupScreen() {
       setIsLoading(true);
       try {
         await api.setupPin(user.id, pinString);
+        setUser({ ...user, hasPin: true });
         Alert.alert('Success', 'PIN has been set successfully!', [
           { text: 'OK', onPress: () => navigation.goBack() }
         ]);

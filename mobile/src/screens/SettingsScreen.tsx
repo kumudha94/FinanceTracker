@@ -15,7 +15,7 @@ export default function SettingsScreen() {
   const [pin, setPin] = useState('');
   const [isDeletingAccount, setIsDeletingAccount] = useState(false);
   const { theme, setTheme, resolvedTheme } = useTheme();
-  const { checkPinRequired, user: authUser, logout } = useAuth();
+  const { checkPinRequired, user: authUser, setUser, logout } = useAuth();
   const colors = useMemo(() => getThemedColors(resolvedTheme), [resolvedTheme]);
 
   // Swipe gesture settings
@@ -177,6 +177,7 @@ export default function SettingsScreen() {
     
     try {
       await api.toggleBiometric(authUser.id, newValue);
+      setUser({ ...authUser, biometricEnabled: newValue });
       Alert.alert('Success', newValue ? 'Biometric authentication enabled' : 'Biometric authentication disabled');
       // Update query cache
       queryClient.invalidateQueries({ queryKey: ['/api/user'] });
