@@ -102,7 +102,7 @@ export interface IStorage {
   createScheduledPayment(payment: InsertScheduledPayment): Promise<ScheduledPayment>;
   updateScheduledPayment(id: number, payment: Partial<InsertScheduledPayment>): Promise<ScheduledPayment | undefined>;
   deleteScheduledPayment(id: number): Promise<boolean>;
-  getCreditCardBills(): Promise<any[]>;
+  getCreditCardBills(userId: number): Promise<any[]>;
 
   // Credit Card Statements
   getCreditCardStatements(accountId: number): Promise<CreditCardStatement[]>;
@@ -826,9 +826,11 @@ export class DatabaseStorage implements IStorage {
     return result.length > 0;
   }
 
-  async getCreditCardBills(): Promise<any[]> {
-    // Get all credit card accounts
-    const creditCardAccounts = await db.select().from(accounts).where(eq(accounts.type, 'credit_card'));
+  async getCreditCardBills(userId: number): Promise<any[]> {
+    // Get all credit card accounts for this user
+    const creditCardAccounts = await db.select().from(accounts).where(
+      and(eq(accounts.type, 'credit_card'), eq(accounts.userId, userId))
+    );
     
     if (creditCardAccounts.length === 0) {
       return [];

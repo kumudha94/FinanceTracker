@@ -1290,7 +1290,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/credit-card-bills", authenticateToken, async (req, res) => {
     try {
       const userId = req.user!.userId;
-      const bills = await storage.getCreditCardBills();
+      const bills = await storage.getCreditCardBills(userId);
       res.json(bills);
     } catch (error) {
       res.status(500).json({ error: "Failed to fetch credit card bills" });
@@ -4015,12 +4015,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // ========== Export Data ==========
   app.post("/api/export", authenticateToken, async (req, res) => {
     try {
+      const userId = req.user!.userId;
       const { format, startDate, endDate } = req.body;
-      
-      const filters: any = {};
+
+      const filters: any = { userId };
       if (startDate) filters.startDate = new Date(startDate);
       if (endDate) filters.endDate = new Date(endDate);
-      
+
       const transactions = await storage.getAllTransactions(filters);
       
       if (format === "csv") {
@@ -5044,9 +5045,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // ========== Loan Summary ==========
-  app.get("/api/loan-summary", async (_req, res) => {
+  app.get("/api/loan-summary", authenticateToken, async (req, res) => {
     try {
-      const allLoans = await storage.getAllLoans();
+      const userId = req.user!.userId;
+      const allLoans = await storage.getAllLoans(userId);
       const activeLoans = allLoans.filter(l => l.status === 'active');
       
       const now = new Date();
