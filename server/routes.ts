@@ -3157,16 +3157,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const endOfMonth = new Date(year, month + 1, 0, 23, 59, 59);
         
         const transactions = await storage.getAllTransactions({
+          userId,
           startDate: startOfMonth,
           endDate: endOfMonth,
         });
-        
+
         const totalExpenses = transactions
           .filter(t => t.type === 'debit')
           .reduce((sum, t) => sum + parseFloat(t.amount), 0);
-        
+
         const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-        
+
         monthlyData.push({
           month: monthNames[month],
           year,
@@ -3256,10 +3257,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const endOfMonth = new Date(yearNum, monthNum + 1, 0, 23, 59, 59);
       
       const transactions = await storage.getAllTransactions({
+        userId,
         startDate: startOfMonth,
         endDate: endOfMonth,
       });
-      
+
       const categoryTotals = new Map<number, { name: string; total: number; color: string; count: number }>();
       
       for (const t of transactions.filter(t => t.type === 'debit')) {
