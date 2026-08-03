@@ -14,6 +14,7 @@ export default function SettingsScreen() {
   const [showPinModal, setShowPinModal] = useState(false);
   const [pin, setPin] = useState('');
   const [isDeletingAccount, setIsDeletingAccount] = useState(false);
+  const [isCleaningUpSmsLogs, setIsCleaningUpSmsLogs] = useState(false);
   const { theme, setTheme, resolvedTheme } = useTheme();
   const { checkPinRequired, user: authUser, setUser, logout } = useAuth();
   const colors = useMemo(() => getThemedColors(resolvedTheme), [resolvedTheme]);
@@ -183,6 +184,40 @@ export default function SettingsScreen() {
       queryClient.invalidateQueries({ queryKey: ['/api/user'] });
     } catch (error: any) {
       Alert.alert('Error', error.message || 'Failed to update biometric setting');
+    }
+  };
+
+  const handleSmsLogCleanup = async () => {
+    try {
+      const preview = await api.getSmsLogsCleanupPreview();
+      if (preview.count === 0) {
+        Alert.alert('Nothing to Clean Up', 'No SMS logs older than 12 months found.');
+        return;
+      }
+      Alert.alert(
+        'Clean Up Old SMS Logs',
+        `${preview.count} SMS log${preview.count === 1 ? '' : 's'} older than 12 months will be permanently deleted. This can't be undone.`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Delete',
+            style: 'destructive',
+            onPress: async () => {
+              setIsCleaningUpSmsLogs(true);
+              try {
+                const result = await api.cleanupSmsLogs();
+                setIsCleaningUpSmsLogs(false);
+                Alert.alert('Done', `${result.deletedCount} SMS log${result.deletedCount === 1 ? '' : 's'} deleted.`);
+              } catch (error: any) {
+                setIsCleaningUpSmsLogs(false);
+                Alert.alert('Error', error.message || 'Failed to clean up SMS logs. Please try again.');
+              }
+            },
+          },
+        ]
+      );
+    } catch (error: any) {
+      Alert.alert('Error', error.message || 'Failed to check SMS logs. Please try again.');
     }
   };
 
@@ -434,7 +469,22 @@ export default function SettingsScreen() {
 
       <Text style={[styles.sectionTitle, { color: colors.textMuted }]}>Danger Zone</Text>
       <View style={[styles.section, { backgroundColor: colors.card }]}>
-        <TouchableOpacity 
+        <TouchableOpacity
+          style={styles.settingRowButton}
+          onPress={handleSmsLogCleanup}
+          disabled={isCleaningUpSmsLogs}
+        >
+          <View style={styles.settingInfo}>
+            <Ionicons name="trash-outline" size={22} color={colors.warning} />
+            <View>
+              <Text style={[styles.settingTitle, { color: colors.text }]}>Clean Up SMS Logs</Text>
+              <Text style={[styles.settingSubtitle, { color: colors.textMuted }]}>Delete SMS logs older than 12 months</Text>
+            </View>
+          </View>
+          <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
+        </TouchableOpacity>
+
+        <TouchableOpacity
           style={styles.settingRowButton}
           onPress={() => {
             Alert.alert(
@@ -534,6 +584,15 @@ export default function SettingsScreen() {
             <ActivityIndicator size="large" color={colors.primary} />
             <Text style={[styles.loadingText, { color: colors.text }]}>Deleting account...</Text>
             <Text style={[styles.loadingSubtext, { color: colors.textMuted }]}>Please wait while we remove all your data</Text>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal visible={isCleaningUpSmsLogs} transparent animationType="fade">
+        <View style={styles.loadingOverlay}>
+          <View style={[styles.loadingContent, { backgroundColor: colors.card }]}>
+            <ActivityIndicator size="large" color={colors.primary} />
+            <Text style={[styles.loadingText, { color: colors.text }]}>Cleaning up SMS logs...</Text>
           </View>
         </View>
       </Modal>

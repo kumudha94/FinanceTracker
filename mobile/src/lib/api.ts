@@ -751,6 +751,10 @@ export const api = {
       method: 'POST', 
       body: JSON.stringify({ userId, enabled }) 
     }),
-  deleteUserAccount: () => 
+  deleteUserAccount: () =>
     apiRequest<{ message: string }>('/api/users/delete-account', { method: 'DELETE' }),
+  getSmsLogsCleanupPreview: () =>
+    apiRequest<{ count: number; oldestReceivedAt: string | null; newestReceivedAt: string | null }>('/api/sms-logs/cleanup-preview'),
+  cleanupSmsLogs: () =>
+    apiRequest<{ deletedCount: number }>('/api/sms-logs/cleanup', { method: 'POST' }),
 };
