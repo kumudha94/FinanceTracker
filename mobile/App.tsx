@@ -128,6 +128,7 @@ export type RootStackParamList = {
   InstitutionMappings: undefined;
   BillsInbox: undefined;
   Salary: undefined;
+  SmsAutoRead: undefined;
 };
 
 export type TabParamList = {
@@ -519,6 +520,15 @@ function MainApp() {
           component={SalaryScreen}
           options={{
             title: 'Salary & Income',
+            headerStyle: { backgroundColor: colors.primary },
+            headerTintColor: '#fff',
+          }}
+        />
+        <RootStack.Screen
+          name="SmsAutoRead"
+          component={SmsAutoReadScreen}
+          options={{
+            title: 'Auto-Read SMS',
             headerStyle: { backgroundColor: colors.primary },
             headerTintColor: '#fff',
           }}

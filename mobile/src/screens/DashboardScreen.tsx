@@ -13,6 +13,7 @@ import { useState, useCallback, useMemo, useEffect } from 'react';
 import { useTheme } from '../contexts/ThemeContext';
 import { useAuth } from '../contexts/AuthContext';
 import { BillItem, NextMonthForecast, NextMonthForecastItem, ForecastItemType } from '../lib/types';
+import { isAutoReadEnabled, hasSmsPermission } from '../lib/smsAutoReader';
 
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
@@ -57,6 +58,7 @@ export default function DashboardScreen() {
   const [othersNameInput, setOthersNameInput] = useState('');
   const [othersAmountInput, setOthersAmountInput] = useState('');
   const [savingDraftId, setSavingDraftId] = useState<string | null>(null);
+  const [showSmsNudgeModal, setShowSmsNudgeModal] = useState(false);
 
   const { data: summary, isLoading } = useQuery({
     queryKey: ['/api/dashboard-summary'],
@@ -220,6 +222,16 @@ export default function DashboardScreen() {
     }, LOADING_MESSAGE_INTERVAL_MS);
     return () => clearInterval(interval);
   }, [isLoading]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'android') return;
+    (async () => {
+      const [autoReadOn, smsGranted] = await Promise.all([isAutoReadEnabled(), hasSmsPermission()]);
+      if (!(autoReadOn && smsGranted)) {
+        setShowSmsNudgeModal(true);
+      }
+    })();
+  }, []);
 
   if (isLoading || !summary) {
     return (
@@ -1434,6 +1446,55 @@ export default function DashboardScreen() {
                 </Text>
               </View>
             )}
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      <Modal
+        visible={showSmsNudgeModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowSmsNudgeModal(false)}
+      >
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => setShowSmsNudgeModal(false)}
+        >
+          <View style={[styles.modalContent, { backgroundColor: colors.card }]}>
+            <View style={styles.modalHeader}>
+              <Text style={[styles.modalTitle, { color: colors.text }]}>Turn On Auto-Read SMS</Text>
+              <TouchableOpacity onPress={() => setShowSmsNudgeModal(false)} data-testid="button-close-sms-nudge">
+                <Ionicons name="close" size={22} color={colors.textMuted} />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.modalBody}>
+              <View style={[styles.infoRow, { backgroundColor: colors.primary + '10', borderColor: colors.primary + '30' }]}>
+                <Ionicons name="chatbox-ellipses" size={18} color={colors.primary} />
+                <View style={styles.infoRowText}>
+                  <Text style={[styles.infoLabel, { color: colors.textMuted }]}>Auto-Read SMS</Text>
+                  <Text style={[styles.infoValue, { color: colors.text }]}>Currently Off</Text>
+                </View>
+              </View>
+
+              <Text style={[styles.modalExplain, { color: colors.textMuted }]}>
+                With Auto-Read SMS on, your bank's debit/credit messages are detected automatically and added as transactions — no manual entry, no missed spends.
+              </Text>
+
+              <TouchableOpacity
+                style={[styles.getStartedButton, { backgroundColor: colors.primary }]}
+                onPress={() => {
+                  setShowSmsNudgeModal(false);
+                  navigation.navigate('SmsAutoRead');
+                }}
+                activeOpacity={0.8}
+                data-testid="button-enable-sms-auto-read"
+              >
+                <Ionicons name="chatbox-ellipses-outline" size={16} color="#fff" />
+                <Text style={styles.getStartedButtonText}>Enable Now</Text>
+              </TouchableOpacity>
+            </View>
           </View>
         </TouchableOpacity>
       </Modal>
