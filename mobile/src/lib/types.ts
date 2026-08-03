@@ -244,6 +244,8 @@ export type ForecastItemType = 'scheduled_payment' | 'insurance' | 'loan' | 'cre
 
 export interface NextMonthForecast {
   monthLabel: string;
+  nextMonth: number;
+  nextYear: number;
   salary: Array<{
     profileId: number;
     accountName: string;
@@ -308,7 +310,7 @@ export interface InsertBudget {
 export interface InsertScheduledPayment {
   name: string;
   amount: string;
-  dueDate: number;
+  dueDate?: number | null;
   categoryId?: number | null;
   frequency?: string;
   customIntervalMonths?: number | null;
