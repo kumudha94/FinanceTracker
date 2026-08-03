@@ -12,7 +12,7 @@ import { FABButton } from '../components/FABButton';
 import { useState, useCallback, useMemo, useEffect } from 'react';
 import { useTheme } from '../contexts/ThemeContext';
 import { useAuth } from '../contexts/AuthContext';
-import { BillItem, NextMonthForecast, NextMonthForecastItem, ForecastItemType } from '../lib/types';
+import { BillItem, NextMonthForecast, NextMonthForecastItem, ForecastItemType, WeeklySummary } from '../lib/types';
 import { isAutoReadEnabled, hasSmsPermission } from '../lib/smsAutoReader';
 
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
@@ -63,6 +63,11 @@ export default function DashboardScreen() {
   const { data: summary, isLoading } = useQuery({
     queryKey: ['/api/dashboard-summary'],
     queryFn: api.getDashboardSummary,
+  });
+
+  const { data: weeklySummary } = useQuery<WeeklySummary>({
+    queryKey: ['/api/dashboard/weekly-summary'],
+    queryFn: api.getWeeklySummary,
   });
 
   const { data: savingsGoals } = useQuery({
@@ -1187,6 +1192,60 @@ export default function DashboardScreen() {
         )}
 
         {/* ===== Remaining Cards below main card ===== */}
+
+        {/* Weekly Summary */}
+        {weeklySummary && (
+          <View style={[styles.card, { backgroundColor: colors.card }]}>
+            <View style={styles.cardHeader}>
+              <Text style={[styles.cardTitle, { color: colors.text }]}>This Week</Text>
+              <Text style={[styles.viewAll, { color: colors.textMuted }]}>{weeklySummary.weekLabel}</Text>
+            </View>
+
+            <View style={[styles.loanRow, { marginBottom: 14 }]}>
+              <View style={styles.loanStat}>
+                <Text style={[styles.loanStatLabel, { color: colors.textMuted }]}>Income</Text>
+                <Text style={[styles.loanStatValue, { color: '#10b981' }]}>{formatCurrency(weeklySummary.income)}</Text>
+              </View>
+              <View style={[styles.loanDivider, { backgroundColor: colors.border }]} />
+              <View style={styles.loanStat}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  <Text style={[styles.loanStatLabel, { color: colors.textMuted }]}>Expense</Text>
+                  {weeklySummary.expenseChangePercent !== null && (
+                    <View
+                      style={[
+                        styles.statusBadge,
+                        { backgroundColor: (weeklySummary.expenseChangePercent > 0 ? '#ef4444' : '#10b981') + '18' },
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.statusBadgeText,
+                          { color: weeklySummary.expenseChangePercent > 0 ? '#ef4444' : '#10b981' },
+                        ]}
+                      >
+                        {weeklySummary.expenseChangePercent > 0 ? '+' : ''}
+                        {Math.round(weeklySummary.expenseChangePercent)}%
+                      </Text>
+                    </View>
+                  )}
+                </View>
+                <Text style={[styles.loanStatValue, { color: '#ef4444' }]}>{formatCurrency(weeklySummary.expense)}</Text>
+              </View>
+            </View>
+
+            <View style={styles.loanRow}>
+              <View style={styles.loanStat}>
+                <Text style={[styles.loanStatLabel, { color: colors.textMuted }]}>From Account</Text>
+                <Text style={[styles.loanStatValue, { color: colors.text }]}>{formatCurrency(weeklySummary.spentFromAccount)}</Text>
+              </View>
+              <View style={[styles.loanDivider, { backgroundColor: colors.border }]} />
+              <View style={styles.loanStat}>
+                <Text style={[styles.loanStatLabel, { color: colors.textMuted }]}>From Credit Card</Text>
+                <Text style={[styles.loanStatValue, { color: colors.text }]}>{formatCurrency(weeklySummary.spentFromCreditCard)}</Text>
+              </View>
+            </View>
+          </View>
+        )}
 
         {/* Top Spending Categories */}
         {summary.topCategories.length > 0 && (
