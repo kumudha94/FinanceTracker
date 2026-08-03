@@ -34,7 +34,7 @@ import {
   DEFAULT_CATEGORIES
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, and, gte, lte, desc, sql, ilike, or } from "drizzle-orm";
+import { eq, and, gte, lte, lt, desc, sql, ilike, or } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 
 export interface IStorage {
@@ -120,6 +120,10 @@ export interface IStorage {
   createSmsLog(smsLog: InsertSmsLog): Promise<SmsLog>;
   updateSmsLogTransaction(id: number, transactionId: number): Promise<SmsLog | undefined>;
   clearSmsLogTransaction(id: number): Promise<void>;
+  getSmsLogsCleanupPreview(userId: number): Promise<{ count: number; oldestReceivedAt: Date | null; newestReceivedAt: Date | null }>;
+  deleteEligibleSmsLogs(userId: number): Promise<number>;
+  getUserCount(): Promise<number>;
+  backfillSmsLogUserIds(userId: number): Promise<number>;
 
   // Sender Institution Mappings
   getSenderInstitutionMapping(userId: number, institutionKey: string): Promise<SenderInstitutionMapping | undefined>;
@@ -1305,6 +1309,64 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(smsLogs)
       .where(eq(smsLogs.billMappingId, billMappingId))
       .orderBy(desc(smsLogs.receivedAt));
+  }
+
+  // Shared by getSmsLogsCleanupPreview and deleteEligibleSmsLogs so the two can never
+  // disagree about which rows are "eligible" — same age cutoff, same pending-review
+  // exclusion, computed exactly once.
+  private eligibleSmsLogsCondition(userId: number) {
+    const cutoff = new Date();
+    cutoff.setMonth(cutoff.getMonth() - 12);
+    return and(
+      eq(smsLogs.userId, userId),
+      lt(smsLogs.receivedAt, cutoff),
+      sql`(${smsLogs.institutionMappingId} IS NULL OR NOT EXISTS (
+        SELECT 1 FROM ${senderInstitutionMappings}
+        WHERE ${senderInstitutionMappings.id} = ${smsLogs.institutionMappingId}
+        AND ${senderInstitutionMappings.status} = 'pending'
+      ))`,
+      sql`(${smsLogs.billMappingId} IS NULL OR NOT EXISTS (
+        SELECT 1 FROM ${billSenderMappings}
+        WHERE ${billSenderMappings.id} = ${smsLogs.billMappingId}
+        AND ${billSenderMappings.status} = 'pending'
+      ))`
+    );
+  }
+
+  async getSmsLogsCleanupPreview(userId: number): Promise<{ count: number; oldestReceivedAt: Date | null; newestReceivedAt: Date | null }> {
+    const [result] = await db.select({
+      count: sql<number>`count(*)`,
+      oldest: sql<Date | null>`min(${smsLogs.receivedAt})`,
+      newest: sql<Date | null>`max(${smsLogs.receivedAt})`,
+    }).from(smsLogs).where(this.eligibleSmsLogsCondition(userId));
+
+    return {
+      count: Number(result?.count || 0),
+      oldestReceivedAt: result?.oldest ?? null,
+      newestReceivedAt: result?.newest ?? null,
+    };
+  }
+
+  async deleteEligibleSmsLogs(userId: number): Promise<number> {
+    const deleted = await db.delete(smsLogs)
+      .where(this.eligibleSmsLogsCondition(userId))
+      .returning({ id: smsLogs.id });
+    return deleted.length;
+  }
+
+  async getUserCount(): Promise<number> {
+    const [result] = await db.select({ count: sql<number>`count(*)` }).from(users);
+    return Number(result?.count || 0);
+  }
+
+  // One-time repair for sms_logs rows written before processSingleSms started stamping
+  // userId. Only ever fills in NULLs — an already-attributed row is never touched.
+  async backfillSmsLogUserIds(userId: number): Promise<number> {
+    const updated = await db.update(smsLogs)
+      .set({ userId })
+      .where(sql`${smsLogs.userId} IS NULL`)
+      .returning({ id: smsLogs.id });
+    return updated.length;
   }
 
   // Forecast Exclusions
