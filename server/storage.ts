@@ -34,7 +34,7 @@ import {
   DEFAULT_CATEGORIES
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, and, gte, lte, desc, sql, ilike, or } from "drizzle-orm";
+import { eq, and, gte, lte, desc, sql, ilike, or, inArray } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 
 export interface IStorage {
@@ -87,6 +87,7 @@ export interface IStorage {
   getTransactionByFallbackKey(userId: number, accountId: number, amount: string, type: string, date: Date): Promise<Transaction | undefined>;
   createTransaction(transaction: InsertTransaction): Promise<Transaction>;
   updateTransaction(id: number, transaction: Partial<InsertTransaction>): Promise<Transaction>;
+  bulkUpdateTransactionCategory(userId: number, transactionIds: number[], categoryId: number): Promise<number>;
   deleteTransaction(id: number): Promise<boolean>;
 
   // Budgets
@@ -713,6 +714,18 @@ export class DatabaseStorage implements IStorage {
     }
 
     return updatedTransaction;
+  }
+
+  async bulkUpdateTransactionCategory(userId: number, transactionIds: number[], categoryId: number): Promise<number> {
+    if (transactionIds.length === 0) return 0;
+    const result = await db.update(transactions)
+      .set({ categoryId })
+      .where(and(
+        eq(transactions.userId, userId),
+        inArray(transactions.id, transactionIds)
+      ))
+      .returning({ id: transactions.id });
+    return result.length;
   }
 
   async deleteTransaction(id: number): Promise<boolean> {
