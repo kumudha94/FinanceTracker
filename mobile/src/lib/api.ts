@@ -1,7 +1,7 @@
-import type { 
-  Account, Category, Transaction, Budget, ScheduledPayment, 
+import type {
+  Account, Category, Transaction, Budget, ScheduledPayment,
   User, DashboardData, DashboardSummary, NextMonthForecast, ForecastItemType, InsertAccount, InsertTransaction,
-  InsertBudget, InsertScheduledPayment, PaymentOccurrence,
+  InsertBudget, InsertScheduledPayment, PaymentOccurrence, PaymentOccurrencesCycleResponse,
   SavingsGoal, SavingsContribution, InsertSavingsGoal, InsertSavingsContribution,
   SalaryProfile, SalaryCycle, InsertSalaryProfile,
   Loan, LoanInstallment, InsertLoan, LoanBtAllocation, LoanSpendingEntry, InsertLoanSpendingEntry,
@@ -346,12 +346,16 @@ export const api = {
   getScheduledPaymentBillingAmount: (id: number) => 
     apiRequest<{ calculatedAmount: string; cycleStart: string; cycleEnd: string; cycleLabel: string; transactionCount: number }>(`/api/scheduled-payments/${id}/billing-amount`),
   
-  getPaymentOccurrences: (month: number, year: number) => 
+  getPaymentOccurrences: (month: number, year: number) =>
     apiRequest<any[]>(`/api/payment-occurrences?month=${month}&year=${year}`),
-  generatePaymentOccurrences: (month: number, year: number) => 
-    apiRequest<any>('/api/payment-occurrences/generate', { 
-      method: 'POST', 
-      body: JSON.stringify({ month, year }) 
+  getPaymentOccurrencesCycle: (anchorIso?: string) =>
+    apiRequest<PaymentOccurrencesCycleResponse>(
+      `/api/payment-occurrences/cycle${anchorIso ? `?anchor=${encodeURIComponent(anchorIso)}` : ''}`
+    ),
+  generatePaymentOccurrences: (month: number, year: number) =>
+    apiRequest<any>('/api/payment-occurrences/generate', {
+      method: 'POST',
+      body: JSON.stringify({ month, year })
     }),
   updatePaymentOccurrence: (id: number, data: { 
     status?: string; 

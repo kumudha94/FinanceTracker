@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { View, Text, ScrollView, StyleSheet, TouchableOpacity, ActivityIndicator, Switch, Modal, Platform, TextInput } from 'react-native';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
@@ -10,13 +10,11 @@ import { Swipeable } from 'react-native-gesture-handler';
 import { api } from '../lib/api';
 import { formatCurrency, getThemedColors } from '../lib/utils';
 import { MoreStackParamList } from '../../App';
-import type { ScheduledPayment, PaymentOccurrence, Category, Account } from '../lib/types';
+import type { ScheduledPayment, PaymentOccurrence, Category, Account, PaymentOccurrencesCycleResponse } from '../lib/types';
 import { useTheme } from '../contexts/ThemeContext';
 import { useSwipeSettings } from '../hooks/useSwipeSettings';
 
 type NavigationProp = NativeStackNavigationProp<MoreStackParamList>;
-
-const MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 
 // Stable reference so the "occurrences" useEffect dependency doesn't change on every
 // render while the query is still loading (a fresh [] literal would re-trigger the effect
@@ -55,8 +53,7 @@ export default function ScheduledPaymentsScreen() {
   const currentOpenSwipeable = useRef<number | null>(null);
   
   const [activeTab, setActiveTab] = useState<'checklist' | 'manage'>('checklist');
-  const [currentMonth, setCurrentMonth] = useState(new Date().getMonth() + 1);
-  const [currentYear, setCurrentYear] = useState(new Date().getFullYear());
+  const [cycleAnchor, setCycleAnchor] = useState(new Date());
 
   // Close all swipeables when screen comes into focus
   useFocusEffect(
@@ -98,10 +95,17 @@ export default function ScheduledPaymentsScreen() {
     queryFn: api.getAccounts,
   });
 
-  const { data: occurrences = EMPTY_OCCURRENCES, refetch: refetchOccurrences } = useQuery<PaymentOccurrence[]>({
-    queryKey: ['payment-occurrences', currentMonth, currentYear],
-    queryFn: () => api.getPaymentOccurrences(currentMonth, currentYear),
+  const { data: cycleData, isPending: isCyclePending, refetch: refetchOccurrences } = useQuery<PaymentOccurrencesCycleResponse>({
+    queryKey: ['payment-occurrences-cycle', cycleAnchor.toISOString()],
+    queryFn: () => api.getPaymentOccurrencesCycle(cycleAnchor.toISOString()),
+    // Keep showing the previous cycle's data (header, tab label, occurrences list)
+    // while the newly-requested cycle loads, instead of flashing to blank/wrong/false-empty.
+    // Every chevron press mints a brand-new query key (cycleAnchor changes), so without this
+    // the screen would flash on every single cycle navigation once payments (the other query
+    // gating `isLoading` below) is already cached.
+    placeholderData: keepPreviousData,
   });
+  const occurrences = cycleData?.occurrences ?? EMPTY_OCCURRENCES;
 
   // Refetch data when screen comes into focus
   useFocusEffect(
@@ -159,14 +163,7 @@ export default function ScheduledPaymentsScreen() {
     };
     
     fetchBillingAmounts();
-  }, [occurrences, currentMonth, currentYear]);
-
-  const generateOccurrencesMutation = useMutation({
-    mutationFn: () => api.generatePaymentOccurrences(currentMonth, currentYear),
-    onSuccess: () => {
-      refetchOccurrences();
-    },
-  });
+  }, [occurrences, cycleAnchor]);
 
   const updateOccurrenceMutation = useMutation({
     mutationFn: async ({ id, status, occurrence, affectTransaction, affectAccountBalance }: { 
@@ -358,12 +355,6 @@ export default function ScheduledPaymentsScreen() {
     },
   });
 
-  useEffect(() => {
-    if (payments && payments.length > 0) {
-      generateOccurrencesMutation.mutate();
-    }
-  }, [payments?.length, currentMonth, currentYear]);
-
   const handleDelete = (payment: ScheduledPayment) => {
     setPaymentToDelete(payment);
     setShowDeleteModal(true);
@@ -545,21 +536,15 @@ export default function ScheduledPaymentsScreen() {
     });
   };
 
-  const goToPreviousMonth = () => {
-    if (currentMonth === 1) {
-      setCurrentMonth(12);
-      setCurrentYear(currentYear - 1);
-    } else {
-      setCurrentMonth(currentMonth - 1);
+  const goToPreviousCycle = () => {
+    if (cycleData?.prevAnchor) {
+      setCycleAnchor(new Date(cycleData.prevAnchor));
     }
   };
 
-  const goToNextMonth = () => {
-    if (currentMonth === 12) {
-      setCurrentMonth(1);
-      setCurrentYear(currentYear + 1);
-    } else {
-      setCurrentMonth(currentMonth + 1);
+  const goToNextCycle = () => {
+    if (cycleData?.nextAnchor) {
+      setCycleAnchor(new Date(cycleData.nextAnchor));
     }
   };
 
@@ -656,7 +641,7 @@ export default function ScheduledPaymentsScreen() {
           onPress={() => setActiveTab('checklist')}
         >
           <Text style={[styles.tabText, { color: activeTab === 'checklist' ? colors.primary : colors.textMuted }]}>
-            This Month ({activePayments.length}) active
+            {cycleData?.isSalaryCycle ? 'This Cycle' : 'This Month'} ({activePayments.length}) active
           </Text>
         </TouchableOpacity>
         <TouchableOpacity
@@ -674,13 +659,13 @@ export default function ScheduledPaymentsScreen() {
           <View style={styles.tabContent}>
             {/* Month Navigation */}
             <View style={styles.monthNav}>
-              <TouchableOpacity onPress={goToPreviousMonth} style={styles.monthNavButton}>
+              <TouchableOpacity onPress={goToPreviousCycle} style={styles.monthNavButton}>
                 <Ionicons name="chevron-back" size={24} color={colors.text} />
               </TouchableOpacity>
               <Text style={[styles.monthText, { color: colors.text }]}>
-                {MONTH_NAMES[currentMonth - 1]} {currentYear}
+                {cycleData?.cycleLabel ?? ''}
               </Text>
-              <TouchableOpacity onPress={goToNextMonth} style={styles.monthNavButton}>
+              <TouchableOpacity onPress={goToNextCycle} style={styles.monthNavButton}>
                 <Ionicons name="chevron-forward" size={24} color={colors.text} />
               </TouchableOpacity>
             </View>
@@ -705,16 +690,29 @@ export default function ScheduledPaymentsScreen() {
 
             {/* Checklist */}
             {occurrences.length === 0 ? (
-              <View style={[styles.emptyCard, { backgroundColor: colors.card }]}>
-                <Ionicons name="time-outline" size={48} color={colors.textMuted} />
-                <Text style={[styles.emptyText, { color: colors.text }]}>No payments due this month</Text>
-                <TouchableOpacity
-                  style={[styles.generateButton, { borderColor: colors.border }]}
-                  onPress={() => generateOccurrencesMutation.mutate()}
-                >
-                  <Text style={[styles.generateButtonText, { color: colors.text }]}>Generate Checklist</Text>
-                </TouchableOpacity>
-              </View>
+              isCyclePending ? (
+                // A genuinely fresh (never-yet-loaded) cycle is still in flight — there's no
+                // previous cycle's data to fall back on via placeholderData, so show a loading
+                // state instead of a false "No payments due" empty state. This does NOT fire
+                // during ordinary in-place refetches (e.g. after marking something paid) since
+                // those reuse the same query key and already have data, so isPending is false.
+                <View style={[styles.emptyCard, { backgroundColor: colors.card }]}>
+                  <ActivityIndicator size="small" color={colors.primary} />
+                </View>
+              ) : (
+                <View style={[styles.emptyCard, { backgroundColor: colors.card }]}>
+                  <Ionicons name="time-outline" size={48} color={colors.textMuted} />
+                  <Text style={[styles.emptyText, { color: colors.text }]}>
+                    No payments due {cycleData?.isSalaryCycle ? 'this cycle' : 'this month'}
+                  </Text>
+                  <TouchableOpacity
+                    style={[styles.generateButton, { borderColor: colors.border }]}
+                    onPress={() => refetchOccurrences()}
+                  >
+                    <Text style={[styles.generateButtonText, { color: colors.text }]}>Refresh</Text>
+                  </TouchableOpacity>
+                </View>
+              )
             ) : (
               occurrences.map((occurrence) => {
                 const payment = occurrence.scheduledPayment;

@@ -27,7 +27,7 @@ import { suggestCategory, parseSmsMessage, parseStatementPDF, ExtractedTransacti
 import { deriveInstitutionKey, parseDueSms } from "./smsParser";
 import multer from "multer";
 // pdf-parse is imported dynamically at usage site to avoid pdfjs-dist crashing on startup
-import { getPaydayForMonth, getNextPaydays, getPastPaydays, getCurrentCycleDates, getNextCycleDates, getCyclePrimaryMonth, findOccurrenceInCycle } from "./salaryUtils";
+import { getPaydayForMonth, getNextPaydays, getPastPaydays, getCurrentCycleDates, getNextCycleDates, getCyclePrimaryMonth, findOccurrenceInCycle, getSpannedMonths, filterOccurrencesInCycle } from "./salaryUtils";
 import { validateNewSpendingEntry } from "./loanSpendingValidation";
 import { generateOTP, storeOTP, verifyOTP, sendOTP } from "./emailService";
 import { generateTokenPair, generateAccessToken } from "./jwtService";
@@ -48,6 +48,20 @@ const upload = multer({
     }
   }
 });
+
+// Mirrors the unexported `resolveLastPayDate` helper in salaryUtils.ts (used internally by
+// calcSalaryCycleDates): resolves a recorded salary cycle's real pay date, preferring the
+// actual pay date over the expected one. Replicated locally (rather than exporting the
+// original) so the /api/payment-occurrences/cycle route below can select which recorded
+// cycle applies to an arbitrary anchor date without touching the shared salaryUtils
+// internals used by other endpoints (dashboard-summary, next-month-forecast) that only ever
+// call getCurrentCycleDates with `now = new Date()`.
+function resolveCycleLastPayDate(salaryCycle: any | null): Date | null {
+  if (!salaryCycle) return null;
+  if (salaryCycle.actualPayDate) return new Date(salaryCycle.actualPayDate);
+  if (salaryCycle.expectedPayDate) return new Date(salaryCycle.expectedPayDate);
+  return null;
+}
 
 export async function registerRoutes(app: Express): Promise<Server> {
   // Seed default categories on startup
@@ -1208,6 +1222,67 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(occurrences);
     } catch (error) {
       res.status(500).json({ error: "Failed to fetch payment occurrences" });
+    }
+  });
+
+  app.get("/api/payment-occurrences/cycle", authenticateToken, async (req, res) => {
+    try {
+      const userId = req.user!.userId;
+      const { anchor } = req.query;
+      const anchorDate = anchor ? new Date(anchor as string) : new Date();
+      if (isNaN(anchorDate.getTime())) {
+        return res.status(400).json({ error: "Invalid anchor date" });
+      }
+
+      const salaryProfile = await storage.getSalaryProfile(userId);
+      let lastSalaryCycle = null;
+      if (salaryProfile) {
+        // Fetch enough history (not just the single newest cycle) so we can pick the
+        // recorded cycle that actually applies to `anchorDate`, rather than always using
+        // the newest one regardless of which cycle page the user is paging to. Using the
+        // wrong recorded cycle's actual pay date (which can diverge from what the payday
+        // rule alone would predict) causes adjacent cycle pages to overlap. 24 cycles is
+        // ~2 years of history, more than enough for a personal finance app.
+        const recentCycles = await storage.getSalaryCycles(salaryProfile.id, 24);
+        // recentCycles is ordered newest-first (desc year, desc month); pick the first
+        // (most recent) one whose resolved pay date is on/before the anchor.
+        lastSalaryCycle = recentCycles.find((c) => {
+          const resolved = resolveCycleLastPayDate(c);
+          return resolved !== null && resolved.getTime() <= anchorDate.getTime();
+        }) ?? null;
+      }
+
+      const cycle = getCurrentCycleDates(salaryProfile, lastSalaryCycle, anchorDate);
+      const spannedMonths = getSpannedMonths(cycle.cycleStart, cycle.cycleEnd);
+
+      for (const { month, year } of spannedMonths) {
+        await storage.generatePaymentOccurrencesForMonth(month, year, userId);
+      }
+
+      const occurrenceLists = await Promise.all(
+        spannedMonths.map(({ month, year }) =>
+          storage.getPaymentOccurrences({ userId, month, year })
+        )
+      );
+      const allOccurrences = occurrenceLists.flat();
+      const inCycle = filterOccurrencesInCycle(allOccurrences, cycle.cycleStart, cycle.cycleEnd);
+
+      const prevAnchor = new Date(cycle.cycleStart.getTime() - 1000);
+      const nextAnchor = new Date(cycle.cycleEnd.getTime() + 1000);
+
+      res.json({
+        occurrences: inCycle,
+        cycleStart: cycle.cycleStart,
+        cycleEnd: cycle.cycleEnd,
+        cycleLabel: cycle.cycleLabel,
+        cycleStartFormatted: cycle.cycleStartFormatted,
+        cycleEndFormatted: cycle.cycleEndFormatted,
+        isSalaryCycle: cycle.isSalaryCycle,
+        prevAnchor: prevAnchor.toISOString(),
+        nextAnchor: nextAnchor.toISOString(),
+      });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch payment occurrences for cycle" });
     }
   });
 

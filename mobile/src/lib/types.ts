@@ -191,6 +191,18 @@ export interface CycleInfo {
   isSalaryCycle: boolean;
 }
 
+export interface PaymentOccurrencesCycleResponse {
+  occurrences: PaymentOccurrence[];
+  cycleStart: string;
+  cycleEnd: string;
+  cycleLabel: string;
+  cycleStartFormatted: string;
+  cycleEndFormatted: string;
+  isSalaryCycle: boolean;
+  prevAnchor: string;
+  nextAnchor: string;
+}
+
 export interface DashboardSummary {
   monthLabel: string;
   totalIncome: number;

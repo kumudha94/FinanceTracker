@@ -353,6 +353,19 @@ export function getCyclePrimaryMonth(cycleStart: Date, cycleEnd: Date): { month:
 }
 
 /**
+ * Return the distinct calendar {month, year} pairs a cycle's date range touches,
+ * in chronological order. A cycle normally spans one or two calendar months.
+ */
+export function getSpannedMonths(cycleStart: Date, cycleEnd: Date): { month: number; year: number }[] {
+  const start = { month: cycleStart.getMonth() + 1, year: cycleStart.getFullYear() };
+  const end = { month: cycleEnd.getMonth() + 1, year: cycleEnd.getFullYear() };
+  if (start.month === end.month && start.year === end.year) {
+    return [start];
+  }
+  return [start, end];
+}
+
+/**
  * Find the payment occurrence that belongs to a given cycle by its actual dueDate, rather than
  * by an exact {month, year} bucket match. Occurrences can be created under a different month
  * bucket than the cycle's primary month (e.g. the Scheduled Payments checklist buckets by plain
@@ -370,6 +383,21 @@ export function findOccurrenceInCycle<T extends { dueDate: Date; createdAt?: Dat
   return inRange.reduce((latest, current) =>
     (current.createdAt ?? current.dueDate) > (latest.createdAt ?? latest.dueDate) ? current : latest
   );
+}
+
+/**
+ * Return every occurrence whose dueDate falls within [cycleStart, cycleEnd], inclusive.
+ * Unlike findOccurrenceInCycle (which picks one "latest" match per scheduled payment for
+ * the Dashboard's isPaid lookup), this keeps all matches — a day-interval payment can have
+ * more than one occurrence due inside a single ~30-day cycle, and a checklist screen should
+ * list every one of them.
+ */
+export function filterOccurrencesInCycle<T extends { dueDate: Date }>(
+  occurrences: T[],
+  cycleStart: Date,
+  cycleEnd: Date
+): T[] {
+  return occurrences.filter(o => o.dueDate >= cycleStart && o.dueDate <= cycleEnd);
 }
 
 /**
