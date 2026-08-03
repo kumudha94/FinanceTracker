@@ -3777,6 +3777,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // ========== SMS Log Retention Cleanup ==========
+  app.get("/api/sms-logs/cleanup-preview", authenticateToken, async (req, res) => {
+    try {
+      const userId = req.user!.userId;
+      const preview = await storage.getSmsLogsCleanupPreview(userId);
+      res.json(preview);
+    } catch (error) {
+      console.error("Error fetching sms logs cleanup preview:", error);
+      res.status(500).json({ error: "Failed to fetch cleanup preview" });
+    }
+  });
+
+  app.post("/api/sms-logs/cleanup", authenticateToken, async (req, res) => {
+    try {
+      const userId = req.user!.userId;
+      const deletedCount = await storage.deleteEligibleSmsLogs(userId);
+      res.json({ deletedCount });
+    } catch (error) {
+      console.error("Error cleaning up sms logs:", error);
+      res.status(500).json({ error: "Failed to clean up sms logs" });
+    }
+  });
+
   // ========== Institution Mapping Review ==========
   // Re-parses every queued SMS for a now-resolved institution and creates the real
   // transactions against the chosen account, in receivedAt order.
