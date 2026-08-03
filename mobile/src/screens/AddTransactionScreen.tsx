@@ -6,7 +6,7 @@ import { Ionicons } from '@expo/vector-icons';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import Toast from 'react-native-toast-message';
 import { api } from '../lib/api';
-import { getThemedColors } from '../lib/utils';
+import { getThemedColors, formatDate, formatCurrency } from '../lib/utils';
 import type { Category, Account, Transaction } from '../lib/types';
 import { RootStackParamList } from '../../App';
 import React from 'react';
@@ -580,6 +580,118 @@ export default function AddTransactionScreen() {
           </View>
         </View>
       </Modal>
+
+      <Modal
+        visible={showMerchantMatchModal}
+        animationType="fade"
+        transparent={true}
+        onRequestClose={() => {}}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContent, { backgroundColor: colors.background }]}>
+            <Text style={[styles.matchModalSuccessTitle, { color: colors.success }]}>
+              Transaction is updated successfully!
+            </Text>
+            <Text style={[styles.modalDescription, { color: colors.text }]}>
+              Select other transactions from "{merchant}" you'd like to update to{' '}
+              {categories?.find(c => c.id === selectedCategoryId)?.name || 'this category'}
+            </Text>
+
+            <TouchableOpacity
+              onPress={() => setSelectedMatchIds(
+                selectedMatchIds.size === merchantMatches.length ? new Set() : new Set(merchantMatches.map(m => m.id))
+              )}
+            >
+              <Text style={[styles.matchDeselectAll, { color: colors.primary }]}>
+                {selectedMatchIds.size === merchantMatches.length ? 'DE-SELECT ALL' : 'SELECT ALL'}
+              </Text>
+            </TouchableOpacity>
+
+            <ScrollView style={styles.matchList}>
+              {merchantMatches.map((m) => {
+                const isSelected = selectedMatchIds.has(m.id);
+                return (
+                  <TouchableOpacity
+                    key={m.id}
+                    style={styles.matchRow}
+                    onPress={() => {
+                      setSelectedMatchIds(prev => {
+                        const next = new Set(prev);
+                        if (next.has(m.id)) {
+                          next.delete(m.id);
+                        } else {
+                          next.add(m.id);
+                        }
+                        return next;
+                      });
+                    }}
+                  >
+                    <Ionicons
+                      name={isSelected ? 'checkbox' : 'square-outline'}
+                      size={22}
+                      color={isSelected ? colors.primary : colors.textMuted}
+                      style={{ marginRight: 12 }}
+                    />
+                    <View style={styles.matchRowInfo}>
+                      <Text style={[styles.matchRowName, { color: colors.text }]} numberOfLines={1}>
+                        {m.merchant}
+                      </Text>
+                      <Text style={[styles.matchRowMeta, { color: colors.textMuted }]}>
+                        {formatDate(m.transactionDate)}
+                        {m.account?.name ? ` · ${m.account.name}` : m.account?.accountNumber ? ` · ****${m.account.accountNumber}` : ''}
+                      </Text>
+                    </View>
+                    <Text style={[styles.matchRowAmt, { color: colors.text }]}>
+                      {formatCurrency(m.amount)}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+
+            <View style={styles.matchModalFooter}>
+              <TouchableOpacity
+                style={[styles.matchModalButton, styles.matchModalButtonOutline, { borderColor: colors.border }]}
+                onPress={() => {
+                  setShowMerchantMatchModal(false);
+                  navigation.goBack();
+                  Toast.show({
+                    type: 'success',
+                    text1: 'Transaction Updated',
+                    text2: 'Transaction has been updated successfully',
+                    position: 'bottom',
+                  });
+                }}
+              >
+                <Text style={[styles.matchModalButtonText, { color: colors.text }]}>NO</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.matchModalButton, { backgroundColor: colors.primary }]}
+                onPress={() => {
+                  if (selectedMatchIds.size === 0 || !selectedCategoryId) {
+                    setShowMerchantMatchModal(false);
+                    navigation.goBack();
+                    Toast.show({
+                      type: 'success',
+                      text1: 'Transaction Updated',
+                      text2: 'Transaction has been updated successfully',
+                      position: 'bottom',
+                    });
+                    return;
+                  }
+                  bulkCategoryMutation.mutate({ ids: Array.from(selectedMatchIds), categoryId: selectedCategoryId });
+                }}
+              >
+                {bulkCategoryMutation.isPending ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <Text style={[styles.matchModalButtonText, { color: '#fff' }]}>YES</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </ScrollView>
   );
 }
@@ -779,5 +891,60 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontSize: 16,
     fontWeight: '600',
+  },
+  matchModalSuccessTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    marginBottom: 12,
+    textAlign: 'center',
+  },
+  matchDeselectAll: {
+    fontSize: 13,
+    fontWeight: '600',
+    marginBottom: 12,
+  },
+  matchList: {
+    maxHeight: 320,
+    marginBottom: 16,
+  },
+  matchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(0,0,0,0.05)',
+  },
+  matchRowInfo: {
+    flex: 1,
+  },
+  matchRowName: {
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  matchRowMeta: {
+    fontSize: 12,
+    marginTop: 2,
+  },
+  matchRowAmt: {
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  matchModalFooter: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  matchModalButton: {
+    flex: 1,
+    padding: 14,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  matchModalButtonOutline: {
+    borderWidth: 1,
+  },
+  matchModalButtonText: {
+    fontSize: 16,
+    fontWeight: '700',
   },
 });
