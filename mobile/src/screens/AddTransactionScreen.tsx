@@ -164,6 +164,24 @@ export default function AddTransactionScreen() {
     },
   });
 
+  const bulkCategoryMutation = useMutation({
+    mutationFn: ({ ids, categoryId }: { ids: number[]; categoryId: number }) =>
+      api.bulkUpdateTransactionCategory(ids, categoryId),
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/transactions'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/dashboard'] });
+      queryClient.invalidateQueries({ queryKey: ['categoryBreakdown'] });
+      setShowMerchantMatchModal(false);
+      navigation.goBack();
+      Toast.show({
+        type: 'success',
+        text1: 'Transaction Updated',
+        text2: 'Transaction has been updated successfully',
+        position: 'bottom',
+      });
+    },
+  });
+
   const handleParseSms = async () => {
     if (!smsText.trim()) {
       Alert.alert('Error', 'Please paste your bank SMS');
