@@ -7,7 +7,7 @@ import DateTimePicker from '@react-native-community/datetimepicker';
 import Toast from 'react-native-toast-message';
 import { api } from '../lib/api';
 import { getThemedColors } from '../lib/utils';
-import type { Category, Account } from '../lib/types';
+import type { Category, Account, Transaction } from '../lib/types';
 import { RootStackParamList } from '../../App';
 import React from 'react';
 import { useTheme } from '../contexts/ThemeContext';
@@ -28,6 +28,10 @@ export default function AddTransactionScreen() {
   const [merchant, setMerchant] = useState('');
   const [description, setDescription] = useState('');
   const [selectedCategoryId, setSelectedCategoryId] = useState<number | null>(null);
+  const [originalCategoryId, setOriginalCategoryId] = useState<number | null>(null);
+  const [merchantMatches, setMerchantMatches] = useState<Transaction[]>([]);
+  const [selectedMatchIds, setSelectedMatchIds] = useState<Set<number>>(new Set());
+  const [showMerchantMatchModal, setShowMerchantMatchModal] = useState(false);
   const [selectedAccountId, setSelectedAccountId] = useState<number | null>(null);
   const [selectedToAccountId, setSelectedToAccountId] = useState<number | null>(null);
   const [transactionDate, setTransactionDate] = useState(new Date());
@@ -76,6 +80,7 @@ export default function AddTransactionScreen() {
         setMerchant(transaction.merchant || '');
         setDescription(transaction.description || '');
         setSelectedCategoryId(transaction.categoryId || null);
+        setOriginalCategoryId(transaction.categoryId || null);
         setSelectedAccountId(transaction.accountId || null);
         setSelectedToAccountId(transaction.toAccountId || null);
         setTransactionDate(new Date(transaction.transactionDate));
