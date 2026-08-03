@@ -55,7 +55,7 @@ Confirm: ccybl.in/YESBNK/MAt7Sk1jgU -YES BANK LTD" System need to read this SMS,
 5. Next Cycle plan card - Add savings plan along with Scheduled Payment, Loan EMIs, Credit Card Bills with same +,_ symbol. so that if required user can add/remove plan. -  **Development completed | Deployed in prod | Test Success**
 6. I completed few scheduled payments for this cycle, it shows completed in Scheduled payment screen but pending in dashboard - current cycle - Bills tab - scheduled payments section. **Development completed | Deployed in prod | Test Success**
 7. Next Cycle Plan-> Credit card bills and Savings Plan allow user to click and edit the amount for each row.**New Priority:High1 | Development ?**
-8. Weeky Summary Notification or card - I will attach screenshot for reference when we dicuss about it **New Priority: Medium1 | Development NotStarted**
+8. Weeky Summary Notification or card - I will attach screenshot for reference when we dicuss about it **Development completed | Test Pending**
 
 ## Section:6. Screen Movement
 
