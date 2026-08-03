@@ -230,6 +230,18 @@ export interface DashboardSummary {
   cycleInfo?: CycleInfo;
 }
 
+export interface WeeklySummary {
+  weekStart: string;
+  weekEnd: string;
+  weekLabel: string;
+  income: number;
+  expense: number;
+  spentFromAccount: number;
+  spentFromCreditCard: number;
+  incomeChangePercent: number | null;
+  expenseChangePercent: number | null;
+}
+
 export interface NextMonthForecastItem {
   id: number | string; // auto-detected credit card bills use a synthetic string id ("cc-auto-<accountId>")
   name: string;
