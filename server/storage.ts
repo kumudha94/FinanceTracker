@@ -122,6 +122,8 @@ export interface IStorage {
   clearSmsLogTransaction(id: number): Promise<void>;
   getSmsLogsCleanupPreview(userId: number): Promise<{ count: number; oldestReceivedAt: Date | null; newestReceivedAt: Date | null }>;
   deleteEligibleSmsLogs(userId: number): Promise<number>;
+  getUserCount(): Promise<number>;
+  backfillSmsLogUserIds(userId: number): Promise<number>;
 
   // Sender Institution Mappings
   getSenderInstitutionMapping(userId: number, institutionKey: string): Promise<SenderInstitutionMapping | undefined>;
@@ -1350,6 +1352,21 @@ export class DatabaseStorage implements IStorage {
       .where(this.eligibleSmsLogsCondition(userId))
       .returning({ id: smsLogs.id });
     return deleted.length;
+  }
+
+  async getUserCount(): Promise<number> {
+    const [result] = await db.select({ count: sql<number>`count(*)` }).from(users);
+    return Number(result?.count || 0);
+  }
+
+  // One-time repair for sms_logs rows written before processSingleSms started stamping
+  // userId. Only ever fills in NULLs — an already-attributed row is never touched.
+  async backfillSmsLogUserIds(userId: number): Promise<number> {
+    const updated = await db.update(smsLogs)
+      .set({ userId })
+      .where(sql`${smsLogs.userId} IS NULL`)
+      .returning({ id: smsLogs.id });
+    return updated.length;
   }
 
   // Forecast Exclusions

@@ -188,12 +188,17 @@ export default function SettingsScreen() {
   };
 
   const handleSmsLogCleanup = async () => {
+    // Guards the preview round-trip too, so a rapid double-tap can't stack two alerts.
+    setIsCleaningUpSmsLogs(true);
     try {
       const preview = await api.getSmsLogsCleanupPreview();
       if (preview.count === 0) {
+        setIsCleaningUpSmsLogs(false);
         Alert.alert('Nothing to Clean Up', 'No SMS logs older than 12 months found.');
         return;
       }
+      // Re-enable while the confirm dialog is up — only the network wait should block.
+      setIsCleaningUpSmsLogs(false);
       Alert.alert(
         'Clean Up Old SMS Logs',
         `${preview.count} SMS log${preview.count === 1 ? '' : 's'} older than 12 months will be permanently deleted. This can't be undone.`,
@@ -217,6 +222,7 @@ export default function SettingsScreen() {
         ]
       );
     } catch (error: any) {
+      setIsCleaningUpSmsLogs(false);
       Alert.alert('Error', error.message || 'Failed to check SMS logs. Please try again.');
     }
   };
@@ -470,7 +476,7 @@ export default function SettingsScreen() {
       <Text style={[styles.sectionTitle, { color: colors.textMuted }]}>Danger Zone</Text>
       <View style={[styles.section, { backgroundColor: colors.card }]}>
         <TouchableOpacity
-          style={styles.settingRowButton}
+          style={[styles.settingRow, { borderBottomColor: colors.border }]}
           onPress={handleSmsLogCleanup}
           disabled={isCleaningUpSmsLogs}
         >

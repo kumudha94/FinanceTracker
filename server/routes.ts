@@ -3540,6 +3540,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       receivedAt: receivedAt || new Date().toISOString(),
       isParsed: false,
     };
+    // Every sms_logs row must carry its owning user, otherwise user-scoped queries
+    // (e.g. the retention cleanup) can never match it. `accounts` comes from
+    // storage.getAllAccounts() — in this single-user app every account belongs to the
+    // same user, so any account's userId is the right owner. Zero accounts is a
+    // degenerate bootstrap case: leave userId unset rather than guess.
+    if (accounts.length > 0) {
+      smsLogData.userId = accounts[0].userId;
+    }
     if (sender && typeof sender === 'string') {
       smsLogData.sender = sender;
     }
@@ -3797,6 +3805,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error cleaning up sms logs:", error);
       res.status(500).json({ error: "Failed to clean up sms logs" });
+    }
+  });
+
+  // One-time operational endpoint (no UI): attributes pre-existing sms_logs rows that were
+  // written with a NULL user_id to the single user of this app, so the retention cleanup
+  // above can actually see them. Refuses to run unless there is exactly one user, so it can
+  // never mis-attribute data if that assumption ever stops holding.
+  app.post("/api/sms-logs/backfill-user-id", authenticateToken, async (req, res) => {
+    try {
+      const userId = req.user!.userId;
+      const userCount = await storage.getUserCount();
+      if (userCount !== 1) {
+        return res.status(400).json({ error: `Refusing to backfill: expected exactly 1 user in the system, found ${userCount}. This backfill assumes single-user ownership and must not guess across multiple users.` });
+      }
+      const updated = await storage.backfillSmsLogUserIds(userId);
+      res.json({ updated });
+    } catch (error) {
+      console.error("Error backfilling sms log user ids:", error);
+      res.status(500).json({ error: "Failed to backfill sms log user ids" });
     }
   });
 
