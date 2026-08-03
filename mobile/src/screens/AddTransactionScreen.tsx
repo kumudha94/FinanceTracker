@@ -123,6 +123,29 @@ export default function AddTransactionScreen() {
       queryClient.invalidateQueries({ queryKey: ['/api/accounts'] });
       queryClient.invalidateQueries({ queryKey: ['/api/monthlyExpenses'] });
       queryClient.invalidateQueries({ queryKey: ['categoryBreakdown'] });
+
+      const merchantChanged = merchant.trim().length > 0;
+      const categoryChanged = selectedCategoryId !== originalCategoryId;
+
+      if (merchantChanged && categoryChanged && selectedCategoryId && transactions) {
+        const normalizedMerchant = merchant.trim().toLowerCase();
+        const matches = transactions
+          .filter((t: Transaction) =>
+            t.id !== transactionId &&
+            t.type === type &&
+            t.categoryId !== selectedCategoryId &&
+            (t.merchant || '').trim().toLowerCase() === normalizedMerchant
+          )
+          .sort((a, b) => new Date(b.transactionDate).getTime() - new Date(a.transactionDate).getTime());
+
+        if (matches.length > 0) {
+          setMerchantMatches(matches);
+          setSelectedMatchIds(new Set(matches.map(m => m.id)));
+          setShowMerchantMatchModal(true);
+          return;
+        }
+      }
+
       navigation.goBack();
       Toast.show({
         type: 'success',
