@@ -828,6 +828,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.patch("/api/transactions/bulk-category", authenticateToken, async (req, res) => {
+    try {
+      const userId = req.user!.userId;
+      const { transactionIds, categoryId } = req.body;
+
+      if (!Array.isArray(transactionIds) || transactionIds.length === 0) {
+        return res.status(400).json({ error: "transactionIds must be a non-empty array" });
+      }
+      if (!transactionIds.every((id: any) => typeof id === 'number' && Number.isInteger(id))) {
+        return res.status(400).json({ error: "transactionIds must contain only integers" });
+      }
+      if (typeof categoryId !== 'number' || !Number.isInteger(categoryId)) {
+        return res.status(400).json({ error: "categoryId must be an integer" });
+      }
+
+      const updatedCount = await storage.bulkUpdateTransactionCategory(userId, transactionIds, categoryId);
+      res.json({ updatedCount });
+    } catch (error: any) {
+      console.error("Error bulk-updating transaction category:", error);
+      res.status(400).json({ error: error.message || "Failed to bulk-update category" });
+    }
+  });
+
   app.patch("/api/transactions/:id", authenticateToken, async (req, res) => {
     try {
       const transactionId = parseInt(req.params.id);
