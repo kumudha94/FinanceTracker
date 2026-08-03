@@ -135,6 +135,7 @@ export default function DashboardScreen() {
       clearWhatIf();
       setOthersDrafts([]);
       queryClient.invalidateQueries({ queryKey: ['/api/dashboard-summary'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/dashboard/weekly-summary'] });
       queryClient.invalidateQueries({ queryKey: ['/api/next-month-forecast'] });
       queryClient.invalidateQueries({ queryKey: ['/api/salary-profile'] });
       queryClient.invalidateQueries({ queryKey: ['/api/savings-goals'] });
@@ -150,6 +151,7 @@ export default function DashboardScreen() {
     setRefreshing(true);
     await Promise.all([
       queryClient.refetchQueries({ queryKey: ['/api/dashboard-summary'] }),
+      queryClient.refetchQueries({ queryKey: ['/api/dashboard/weekly-summary'] }),
       queryClient.refetchQueries({ queryKey: ['/api/next-month-forecast'] }),
       queryClient.refetchQueries({ queryKey: ['/api/savings-goals'] }),
       queryClient.refetchQueries({ queryKey: ['/api/institution-mappings/pending'] }),
