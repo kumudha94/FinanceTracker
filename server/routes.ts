@@ -2737,8 +2737,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
           }
           case 'one_time': {
             if (startMonth) {
-              const createdYear = (payment.createdAt instanceof Date ? payment.createdAt : new Date(payment.createdAt)).getFullYear();
-              return nextMonth === startMonth && nextYear === createdYear;
+              const created = payment.createdAt instanceof Date ? payment.createdAt : new Date(payment.createdAt);
+              const targetYear = startMonth >= created.getMonth() + 1
+                ? created.getFullYear()
+                : created.getFullYear() + 1;
+              return nextMonth === startMonth && nextYear === targetYear;
             }
             return false;
           }

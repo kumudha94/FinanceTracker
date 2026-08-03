@@ -56,6 +56,7 @@ export default function DashboardScreen() {
   const [othersDrafts, setOthersDrafts] = useState<OthersDraft[]>([]);
   const [othersNameInput, setOthersNameInput] = useState('');
   const [othersAmountInput, setOthersAmountInput] = useState('');
+  const [savingDraftId, setSavingDraftId] = useState<string | null>(null);
 
   const { data: summary, isLoading } = useQuery({
     queryKey: ['/api/dashboard-summary'],
@@ -473,7 +474,12 @@ export default function DashboardScreen() {
         -{formatCurrency(draft.amount)}
       </Text>
       <TouchableOpacity
-        onPress={() => saveOthersDraftMutation.mutate(draft)}
+        onPress={() => {
+          if (savingDraftId) return;
+          setSavingDraftId(draft.id);
+          saveOthersDraftMutation.mutate(draft, { onSettled: () => setSavingDraftId(null) });
+        }}
+        disabled={savingDraftId === draft.id}
         hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
         style={styles.forecastToggleBtn}
       >
