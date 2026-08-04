@@ -57,9 +57,11 @@ Confirm: ccybl.in/YESBNK/MAt7Sk1jgU -YES BANK LTD" System need to read this SMS,
 5. Next Cycle plan card - Add savings plan along with Scheduled Payment, Loan EMIs, Credit Card Bills with same +,_ symbol. so that if required user can add/remove plan. -  **Development completed | Deployed in prod | Test Success**
 6. I completed few scheduled payments for this cycle, it shows completed in Scheduled payment screen but pending in dashboard - current cycle - Bills tab - scheduled payments section. **Development completed | Deployed in prod | Test Success**
 7. Next Cycle Plan-> Credit card bills and Savings Plan allow user to click and edit the amount for each row.**Development completed | Deployed in prod | Test Success**
-8. Weeky Summary Notification or card - I will attach screenshot for reference when we dicuss about it. No need for notification like this but need some card in dashboard screen with stats like, Weekly income, expense, how much spent from account, credit card, 12% more than last week thses kind of small info. **Development completed | Test Pending**
+8. Weeky Summary Notification or card - I will attach screenshot for reference when we dicuss about it. No need for notification like this but need some card in dashboard screen with stats like, Weekly income, expense, how much spent from account, credit card, 12% more than last week thses kind of small info. **Development completed | Deployed in prod | Test Success**
 9. + and - symbol in Next cycle plan -> credit card bills + Savings Plan + Others -> once user clicked + or - symbol it is taking few sec to do the calculation, so inbetween user is clicking it multiple time, so show loading symbol till the calculations done and show other button. **Development completed | Deployed in prod | Test Success**
 10. remove + Symbol form the Dashboard screen which helps redirect to *Add Transaction*. **Development completed | Deployed in prod | Test Success**
+11. Manage option in Loans & EMI card is not working. Expectation is it should redirect the user to Loans list screen**New Priority:Low | Development NotStarted**
+12. Quick Actions buttons is not working - All Payments, Loans, Insurance, Saving card not properly redirecting.**New Priority:Low | Development NotStarted**
 
 ## Section:6. Screen Movement
 
@@ -68,6 +70,7 @@ Confirm: ccybl.in/YESBNK/MAt7Sk1jgU -YES BANK LTD" System need to read this SMS,
 ## Section:7. Loan Screen
 
 1. When a user adds a loan, display a *Spending Breakdown* icon on both the *Loan Details* and *Edit Loan* screens. Clicking the icon should open a popup or side panel where the user can record how the received loan amount was spent. The popup should display the *Loan Amount* (read-only) and allow the user to enter the *Received Amount*, which may be lower than the loan amount due to deductions such as processing fees (e.g., Loan Amount: ₹8,00,000, Received Amount: ₹7,92,000). The user should be able to add multiple spending entries using *Add* and *Delete* actions, with each entry containing an *Amount* and an optional *Reason/Notes* for future reference. The only validation required is that the total of all spending amounts must not exceed the *Received Amount*. It is not mandatory for the user to account for the entire received amount, so partial spending entries are allowed.- **Development completed | Deployed in prod | Test Success**
+2. Issue: Regenerate Installment only generates future month, if my emi date is 4 and today's date is 4 means it has to generate for this month also, but currently it is neglecting.**Development completed | Deployment Pending**
 
 ## Section:8. General
 
@@ -85,7 +88,7 @@ Confirm: ccybl.in/YESBNK/MAt7Sk1jgU -YES BANK LTD" System need to read this SMS,
 
    A save icon lets me keep an entry for future reference; if not saved, it's discarded. Resolved: "saved" means it becomes a real one-time scheduled payment reusing existing infra (shows under Scheduled Payments, gets the normal mark-paid/include-exclude flow) — the "Others" section itself never persists anything, it's a local scratchpad only. **Development completed | Deployed in prod | Test Success**
 6. auto-read bank sms should be enabled (mandatory), whenever app is opening, check the setting if it is disabled encourage the user to enable it by showing a popup **Development completed | Deployed in prod | Test Success**
-7. How old records will get archived / deleted in DB (may be old 6 month of records we can remove) or we can plan like 6 month main table then move to archieve, after 1 year delete. Plan this.**Development completed | Deployed in prod | Test Success**
+7. How old records will get archived / deleted in DB (may be old 6 month of records we can remove) or we can plan like 6 month main table then move to archieve, after 1 year delete. Plan this.**Development completed | Deployed in prod | Test Success** 
 
 ## Section:9. Settings
 
@@ -94,6 +97,8 @@ Confirm: ccybl.in/YESBNK/MAt7Sk1jgU -YES BANK LTD" System need to read this SMS,
 
 ## Section:10. Transaction
 
-1. If I update Category check the DB if the same merchant is available more than once, show the list to the user once confirmed update category for all the transaction from that merchant. I will show example screenshot.**Development completed | Test Pending**
+1. If I update Category check the DB if the same merchant is available more than once, show the list to the user once confirmed update category for all the transaction from that merchant. I will show example screenshot.**Development completed | Deployed in prod | Test Success**
 2. Export data is not working.**New Priority:Low | Development NotStarted**
 3. Delete account is not working.**New Priority:Low | Development NotStarted**
+
+## Section:11. Savings Goals

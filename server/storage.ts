@@ -2282,12 +2282,13 @@ export class DatabaseStorage implements IStorage {
     let remainingPrincipal = principal;
 
     // Determine the starting index based on whether current month should be included
-    // If today's date < EMI date in current month, include current month (start from i=0)
+    // If today's date <= EMI date in current month, include current month (start from i=0)
+    // Today itself is not "past" the EMI date, so it must still be included
     // Otherwise, start from next month (i=1)
     // This logic applies to both initial generation and regeneration
     const today = new Date();
     const currentDayOfMonth = today.getDate();
-    const shouldIncludeCurrentMonth = currentDayOfMonth < emiDay;
+    const shouldIncludeCurrentMonth = currentDayOfMonth <= emiDay;
     const startIndex = shouldIncludeCurrentMonth ? 0 : 1;
     
     // console.log('Current day:', currentDayOfMonth, 'EMI day:', emiDay, 
