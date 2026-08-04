@@ -323,9 +323,14 @@ export const api = {
   getTransactions: () => apiRequest<Transaction[]>('/api/transactions'),
   createTransaction: (data: InsertTransaction) => 
     apiRequest<Transaction>('/api/transactions', { method: 'POST', body: JSON.stringify(data) }),
-  updateTransaction: (id: number, data: Partial<InsertTransaction>) => 
+  updateTransaction: (id: number, data: Partial<InsertTransaction>) =>
     apiRequest<Transaction>(`/api/transactions/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
-  deleteTransaction: (id: number) => 
+  bulkUpdateTransactionCategory: (transactionIds: number[], categoryId: number) =>
+    apiRequest<{ updatedCount: number }>('/api/transactions/bulk-category', {
+      method: 'PATCH',
+      body: JSON.stringify({ transactionIds, categoryId }),
+    }),
+  deleteTransaction: (id: number) =>
     apiRequest<void>(`/api/transactions/${id}`, { method: 'DELETE' }),
   
   getBudgets: (month: number, year: number) => 
