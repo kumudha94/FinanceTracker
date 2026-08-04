@@ -7,9 +7,10 @@
 1. Others section (5.5) only lets me add ad-hoc *expense* entries — no way to plan ad-hoc *income* (freelance payment, refund, bonus, etc). Expenses can be saved as a one-time entry reusing the existing Scheduled Payments table, but there's no equivalent home for planned income anywhere in the schema today (salary_profiles is a single recurring configured salary, not ad-hoc; transactions only record things that already happened). Resolved design: a small new table just for this, e.g. `planned_income_entries` (id, userId, name, amount, expectedMonth, expectedYear, status) — mirroring scheduled_payments' shape but simpler (no frequency, no account/category linkage). Isolated from every existing table's meaning, so this needs a migration but not a rework of anything else. **New Priority:Least | Development NotStarted**
 2. We need to have below configuration
   > Week start and end day
-   > + test pay1 500
-   > + test pay2 500
-   > Others 5000 (+)
-   > + pay1 3000 (-)
-   > + pay2 2000 (-)   
-   
+
+## Section:2. Security
+
+1. Audit found (2026-08-04, during merchant-category-bulk-update work) that authorization is inconsistent across `server/routes.ts` `PATCH`/`DELETE .../:id` mutation routes — some resources check ownership correctly, others don't, and some skip auth entirely. Two distinct bug classes, same fix shape (fetch by id, compare to `req.user!.userId`, 404 on mismatch — the pattern already used correctly by `budgets`, `scheduled-payments`, `payment-occurrences`, `savings-contributions`, `salary-cycles`, `spending-entries`, and `cards` after a prior fix in commit `d0ee24f`):
+   - **No `authenticateToken` middleware at all** (reachable with zero credentials): `categories` (PATCH/DELETE), `loans` (PATCH/DELETE), `loan-payments` (PATCH/DELETE), `loan-components` (PATCH/DELETE), `loan-installments` (PATCH), `bt-allocations` (PATCH/DELETE), `insurances` (PATCH/DELETE).
+   - **Authenticated but no ownership check** (any logged-in user can edit/delete another user's row by guessing/enumerating a sequential id): `accounts` (PATCH/DELETE), `transactions` (PATCH/DELETE), `savings-goals` PATCH only (its sibling DELETE already checks correctly), `salary-profile` PATCH.
+   Fix is mechanical per-route but touches ~15 handlers across financial data (loans, insurance, accounts, transactions) — worth its own dedicated pass rather than folding into an unrelated feature branch. **New Priority:High | Development NotStarted**

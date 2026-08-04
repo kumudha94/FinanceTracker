@@ -8,7 +8,8 @@
 1. Few bill amount user may not be able to provide while creating a payment. For example Electricity bill. So we need to allow user to create record if amount is not provided. **Development completed | Deployed in prod | Test Success**
 2. Few bill dates are different, Let's take phone recharge usually they're providing 84d, 56d, 7d like that how can a user provide scheduled cycle here **Development completed | Deployed in prod | Test Success**
 3. Above "Every N Days" - App now knows this bill will be for every 84 days. but if we wanted to show in schduled payments (This Month(x) active tab) we need to know the last payment date like "Starting Month" in the current design (If user selects custom intercal in Payment Frequency we will show this field to understand from when we need to start tracking this scheduled payment if user selects Aug from aug every 2 months we will repeat this scheduled payment) likewise we need to know what is the starting date of this day wise plan. so that we can add N (84 days) then will come to know next payment date to show this payment in This Month(x) active tab. -  **Development completed | Deployed in prod | Test Success**
-4. Whole application revolve around Monthly Cycle start date from salary configuration. Main goal is how our application should track the finance calculations. but schduled payment along is working based on monthly basis like August 2026, July 2026. But expectation is since I selected same day as salary day option schduled payment should be that cycle as well July 29 salary creditted I mentioned so cycle should be 1 month from July 19. Why this is a problem, I got salary on July 29 and I am paying my donations and EMIs, credit card bills on July itself, since Aug 2026 is a new cycle here the transaction is not completed, so dashboard also we are showing pening. but in this cycle I completed (Paid) that amount, so I am unable to track it properly. **Development completed | Test Pending**
+4. Whole application revolve around Monthly Cycle start date from salary configuration. Main goal is how our application should track the finance calculations. but schduled payment along is working based on monthly basis like August 2026, July 2026. But expectation is since I selected same day as salary day option schduled payment should be that cycle as well July 29 salary creditted I mentioned so cycle should be 1 month from July 19. Why this is a problem, I got salary on July 29 and I am paying my donations and EMIs, credit card bills on July itself, since Aug 2026 is a new cycle here the transaction is not completed, so dashboard also we are showing pening. but in this cycle I completed (Paid) that amount, so I am unable to track it properly. **Development completed | Deployed in prod | Test Success**
+5. Issue: After marked credit card bill with proper amount expectation the amount should come, but it is maked as paid amount is still 0.00, Adding screenshot for reference **New Priority:Medium**
 
 ## Section:2. Insurance
 
@@ -18,7 +19,8 @@
 
 1. Sample Message: "Dear Customer, Your YES BANK Credit Card x2613 has dues of Rs. 9,629.90.
 Convert it into EMIs with no hidden charges.
-Confirm: ccybl.in/YESBNK/MAt7Sk1jgU -YES BANK LTD" System need to read this SMS, this nothing but a due for credit card, check against with our due amount if any issues found we need to update with whatever comes in the SMS. **Development completed | Deployed in prod | Test Pending**
+Confirm: ccybl.in/YESBNK/MAt7Sk1jgU -YES BANK LTD" System need to read this SMS, this nothing but a due for credit card, check against with our due amount if any issues found we need to update with whatever comes in the SMS. **Development completed | Deployed in prod | Test Failed** *below message is not properly coming in bill index menu*
+   > Dear KUMUDHA GLORY, your personal loan EMI of   63,897.00  for a/c 701***138103  is due on 04/08/26. Please ensure availability of funds - From VD-INDUSB-SS
 
 ## Section:4. Message Re-scan
 
@@ -54,10 +56,10 @@ Confirm: ccybl.in/YESBNK/MAt7Sk1jgU -YES BANK LTD" System need to read this SMS,
 4. Refer screenshot: In Current month card Bills section showing overdue. Consider Today's date July 29 Salary credit date and my scheduled payment from Bills section due is 1st of every month, so Aug 1 is in this cycle is not overdue it is pending. - **Development completed | Deployed in prod | Test Success**
 5. Next Cycle plan card - Add savings plan along with Scheduled Payment, Loan EMIs, Credit Card Bills with same +,_ symbol. so that if required user can add/remove plan. -  **Development completed | Deployed in prod | Test Success**
 6. I completed few scheduled payments for this cycle, it shows completed in Scheduled payment screen but pending in dashboard - current cycle - Bills tab - scheduled payments section. **Development completed | Deployed in prod | Test Success**
-7. Next Cycle Plan-> Credit card bills and Savings Plan allow user to click and edit the amount for each row.**Development completed | Test Pending**
-8. Weeky Summary Notification or card - I will attach screenshot for reference when we dicuss about it. No need for notification like this but need some card in dashboard screen with stats like, Weekly income, expense, how much spent from account, credit card, 12% more than last week thses kind of small info. **Development Inprogress**
-9. + and - symbol in Next cycle plan -> credit card bills + Savings Plan + Others -> once user clicked + or - symbol it is taking few sec to do the calculation, so inbetween user is clicking it multiple time, so show loading symbol till the calculations done and show other button. **Development completed | Test Pending**
-10. remove + Symbol form the Dashboard screen which helps redirect to *Add Transaction*. **Development completed | Test Pending**
+7. Next Cycle Plan-> Credit card bills and Savings Plan allow user to click and edit the amount for each row.**Development completed | Deployed in prod | Test Success**
+8. Weeky Summary Notification or card - I will attach screenshot for reference when we dicuss about it. No need for notification like this but need some card in dashboard screen with stats like, Weekly income, expense, how much spent from account, credit card, 12% more than last week thses kind of small info. **Development completed | Test Pending**
+9. + and - symbol in Next cycle plan -> credit card bills + Savings Plan + Others -> once user clicked + or - symbol it is taking few sec to do the calculation, so inbetween user is clicking it multiple time, so show loading symbol till the calculations done and show other button. **Development completed | Deployed in prod | Test Success**
+10. remove + Symbol form the Dashboard screen which helps redirect to *Add Transaction*. **Development completed | Deployed in prod | Test Success**
 
 ## Section:6. Screen Movement
 
@@ -81,15 +83,17 @@ Confirm: ccybl.in/YESBNK/MAt7Sk1jgU -YES BANK LTD" System need to read this SMS,
    > + pay1 3000 (-)
    > + pay2 2000 (-)
 
-   A save icon lets me keep an entry for future reference; if not saved, it's discarded. Resolved: "saved" means it becomes a real one-time scheduled payment reusing existing infra (shows under Scheduled Payments, gets the normal mark-paid/include-exclude flow) — the "Others" section itself never persists anything, it's a local scratchpad only. **Development completed | Test Pending**
-6. auto-read bank sms should be enabled (mandatory), whenever app is opening, check the setting if it is disabled encourage the user to enable it by showing a popup **Development completed | Test Pending**
-7. How old records will get archived / deleted in DB (may be old 6 month of records we can remove) or we can plan like 6 month main table then move to archieve, after 1 year delete. Plan this.**Development Inprogress**
+   A save icon lets me keep an entry for future reference; if not saved, it's discarded. Resolved: "saved" means it becomes a real one-time scheduled payment reusing existing infra (shows under Scheduled Payments, gets the normal mark-paid/include-exclude flow) — the "Others" section itself never persists anything, it's a local scratchpad only. **Development completed | Deployed in prod | Test Success**
+6. auto-read bank sms should be enabled (mandatory), whenever app is opening, check the setting if it is disabled encourage the user to enable it by showing a popup **Development completed | Deployed in prod | Test Success**
+7. How old records will get archived / deleted in DB (may be old 6 month of records we can remove) or we can plan like 6 month main table then move to archieve, after 1 year delete. Plan this.**Development completed | Deployed in prod | Test Success**
 
 ## Section:9. Settings
 
-1. Biometric Login not working.**Development completed | Test Pending**
-2. PIN set successful, but while opening the app, app is not asking user to enter the PIN for authentication. While setting and removing PIN options from setting there is a option with *Use Face ID* actually faceid is not enabled in my phone only bio metric is enabled, I don't know how we are showing this.**Development completed | Test Pending**
+1. Biometric Login not working.**Development completed | Deployed in prod | Test Failed**
+2. PIN set successful, but while opening the app, app is not asking user to enter the PIN for authentication. While setting and removing PIN options from setting there is a option with *Use Face ID* actually faceid is not enabled in my phone only bio metric is enabled, I don't know how we are showing this.**Development completed | Deployed in prod | Test Failed**
 
 ## Section:10. Transaction
 
-1. If I update Category check the DB if the same merchant is available more than once, show the list to the user once confirmed update category for all the transaction from that merchant. I will show example screenshot.**New Priority:High | Development NotStarted**
+1. If I update Category check the DB if the same merchant is available more than once, show the list to the user once confirmed update category for all the transaction from that merchant. I will show example screenshot.**Development completed | Test Pending**
+2. Export data is not working.**New Priority:Low | Development NotStarted**
+3. Delete account is not working.**New Priority:Low | Development NotStarted**
