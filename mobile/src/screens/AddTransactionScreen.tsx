@@ -681,6 +681,7 @@ export default function AddTransactionScreen() {
                   }
                   bulkCategoryMutation.mutate({ ids: Array.from(selectedMatchIds), categoryId: selectedCategoryId });
                 }}
+                disabled={bulkCategoryMutation.isPending}
               >
                 {bulkCategoryMutation.isPending ? (
                   <ActivityIndicator color="#fff" />
