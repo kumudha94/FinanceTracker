@@ -3,7 +3,7 @@ import {
   paymentOccurrences, savingsGoals, savingsContributions, salaryProfiles, salaryCycles,
   loans, loanComponents, loanInstallments, loanSpendingEntries, loanTerms, loanPayments, loanBtAllocations, cardDetails,
   insurances, insurancePremiums, creditCardStatements, senderInstitutionMappings, billSenderMappings,
-  forecastExclusions,
+  forecastExclusions, smsPaymentMatchReviews, smsPaymentMatchCandidates,
   type User, type InsertUser,
   type Account, type InsertAccount,
   type Category, type InsertCategory,
@@ -30,12 +30,29 @@ import {
   type SenderInstitutionMapping, type InsertSenderInstitutionMapping,
   type BillSenderMapping, type InsertBillSenderMapping,
   type ForecastExclusion, type InsertForecastExclusion,
+  type SmsPaymentMatchReview, type InsertSmsPaymentMatchReview,
+  type SmsPaymentMatchCandidate, type InsertSmsPaymentMatchCandidate,
   type DashboardStats,
   DEFAULT_CATEGORIES
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, and, gte, lte, lt, desc, sql, ilike, or, inArray } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
+
+// A pending loan installment / insurance premium / scheduled payment occurrence that matched a
+// debited SMS on amount + keyword + due-date window, found by findAutoMarkCandidates. itemId is
+// the pending-item row's own id (loanInstallments.id / insurancePremiums.id / paymentOccurrences.id),
+// not the parent loan/insurance/scheduledPayment id.
+export type AutoMarkCandidate = {
+  itemType: 'loan' | 'insurance' | 'scheduled_payment';
+  itemId: number;
+  itemName: string;
+  dueDate: Date;
+};
+
+// How far (in days, either direction) a debited SMS's date can be from a pending item's due date
+// and still be considered for auto-mark-as-paid matching.
+export const AUTO_MARK_DUE_DATE_WINDOW_DAYS = 7;
 
 export interface IStorage {
   // Users
@@ -145,6 +162,14 @@ export interface IStorage {
   // Forecast Exclusions
   getForecastExclusions(userId: number, cycleStart: Date): Promise<ForecastExclusion[]>;
   toggleForecastExclusion(userId: number, itemType: string, itemId: string, cycleStart: Date): Promise<{ excluded: boolean }>;
+
+  // SMS Auto-Mark-Paid Matching
+  findAutoMarkCandidates(amount: string, messageText: string, referenceDate: Date): Promise<AutoMarkCandidate[]>;
+  createSmsPaymentMatchReview(review: InsertSmsPaymentMatchReview, candidates: Omit<InsertSmsPaymentMatchCandidate, 'reviewId'>[]): Promise<SmsPaymentMatchReview>;
+  getPendingSmsPaymentMatchReviews(userId: number): Promise<(SmsPaymentMatchReview & { candidates: SmsPaymentMatchCandidate[] })[]>;
+  getSmsPaymentMatchReview(id: number): Promise<(SmsPaymentMatchReview & { candidates: SmsPaymentMatchCandidate[] }) | undefined>;
+  resolveSmsPaymentMatchReview(id: number, itemType: string, itemId: number): Promise<SmsPaymentMatchReview | undefined>;
+  dismissSmsPaymentMatchReview(id: number): Promise<SmsPaymentMatchReview | undefined>;
 
   // Payment Occurrences
   getPaymentOccurrences(filters?: { userId?: number; month?: number; year?: number; scheduledPaymentId?: number }): Promise<(PaymentOccurrence & { scheduledPayment?: ScheduledPayment })[]>;
@@ -1407,6 +1432,136 @@ export class DatabaseStorage implements IStorage {
 
     await db.insert(forecastExclusions).values({ userId, itemType, itemId, cycleStart });
     return { excluded: true };
+  }
+
+  // SMS Auto-Mark-Paid Matching
+  async findAutoMarkCandidates(amount: string, messageText: string, referenceDate: Date): Promise<AutoMarkCandidate[]> {
+    const lowerMessage = messageText.toLowerCase();
+    const targetAmount = parseFloat(amount);
+    const windowStart = new Date(referenceDate.getTime() - AUTO_MARK_DUE_DATE_WINDOW_DAYS * 24 * 60 * 60 * 1000);
+    const windowEnd = new Date(referenceDate.getTime() + AUTO_MARK_DUE_DATE_WINDOW_DAYS * 24 * 60 * 60 * 1000);
+    const sameAmount = (value: string | null) => value !== null && Math.abs(parseFloat(value) - targetAmount) < 0.005;
+    const candidates: AutoMarkCandidate[] = [];
+
+    const loanRows = await db.select({
+      installmentId: loanInstallments.id,
+      dueDate: loanInstallments.dueDate,
+      emiAmount: loanInstallments.emiAmount,
+      loanName: loans.name,
+      keyword: loans.autoMarkKeyword,
+    })
+      .from(loanInstallments)
+      .innerJoin(loans, eq(loanInstallments.loanId, loans.id))
+      .where(and(
+        eq(loans.autoMarkPaidEnabled, true),
+        inArray(loanInstallments.status, ['pending', 'overdue']),
+        gte(loanInstallments.dueDate, windowStart),
+        lte(loanInstallments.dueDate, windowEnd),
+      ));
+    for (const row of loanRows) {
+      if (sameAmount(row.emiAmount) && row.keyword && lowerMessage.includes(row.keyword.toLowerCase())) {
+        candidates.push({ itemType: 'loan', itemId: row.installmentId, itemName: row.loanName, dueDate: row.dueDate });
+      }
+    }
+
+    const insuranceRows = await db.select({
+      premiumId: insurancePremiums.id,
+      dueDate: insurancePremiums.dueDate,
+      amount: insurancePremiums.amount,
+      insuranceName: insurances.name,
+      keyword: insurances.autoMarkKeyword,
+    })
+      .from(insurancePremiums)
+      .innerJoin(insurances, eq(insurancePremiums.insuranceId, insurances.id))
+      .where(and(
+        eq(insurances.autoMarkPaidEnabled, true),
+        inArray(insurancePremiums.status, ['pending', 'overdue']),
+        gte(insurancePremiums.dueDate, windowStart),
+        lte(insurancePremiums.dueDate, windowEnd),
+      ));
+    for (const row of insuranceRows) {
+      if (sameAmount(row.amount) && row.keyword && lowerMessage.includes(row.keyword.toLowerCase())) {
+        candidates.push({ itemType: 'insurance', itemId: row.premiumId, itemName: row.insuranceName, dueDate: row.dueDate });
+      }
+    }
+
+    const occurrenceRows = await db.select({
+      occurrenceId: paymentOccurrences.id,
+      dueDate: paymentOccurrences.dueDate,
+      occurrenceAmount: paymentOccurrences.amount,
+      paymentName: scheduledPayments.name,
+      paymentAmount: scheduledPayments.amount,
+      keyword: scheduledPayments.autoMarkKeyword,
+    })
+      .from(paymentOccurrences)
+      .innerJoin(scheduledPayments, eq(paymentOccurrences.scheduledPaymentId, scheduledPayments.id))
+      .where(and(
+        eq(scheduledPayments.autoMarkPaidEnabled, true),
+        eq(paymentOccurrences.status, 'pending'),
+        gte(paymentOccurrences.dueDate, windowStart),
+        lte(paymentOccurrences.dueDate, windowEnd),
+      ));
+    for (const row of occurrenceRows) {
+      // A cycle's own amount (set for variable-amount bills) overrides the schedule's default.
+      const effectiveAmount = row.occurrenceAmount ?? row.paymentAmount;
+      if (sameAmount(effectiveAmount) && row.keyword && lowerMessage.includes(row.keyword.toLowerCase())) {
+        candidates.push({ itemType: 'scheduled_payment', itemId: row.occurrenceId, itemName: row.paymentName, dueDate: row.dueDate });
+      }
+    }
+
+    return candidates;
+  }
+
+  async createSmsPaymentMatchReview(review: InsertSmsPaymentMatchReview, candidates: Omit<InsertSmsPaymentMatchCandidate, 'reviewId'>[]): Promise<SmsPaymentMatchReview> {
+    const [newReview] = await db.insert(smsPaymentMatchReviews).values(review).returning();
+    if (candidates.length > 0) {
+      await db.insert(smsPaymentMatchCandidates).values(
+        candidates.map(c => ({ ...c, reviewId: newReview.id }))
+      );
+    }
+    return newReview;
+  }
+
+  async getPendingSmsPaymentMatchReviews(userId: number): Promise<(SmsPaymentMatchReview & { candidates: SmsPaymentMatchCandidate[] })[]> {
+    const reviews = await db.select().from(smsPaymentMatchReviews)
+      .where(and(
+        eq(smsPaymentMatchReviews.userId, userId),
+        eq(smsPaymentMatchReviews.status, 'pending'),
+      ))
+      .orderBy(desc(smsPaymentMatchReviews.createdAt));
+    if (reviews.length === 0) return [];
+
+    const candidates = await db.select().from(smsPaymentMatchCandidates)
+      .where(inArray(smsPaymentMatchCandidates.reviewId, reviews.map(r => r.id)));
+
+    return reviews.map(review => ({
+      ...review,
+      candidates: candidates.filter(c => c.reviewId === review.id),
+    }));
+  }
+
+  async getSmsPaymentMatchReview(id: number): Promise<(SmsPaymentMatchReview & { candidates: SmsPaymentMatchCandidate[] }) | undefined> {
+    const [review] = await db.select().from(smsPaymentMatchReviews).where(eq(smsPaymentMatchReviews.id, id));
+    if (!review) return undefined;
+    const candidates = await db.select().from(smsPaymentMatchCandidates)
+      .where(eq(smsPaymentMatchCandidates.reviewId, id));
+    return { ...review, candidates };
+  }
+
+  async resolveSmsPaymentMatchReview(id: number, itemType: string, itemId: number): Promise<SmsPaymentMatchReview | undefined> {
+    const [updated] = await db.update(smsPaymentMatchReviews)
+      .set({ status: 'resolved', resolvedItemType: itemType, resolvedItemId: itemId, resolvedAt: new Date() })
+      .where(eq(smsPaymentMatchReviews.id, id))
+      .returning();
+    return updated || undefined;
+  }
+
+  async dismissSmsPaymentMatchReview(id: number): Promise<SmsPaymentMatchReview | undefined> {
+    const [updated] = await db.update(smsPaymentMatchReviews)
+      .set({ status: 'dismissed', resolvedAt: new Date() })
+      .where(eq(smsPaymentMatchReviews.id, id))
+      .returning();
+    return updated || undefined;
   }
 
   // Dashboard Analytics

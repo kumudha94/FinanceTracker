@@ -3611,6 +3611,89 @@ export async function registerRoutes(app: Express): Promise<Server> {
     return { success: true, transaction: null, pendingReview: true, institutionKey, parsed: dueData, smsLogId: smsLog.id };
   }
 
+  // Marks a single loan installment / insurance premium / scheduled payment occurrence paid,
+  // reusing the transaction the debited SMS already created instead of creating a second one —
+  // that transaction already moved the account balance, so nothing here touches balance again.
+  async function markMatchedItemPaid(
+    itemType: 'loan' | 'insurance' | 'scheduled_payment',
+    itemId: number,
+    transaction: { id: number; amount: string; transactionDate: Date | string; accountId: number | null }
+  ): Promise<void> {
+    const transactionDate = new Date(transaction.transactionDate);
+
+    if (itemType === 'loan') {
+      const installment = await storage.getLoanInstallment(itemId);
+      if (!installment) return;
+      await storage.createLoanPayment({
+        loanId: installment.loanId,
+        installmentId: itemId,
+        paymentDate: transactionDate,
+        amount: transaction.amount,
+        paymentType: 'emi',
+        accountId: transaction.accountId,
+        transactionId: transaction.id,
+        notes: 'Auto-matched from SMS',
+      } as any);
+      await storage.markInstallmentPaid(itemId, transaction.amount, transaction.id);
+      return;
+    }
+
+    if (itemType === 'insurance') {
+      // accountId intentionally omitted — passing it would make markPremiumPaid deduct the
+      // account balance a second time, on top of the deduction the SMS transaction already made.
+      await storage.markPremiumPaid(itemId, transaction.amount, undefined, transaction.id);
+      return;
+    }
+
+    // scheduled_payment: the occurrence has no transactionId of its own — link back via the transaction.
+    await storage.updatePaymentOccurrence(itemId, {
+      status: 'paid',
+      paidAt: transactionDate,
+      paidAmount: transaction.amount,
+    } as any);
+    await storage.updateTransaction(transaction.id, { paymentOccurrenceId: itemId });
+  }
+
+  // After a debited-SMS transaction is created, checks whether it matches a pending loan
+  // installment / insurance premium / scheduled payment occurrence that has auto-mark-as-paid
+  // enabled (same amount, its keyword found in the SMS text, due date within the matching
+  // window — see AUTO_MARK_DUE_DATE_WINDOW_DAYS). Runs identically for live SMS and Rescan,
+  // since both paths call this via processSingleSms/finishWithTransaction.
+  //   0 candidates -> no-op, unchanged from today's behavior (nothing to link to).
+  //   1 candidate  -> mark it paid.
+  //   2+ candidates -> ambiguous, parked in smsPaymentMatchReviews for the user to resolve
+  //                    instead of guessing which one is right.
+  async function runAutoMarkMatching(
+    transaction: { id: number; amount: string; transactionDate: Date | string; accountId: number | null; userId: number },
+    messageText: string
+  ): Promise<void> {
+    const referenceDate = new Date(transaction.transactionDate);
+    const candidates = await storage.findAutoMarkCandidates(transaction.amount, messageText, referenceDate);
+
+    if (candidates.length === 0) return;
+
+    if (candidates.length === 1) {
+      await markMatchedItemPaid(candidates[0].itemType, candidates[0].itemId, transaction);
+      return;
+    }
+
+    await storage.createSmsPaymentMatchReview(
+      {
+        userId: transaction.userId,
+        transactionId: transaction.id,
+        amount: transaction.amount,
+        matchedKeyword: null,
+        status: 'pending',
+      },
+      candidates.map(c => ({
+        itemType: c.itemType,
+        itemId: c.itemId,
+        itemName: c.itemName,
+        dueDate: c.dueDate,
+      }))
+    );
+  }
+
   // Parses one SMS, matches it to an account, and creates the transaction — shared by the
   // single and batch parse-sms endpoints so the institution-mapping fallback only lives in one place.
   async function processSingleSms(
@@ -3686,6 +3769,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       transactionData.smsId = smsLog.id;
       const transaction = await storage.createTransaction(transactionData);
       await storage.updateSmsLogTransaction(smsLog.id, transaction.id);
+
+      // Only a completed debit can settle a bill — a credit or a future "will be debited"
+      // e-mandate notice (already filtered out before parsedData.amount is set) never matches.
+      if (transaction.type === 'debit') {
+        await runAutoMarkMatching(transaction, messageText);
+      }
+
       return { success: true, transaction, parsed: parsedData };
     };
 
@@ -4172,6 +4262,67 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json({ success: true, mapping: updated });
     } catch (error: any) {
       res.status(400).json({ error: error.message || "Failed to ignore bill sender" });
+    }
+  });
+
+  // ========== SMS Payment Match Reviews (auto-mark-as-paid ambiguous matches) ==========
+  app.get("/api/sms-payment-match-reviews/pending", authenticateToken, async (req, res) => {
+    try {
+      const userId = req.user!.userId;
+      const reviews = await storage.getPendingSmsPaymentMatchReviews(userId);
+      res.json(reviews);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to fetch pending payment match reviews" });
+    }
+  });
+
+  // The user picks which candidate this debited SMS actually paid — runs the same paid-marking
+  // logic auto-match would have run if there'd only been one candidate to begin with.
+  app.post("/api/sms-payment-match-reviews/:id/resolve", authenticateToken, async (req, res) => {
+    try {
+      const userId = req.user!.userId;
+      const reviewId = parseInt(req.params.id);
+      const { itemType, itemId } = req.body;
+
+      const review = await storage.getSmsPaymentMatchReview(reviewId);
+      if (!review || review.userId !== userId) {
+        return res.status(404).json({ error: "Payment match review not found" });
+      }
+      if (review.status !== 'pending') {
+        return res.status(400).json({ error: "This review has already been resolved" });
+      }
+      const chosen = review.candidates.find(c => c.itemType === itemType && c.itemId === itemId);
+      if (!chosen) {
+        return res.status(400).json({ error: "Selected item is not one of this review's candidates" });
+      }
+
+      const transaction = await storage.getTransaction(review.transactionId);
+      if (!transaction) {
+        return res.status(404).json({ error: "Underlying transaction not found" });
+      }
+
+      await markMatchedItemPaid(chosen.itemType as 'loan' | 'insurance' | 'scheduled_payment', chosen.itemId, transaction);
+      const updated = await storage.resolveSmsPaymentMatchReview(reviewId, itemType, itemId);
+      res.json({ success: true, review: updated });
+    } catch (error: any) {
+      res.status(400).json({ error: error.message || "Failed to resolve payment match review" });
+    }
+  });
+
+  app.post("/api/sms-payment-match-reviews/:id/dismiss", authenticateToken, async (req, res) => {
+    try {
+      const userId = req.user!.userId;
+      const reviewId = parseInt(req.params.id);
+
+      const review = await storage.getSmsPaymentMatchReview(reviewId);
+      if (!review || review.userId !== userId) {
+        return res.status(404).json({ error: "Payment match review not found" });
+      }
+
+      const updated = await storage.dismissSmsPaymentMatchReview(reviewId);
+      res.json({ success: true, review: updated });
+    } catch (error: any) {
+      res.status(400).json({ error: error.message || "Failed to dismiss payment match review" });
     }
   });
 
@@ -5446,7 +5597,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.patch("/api/insurances/:id", async (req, res) => {
     try {
-      const validatedData = insertInsuranceSchema.partial().parse(req.body);
+      // .innerType() unwraps the auto-mark-paid refine() added on top of the base object schema —
+      // ZodEffects (what .refine() returns) has no .partial(); the refine's "keyword required
+      // when enabled" check still runs on create (insertInsuranceSchema.parse above) and is
+      // enforced client-side for this partial-update form too.
+      const validatedData = insertInsuranceSchema.innerType().partial().parse(req.body);
       const insurance = await storage.updateInsurance(parseInt(req.params.id), validatedData);
       if (insurance) {
         // If premium-related fields changed, regenerate premiums

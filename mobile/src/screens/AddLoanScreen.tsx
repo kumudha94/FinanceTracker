@@ -59,6 +59,8 @@ export default function AddLoanScreen() {
   const [isExistingLoan, setIsExistingLoan] = useState(false);
   const [createTransaction, setCreateTransaction] = useState(false);
   const [affectBalance, setAffectBalance] = useState(false);
+  const [autoMarkPaidEnabled, setAutoMarkPaidEnabled] = useState(false);
+  const [autoMarkKeyword, setAutoMarkKeyword] = useState('');
   const [includesBtClosure, setIncludesBtClosure] = useState(false);
   const [btAllocations, setBtAllocations] = useState<Array<{
     targetLoanId: string;
@@ -139,6 +141,8 @@ export default function AddLoanScreen() {
       
       setCreateTransaction(createTxn);
       setAffectBalance(affectBal);
+      setAutoMarkPaidEnabled((existingLoan as any).autoMarkPaidEnabled ?? (existingLoan as any).auto_mark_paid_enabled ?? false);
+      setAutoMarkKeyword((existingLoan as any).autoMarkKeyword ?? (existingLoan as any).auto_mark_keyword ?? '');
     }
   }, [existingLoan, isEditMode]);
 
@@ -191,6 +195,8 @@ export default function AddLoanScreen() {
         createTransaction,
         affectBalance,
         includesBtClosure,
+        autoMarkPaidEnabled,
+        autoMarkKeyword: autoMarkPaidEnabled ? autoMarkKeyword.trim() : undefined,
       };
       const newLoan = await api.createLoan(payload);
       
@@ -258,6 +264,8 @@ export default function AddLoanScreen() {
         createTransaction,
         affectBalance,
         nextEmiDate: isExistingLoan ? nextEmiDate.toISOString() : undefined,
+        autoMarkPaidEnabled,
+        autoMarkKeyword: autoMarkPaidEnabled ? autoMarkKeyword.trim() : undefined,
       };
       return api.updateLoan(loanId!, payload);
     },
@@ -293,7 +301,8 @@ export default function AddLoanScreen() {
     if (!formData.interestRate) missingFields.push('Interest Rate');
     if (!formData.tenure) missingFields.push('Tenure');
     if (!formData.emiAmount) missingFields.push('EMI Amount');
-    
+    if (autoMarkPaidEnabled && !autoMarkKeyword.trim()) missingFields.push('SMS Keyword');
+
     if (missingFields.length > 0) {
       Toast.show({
         type: 'error',
@@ -761,6 +770,42 @@ export default function AddLoanScreen() {
                 thumbColor={affectBalance ? colors.primary : '#f4f3f4'}
               />
             </View>
+
+            {/* Auto-Mark-as-Paid Toggle */}
+            <View style={[styles.field, styles.toggleField]}>
+              <View style={styles.toggleLeft}>
+                <Ionicons name="flash-outline" size={20} color={colors.text} />
+                <View style={styles.toggleTextContainer}>
+                  <Text style={[styles.label, { color: colors.text, marginBottom: 2 }]}>Auto-Mark as Paid</Text>
+                  <Text style={[styles.helperText, { color: colors.textMuted }]}>
+                    Mark the next EMI paid automatically when a matching debited SMS arrives
+                  </Text>
+                </View>
+              </View>
+              <Switch
+                value={autoMarkPaidEnabled}
+                onValueChange={setAutoMarkPaidEnabled}
+                trackColor={{ false: colors.border, true: colors.primary + '80' }}
+                thumbColor={autoMarkPaidEnabled ? colors.primary : '#f4f3f4'}
+              />
+            </View>
+
+            {autoMarkPaidEnabled && (
+              <View style={styles.field}>
+                <Text style={[styles.label, { color: colors.textMuted }]}>SMS Keyword *</Text>
+                <TextInput
+                  style={[styles.input, { backgroundColor: colors.card, color: colors.text, borderColor: colors.border }]}
+                  placeholder="e.g., HDFC EMI, LOAN12345"
+                  placeholderTextColor={colors.textMuted}
+                  value={autoMarkKeyword}
+                  onChangeText={setAutoMarkKeyword}
+                  autoCapitalize="characters"
+                />
+                <Text style={[styles.helperText, { color: colors.textMuted, marginTop: 4 }]}>
+                  Only SMS containing this text (case-insensitive) and the exact EMI amount, near the due date, will auto-match
+                </Text>
+              </View>
+            )}
           </>
         )}
 

@@ -35,6 +35,8 @@ export default function AddScheduledPaymentScreen() {
   const [selectedAccountId, setSelectedAccountId] = useState<number | null>(null);
   const [affectTransaction, setAffectTransaction] = useState(true);
   const [affectAccountBalance, setAffectAccountBalance] = useState(true);
+  const [autoMarkPaidEnabled, setAutoMarkPaidEnabled] = useState(false);
+  const [autoMarkKeyword, setAutoMarkKeyword] = useState('');
   const [showCategoryPicker, setShowCategoryPicker] = useState(false);
   const [showAccountPicker, setShowAccountPicker] = useState(false);
   const [paymentType, setPaymentType] = useState<'regular' | 'credit_card_bill'>('regular');
@@ -95,6 +97,8 @@ export default function AddScheduledPaymentScreen() {
         setSelectedAccountId(payment.accountId || null);
         setAffectTransaction(payment.affectTransaction ?? true);
         setAffectAccountBalance(payment.affectAccountBalance ?? true);
+        setAutoMarkPaidEnabled(payment.autoMarkPaidEnabled ?? false);
+        setAutoMarkKeyword(payment.autoMarkKeyword ?? '');
         setPaymentType((payment.paymentType as 'regular' | 'credit_card_bill') || 'regular');
         setCreditCardAccountId(payment.creditCardAccountId || null);
         setFrequency(payment.frequency || 'monthly');
@@ -259,6 +263,17 @@ export default function AddScheduledPaymentScreen() {
       }
     }
 
+    if (autoMarkPaidEnabled && !autoMarkKeyword.trim()) {
+      Toast.show({
+        type: 'error',
+        text1: 'Missing Keyword',
+        text2: 'Enter an SMS keyword to enable auto-mark-as-paid',
+        position: 'bottom',
+        visibilityTime: 3000,
+      });
+      return;
+    }
+
     const needsStartMonth = frequency === 'yearly' || frequency === 'quarterly' || frequency === 'half_yearly' || frequency === 'custom';
     if (needsStartMonth && !startMonth) {
       Toast.show({
@@ -283,6 +298,8 @@ export default function AddScheduledPaymentScreen() {
       status: 'active',
       affectTransaction,
       affectAccountBalance,
+      autoMarkPaidEnabled,
+      autoMarkKeyword: autoMarkPaidEnabled ? autoMarkKeyword.trim() : null,
       paymentType,
       creditCardAccountId: paymentType === 'credit_card_bill' ? creditCardAccountId : null,
       frequency,
@@ -851,8 +868,43 @@ export default function AddScheduledPaymentScreen() {
         </View>
       </View>
 
-      <TouchableOpacity 
-        style={[styles.submitButton, { backgroundColor: colors.primary }, mutation.isPending && styles.submitButtonDisabled]} 
+      <View style={styles.field}>
+        <Text style={[styles.label, { color: colors.textMuted }]}>Auto-Mark as Paid</Text>
+        <View style={[styles.toggleContainer, { backgroundColor: colors.card }]}>
+          <View style={styles.toggleRow}>
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.toggleLabel, { color: colors.text }]}>Auto-Mark as Paid</Text>
+              <Text style={[styles.toggleDescription, { color: colors.textMuted }]}>
+                Mark this cycle paid automatically when a matching debited SMS arrives
+              </Text>
+            </View>
+            <Switch
+              value={autoMarkPaidEnabled}
+              onValueChange={setAutoMarkPaidEnabled}
+              trackColor={{ false: colors.border, true: colors.primary }}
+              thumbColor="#fff"
+            />
+          </View>
+        </View>
+        {autoMarkPaidEnabled && (
+          <>
+            <TextInput
+              style={[styles.input, { backgroundColor: colors.card, color: colors.text, borderColor: colors.border, marginTop: 12 }]}
+              placeholder="SMS Keyword, e.g., NETFLIX, SPOTIFY"
+              placeholderTextColor={colors.textMuted}
+              value={autoMarkKeyword}
+              onChangeText={setAutoMarkKeyword}
+              autoCapitalize="characters"
+            />
+            <Text style={[styles.toggleDescription, { color: colors.textMuted, marginTop: 4 }]}>
+              Only SMS containing this text (case-insensitive) and the exact cycle amount, near the due date, will auto-match
+            </Text>
+          </>
+        )}
+      </View>
+
+      <TouchableOpacity
+        style={[styles.submitButton, { backgroundColor: colors.primary }, mutation.isPending && styles.submitButtonDisabled]}
         onPress={handleSubmit}
         disabled={mutation.isPending}
       >

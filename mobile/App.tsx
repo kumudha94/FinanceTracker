@@ -47,6 +47,7 @@ import InstitutionMappingsScreen from './src/screens/InstitutionMappingsScreen';
 import BillsInboxScreen from './src/screens/BillsInboxScreen';
 import SmsStatementsHubScreen from './src/screens/SmsStatementsHubScreen';
 import NeedsReviewHubScreen from './src/screens/NeedsReviewHubScreen';
+import PaymentMatchReviewsScreen from './src/screens/PaymentMatchReviewsScreen';
 
 import { ThemeProvider, useTheme } from './src/contexts/ThemeContext';
 import { AuthProvider, useAuth } from './src/contexts/AuthContext';
@@ -108,6 +109,7 @@ export type MoreStackParamList = {
   BillsInbox: undefined;
   SmsStatementsHub: undefined;
   NeedsReviewHub: undefined;
+  PaymentMatchReviews: undefined;
 };
 
 export type RootStackParamList = {
@@ -292,6 +294,11 @@ function MoreStackNavigator() {
         name="NeedsReviewHub"
         component={NeedsReviewHubScreen}
         options={{ title: 'Needs Review' }}
+      />
+      <MoreStack.Screen
+        name="PaymentMatchReviews"
+        component={PaymentMatchReviewsScreen}
+        options={{ title: 'Payment Matches' }}
       />
     </MoreStack.Navigator>
   );

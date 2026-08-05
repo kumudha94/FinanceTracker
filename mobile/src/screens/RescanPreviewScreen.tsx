@@ -60,8 +60,23 @@ export default function RescanPreviewScreen() {
     });
   };
 
-  const handleAddSelected = async () => {
+  const handleAddSelected = () => {
     if (selected.size === 0) return;
+    // Auto-mark-as-paid runs on these transactions the same as it would on a live SMS, but
+    // older loan/insurance/payment records may not exist in the DB yet for periods before
+    // tracking started — those just won't auto-match (nothing links falsely), so warn once
+    // rather than let it look like silent under-matching.
+    Alert.alert(
+      'Adding older messages',
+      "Some older payments may not auto-match if their loan, insurance, or scheduled payment records weren't created for that period yet. Check Needs Review or the item list afterward.",
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Continue', onPress: () => commitSelected() },
+      ]
+    );
+  };
+
+  const commitSelected = async () => {
     setCommitting(true);
     try {
       const toCommit = messages.filter((_, i) => selected.has(i));

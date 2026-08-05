@@ -51,6 +51,30 @@ export interface PendingBillMapping {
   latestMessage: string | null;
 }
 
+export interface SmsPaymentMatchCandidate {
+  id: number;
+  reviewId: number;
+  itemType: 'loan' | 'insurance' | 'scheduled_payment';
+  itemId: number;
+  itemName: string;
+  dueDate: string;
+  createdAt: string;
+}
+
+export interface PendingPaymentMatchReview {
+  id: number;
+  userId: number;
+  transactionId: number;
+  amount: string;
+  matchedKeyword: string | null;
+  status: 'pending' | 'resolved' | 'dismissed';
+  resolvedItemType: string | null;
+  resolvedItemId: number | null;
+  createdAt: string;
+  resolvedAt: string | null;
+  candidates: SmsPaymentMatchCandidate[];
+}
+
 export interface Category {
   id: number;
   name: string;
@@ -112,6 +136,8 @@ export interface ScheduledPayment {
   notes: string | null;
   affectTransaction: boolean;
   affectAccountBalance: boolean;
+  autoMarkPaidEnabled?: boolean | null;
+  autoMarkKeyword?: string | null;
   lastNotifiedAt: string | null;
   createdAt: string;
   updatedAt: string;
@@ -435,6 +461,8 @@ export interface Loan {
   updatedAt: string;
   affectBalance: boolean;
   createTransaction: boolean;
+  autoMarkPaidEnabled?: boolean | null;
+  autoMarkKeyword?: string | null;
 }
 
 export interface LoanBtAllocation {
@@ -632,6 +660,8 @@ export interface Insurance {
   affectBalance: boolean;
   autoFunded: boolean;
   linkedInsuranceId: number | null;
+  autoMarkPaidEnabled?: boolean | null;
+  autoMarkKeyword?: string | null;
   notes: string | null;
   createdAt: string;
   updatedAt: string;
@@ -678,6 +708,8 @@ export interface InsertInsurance {
   affectBalance?: boolean;
   autoFunded?: boolean;
   linkedInsuranceId?: number | null;
+  autoMarkPaidEnabled?: boolean;
+  autoMarkKeyword?: string | null;
   notes?: string;
 }
 

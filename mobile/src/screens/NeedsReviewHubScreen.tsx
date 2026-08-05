@@ -26,11 +26,17 @@ export default function NeedsReviewHubScreen() {
     queryFn: api.getPendingBillMappings,
   });
 
+  const { data: pendingPaymentMatches = [], refetch: refetchPaymentMatches } = useQuery({
+    queryKey: ['/api/sms-payment-match-reviews/pending'],
+    queryFn: api.getPendingPaymentMatchReviews,
+  });
+
   useFocusEffect(
     useCallback(() => {
       refetchMappings();
       refetchBillMappings();
-    }, [refetchMappings, refetchBillMappings])
+      refetchPaymentMatches();
+    }, [refetchMappings, refetchBillMappings, refetchPaymentMatches])
   );
 
   const items = [
@@ -49,6 +55,14 @@ export default function NeedsReviewHubScreen() {
       route: 'BillsInbox' as const,
       color: '#14b8a6',
       count: pendingBillMappings.length,
+    },
+    {
+      icon: 'flash-outline' as const,
+      title: 'Payment Matches',
+      subtitle: 'Debited SMS that matched more than one auto-mark item',
+      route: 'PaymentMatchReviews' as const,
+      color: '#f97316',
+      count: pendingPaymentMatches.length,
     },
   ];
 

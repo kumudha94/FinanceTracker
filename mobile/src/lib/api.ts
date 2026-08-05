@@ -8,7 +8,7 @@ import type {
   CardDetails, InsertCardDetails,
   LoanTerm, LoanPayment, InsertLoanTerm, InsertLoanPayment, LoanWithDetails,
   Insurance, InsurancePremium, InsertInsurance, InsertInsurancePremium,
-  SenderInstitutionMapping, PendingBillMapping
+  SenderInstitutionMapping, PendingBillMapping, PendingPaymentMatchReview
 } from './types';
 import NetInfo from '@react-native-community/netinfo';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -302,6 +302,13 @@ export const api = {
     apiRequest<{ success: boolean; scheduledPayment: ScheduledPayment; mapping: PendingBillMapping }>(`/api/bill-mappings/${mappingId}/create-scheduled-payment`, { method: 'POST', body: JSON.stringify(data) }),
   ignoreBillMapping: (mappingId: number) =>
     apiRequest<{ success: boolean; mapping: PendingBillMapping }>(`/api/bill-mappings/${mappingId}/ignore`, { method: 'POST' }),
+
+  getPendingPaymentMatchReviews: () =>
+    apiRequest<PendingPaymentMatchReview[]>('/api/sms-payment-match-reviews/pending'),
+  resolvePaymentMatchReview: (reviewId: number, itemType: string, itemId: number) =>
+    apiRequest<{ success: boolean; review: PendingPaymentMatchReview }>(`/api/sms-payment-match-reviews/${reviewId}/resolve`, { method: 'POST', body: JSON.stringify({ itemType, itemId }) }),
+  dismissPaymentMatchReview: (reviewId: number) =>
+    apiRequest<{ success: boolean; review: PendingPaymentMatchReview }>(`/api/sms-payment-match-reviews/${reviewId}/dismiss`, { method: 'POST' }),
 
   getCategories: () => apiRequest<Category[]>('/api/categories'),
   createCategory: (data: { name: string; color: string; icon?: string; type?: string }) =>

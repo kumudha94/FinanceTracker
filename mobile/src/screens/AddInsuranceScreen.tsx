@@ -63,6 +63,8 @@ export default function AddInsuranceScreen() {
   const [affectBalance, setAffectBalance] = useState(false);
   const [autoFunded, setAutoFunded] = useState(false);
   const [linkedInsuranceId, setLinkedInsuranceId] = useState<number | undefined>();
+  const [autoMarkPaidEnabled, setAutoMarkPaidEnabled] = useState(false);
+  const [autoMarkKeyword, setAutoMarkKeyword] = useState('');
   const [notes, setNotes] = useState('');
   const [showStartPicker, setShowStartPicker] = useState(false);
   const [showEndPicker, setShowEndPicker] = useState(false);
@@ -110,6 +112,8 @@ export default function AddInsuranceScreen() {
       setAffectBalance(existingInsurance.affectBalance);
       setAutoFunded(existingInsurance.autoFunded);
       setLinkedInsuranceId(existingInsurance.linkedInsuranceId || undefined);
+      setAutoMarkPaidEnabled((existingInsurance as any).autoMarkPaidEnabled ?? false);
+      setAutoMarkKeyword((existingInsurance as any).autoMarkKeyword ?? '');
       setNotes(existingInsurance.notes || '');
     }
   }, [existingInsurance]);
@@ -167,6 +171,10 @@ export default function AddInsuranceScreen() {
       Toast.show({ type: 'error', text1: 'Error', text2: 'Please enter premium amount', position: 'bottom' });
       return;
     }
+    if (autoMarkPaidEnabled && !autoMarkKeyword.trim()) {
+      Toast.show({ type: 'error', text1: 'Error', text2: 'Enter an SMS keyword to enable auto-mark-as-paid', position: 'bottom' });
+      return;
+    }
 
     const data: InsertInsurance = {
       name: name.trim(),
@@ -188,6 +196,8 @@ export default function AddInsuranceScreen() {
       affectBalance,
       autoFunded,
       linkedInsuranceId: autoFunded ? (linkedInsuranceId ?? null) : null,
+      autoMarkPaidEnabled,
+      autoMarkKeyword: autoMarkPaidEnabled ? autoMarkKeyword.trim() : null,
       notes: notes.trim() || undefined,
     };
 
@@ -579,6 +589,41 @@ export default function AddInsuranceScreen() {
                 </View>
               )}
             </View>
+          )}
+
+          {!autoFunded && (
+            <>
+              <View style={styles.toggleRow}>
+                <View style={styles.toggleInfo}>
+                  <Text style={[styles.toggleLabel, { color: colors.text }]}>Auto-Mark as Paid</Text>
+                  <Text style={[styles.toggleHint, { color: colors.textMuted }]}>
+                    Mark the next premium paid automatically when a matching debited SMS arrives
+                  </Text>
+                </View>
+                <Switch
+                  value={autoMarkPaidEnabled}
+                  onValueChange={setAutoMarkPaidEnabled}
+                  trackColor={{ false: colors.border, true: colors.primary }}
+                />
+              </View>
+
+              {autoMarkPaidEnabled && (
+                <View style={styles.inputGroup}>
+                  <Text style={[styles.label, { color: colors.textMuted }]}>SMS Keyword *</Text>
+                  <TextInput
+                    style={[styles.input, { backgroundColor: colors.card, color: colors.text, borderColor: colors.border }]}
+                    placeholder="e.g., LIC, HDFC LIFE"
+                    placeholderTextColor={colors.textMuted}
+                    value={autoMarkKeyword}
+                    onChangeText={setAutoMarkKeyword}
+                    autoCapitalize="characters"
+                  />
+                  <Text style={[styles.toggleHint, { color: colors.textMuted, marginTop: 4 }]}>
+                    Only SMS containing this text (case-insensitive) and the exact premium amount, near the due date, will auto-match
+                  </Text>
+                </View>
+              )}
+            </>
           )}
         </View>
 

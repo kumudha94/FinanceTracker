@@ -218,6 +218,8 @@ export const scheduledPayments = pgTable("scheduled_payments", {
   notes: text("notes"),
   affectTransaction: boolean("affect_transaction").default(true),
   affectAccountBalance: boolean("affect_account_balance").default(true),
+  autoMarkPaidEnabled: boolean("auto_mark_paid_enabled").default(false), // when true, a matching debited SMS auto-marks the occurrence paid instead of requiring a manual tap
+  autoMarkKeyword: varchar("auto_mark_keyword", { length: 100 }), // required substring (case-insensitive) that must appear in the SMS for auto-match; required whenever autoMarkPaidEnabled is true
   lastNotifiedAt: timestamp("last_notified_at"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
@@ -250,6 +252,8 @@ export const insertScheduledPaymentSchema = createInsertSchema(scheduledPayments
   startMonth: z.union([z.number().min(1).max(12), z.null()]).optional(),
   status: z.enum(["active", "inactive"]).optional(),
   notes: z.union([z.string(), z.null()]).optional(),
+  autoMarkPaidEnabled: z.boolean().optional(),
+  autoMarkKeyword: z.union([z.string(), z.null()]).optional(),
 }).refine(
   (data) => {
     // Amount is required for regular, fixed-amount payments — optional for credit card
@@ -287,6 +291,12 @@ export const insertScheduledPaymentSchema = createInsertSchema(scheduledPayments
   {
     message: "Due date is required when due date type is fixed day",
     path: ["dueDate"],
+  }
+).refine(
+  (data) => !data.autoMarkPaidEnabled || !!data.autoMarkKeyword?.trim(),
+  {
+    message: "A keyword is required to enable auto-mark-as-paid",
+    path: ["autoMarkKeyword"],
   }
 );
 
@@ -572,6 +582,8 @@ export const loans = pgTable("loans", {
   affectBalance: boolean("affect_balance").default(false), // affect account balance on payment
   includesBtClosure: boolean("includes_bt_closure").default(false), // true if this loan includes BT to close other loans
   closedViaBtFromLoanId: integer("closed_via_bt_from_loan_id"), // if closed via BT, reference to the source loan
+  autoMarkPaidEnabled: boolean("auto_mark_paid_enabled").default(false), // when true, a matching debited SMS auto-marks the next pending installment paid
+  autoMarkKeyword: varchar("auto_mark_keyword", { length: 100 }), // required substring (case-insensitive) that must appear in the SMS for auto-match; required whenever autoMarkPaidEnabled is true
   notes: text("notes"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
@@ -611,7 +623,15 @@ export const insertLoanSchema = createInsertSchema(loans).omit({
   affectBalance: z.boolean().optional(),
   includesBtClosure: z.boolean().optional(),
   closedViaBtFromLoanId: z.number().optional(),
-});
+  autoMarkPaidEnabled: z.boolean().optional(),
+  autoMarkKeyword: z.union([z.string(), z.null()]).optional(),
+}).refine(
+  (data) => !data.autoMarkPaidEnabled || !!data.autoMarkKeyword?.trim(),
+  {
+    message: "A keyword is required to enable auto-mark-as-paid",
+    path: ["autoMarkKeyword"],
+  }
+);
 
 export type InsertLoan = z.infer<typeof insertLoanSchema>;
 export type Loan = typeof loans.$inferSelect;
@@ -897,6 +917,70 @@ export const insertSmsLogSchema = createInsertSchema(smsLogs).omit({
 export type InsertSmsLog = z.infer<typeof insertSmsLogSchema>;
 export type SmsLog = typeof smsLogs.$inferSelect;
 
+// SMS Payment Match Reviews — when a debited SMS's amount+keyword matches more than one pending
+// loan installment / insurance premium / scheduled payment occurrence (auto-mark-as-paid can't
+// tell which one is right), the match is parked here instead of guessing. Surfaced in the Needs
+// Review Hub alongside senderInstitutionMappings/billSenderMappings.
+export const smsPaymentMatchReviews = pgTable("sms_payment_match_reviews", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull().references(() => users.id),
+  transactionId: integer("transaction_id").references(() => transactions.id).notNull(), // the already-created debited-SMS transaction
+  amount: decimal("amount", { precision: 12, scale: 2 }).notNull(),
+  matchedKeyword: varchar("matched_keyword", { length: 100 }),
+  status: varchar("status", { length: 20 }).notNull().default("pending"), // 'pending', 'resolved', 'dismissed'
+  resolvedItemType: varchar("resolved_item_type", { length: 20 }), // 'loan' | 'insurance' | 'scheduled_payment', set once resolved
+  resolvedItemId: integer("resolved_item_id"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  resolvedAt: timestamp("resolved_at"),
+});
+
+export const smsPaymentMatchReviewsRelations = relations(smsPaymentMatchReviews, ({ one, many }) => ({
+  user: one(users, { fields: [smsPaymentMatchReviews.userId], references: [users.id] }),
+  transaction: one(transactions, { fields: [smsPaymentMatchReviews.transactionId], references: [transactions.id] }),
+  candidates: many(smsPaymentMatchCandidates),
+}));
+
+export const insertSmsPaymentMatchReviewSchema = createInsertSchema(smsPaymentMatchReviews).omit({
+  id: true,
+  createdAt: true,
+  resolvedAt: true,
+}).extend({
+  amount: z.string().min(1, "Amount is required"),
+  status: z.enum(["pending", "resolved", "dismissed"]).optional(),
+  matchedKeyword: z.union([z.string(), z.null()]).optional(),
+  resolvedItemType: z.union([z.enum(["loan", "insurance", "scheduled_payment"]), z.null()]).optional(),
+  resolvedItemId: z.union([z.number(), z.null()]).optional(),
+});
+
+export type InsertSmsPaymentMatchReview = z.infer<typeof insertSmsPaymentMatchReviewSchema>;
+export type SmsPaymentMatchReview = typeof smsPaymentMatchReviews.$inferSelect;
+
+// One row per pending item that tied for a match on a review (same amount + keyword, both within
+// the due-date window) — the review screen lists these so the user can pick the right one.
+export const smsPaymentMatchCandidates = pgTable("sms_payment_match_candidates", {
+  id: serial("id").primaryKey(),
+  reviewId: integer("review_id").references(() => smsPaymentMatchReviews.id).notNull(),
+  itemType: varchar("item_type", { length: 20 }).notNull(), // 'loan' | 'insurance' | 'scheduled_payment'
+  itemId: integer("item_id").notNull(), // loanInstallments.id / insurancePremiums.id / paymentOccurrences.id
+  itemName: varchar("item_name", { length: 200 }).notNull(), // loan/insurance/scheduled payment name, for display
+  dueDate: timestamp("due_date").notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const smsPaymentMatchCandidatesRelations = relations(smsPaymentMatchCandidates, ({ one }) => ({
+  review: one(smsPaymentMatchReviews, { fields: [smsPaymentMatchCandidates.reviewId], references: [smsPaymentMatchReviews.id] }),
+}));
+
+export const insertSmsPaymentMatchCandidateSchema = createInsertSchema(smsPaymentMatchCandidates).omit({
+  id: true,
+  createdAt: true,
+}).extend({
+  itemType: z.enum(["loan", "insurance", "scheduled_payment"]),
+});
+
+export type InsertSmsPaymentMatchCandidate = z.infer<typeof insertSmsPaymentMatchCandidateSchema>;
+export type SmsPaymentMatchCandidate = typeof smsPaymentMatchCandidates.$inferSelect;
+
 // Loan Terms (track interest rate and tenure changes over time)
 export const loanTerms = pgTable("loan_terms", {
   id: serial("id").primaryKey(),
@@ -992,6 +1076,8 @@ export const insurances = pgTable("insurances", {
   affectBalance: boolean("affect_balance").default(false), // affect account balance on payment
   autoFunded: boolean("auto_funded").default(false), // true when premiums are funded automatically by another policy (e.g. a market/sub policy funded from a main policy's benefit) — no manual payment needed, past-due premiums auto-settle
   linkedInsuranceId: integer("linked_insurance_id").references((): any => insurances.id), // the policy that funds this one, when autoFunded is true
+  autoMarkPaidEnabled: boolean("auto_mark_paid_enabled").default(false), // when true, a matching debited SMS auto-marks the next pending premium paid
+  autoMarkKeyword: varchar("auto_mark_keyword", { length: 100 }), // required substring (case-insensitive) that must appear in the SMS for auto-match; required whenever autoMarkPaidEnabled is true
   notes: text("notes"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
@@ -1026,7 +1112,15 @@ export const insertInsuranceSchema = createInsertSchema(insurances).omit({
   affectBalance: z.boolean().optional(),
   autoFunded: z.boolean().optional(),
   linkedInsuranceId: z.union([z.number(), z.null()]).optional(),
-});
+  autoMarkPaidEnabled: z.boolean().optional(),
+  autoMarkKeyword: z.union([z.string(), z.null()]).optional(),
+}).refine(
+  (data) => !data.autoMarkPaidEnabled || !!data.autoMarkKeyword?.trim(),
+  {
+    message: "A keyword is required to enable auto-mark-as-paid",
+    path: ["autoMarkKeyword"],
+  }
+);
 
 export type InsertInsurance = z.infer<typeof insertInsuranceSchema>;
 export type Insurance = typeof insurances.$inferSelect;
