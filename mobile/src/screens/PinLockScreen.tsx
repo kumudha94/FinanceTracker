@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Vibration, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Vibration, ActivityIndicator, Alert } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../contexts/AuthContext';
 import { useTheme } from '../contexts/ThemeContext';
@@ -13,9 +13,23 @@ export default function PinLockScreen() {
   const [isVerifying, setIsVerifying] = useState(false);
   const [biometricInfo, setBiometricInfo] = useState<BiometricInfo | null>(null);
   const [showBiometric, setShowBiometric] = useState(true);
-  const { user, unlock } = useAuth();
+  const { user, unlock, logout } = useAuth();
   const { resolvedTheme } = useTheme();
   const colors = getThemedColors(resolvedTheme);
+
+  // Last-resort escape hatch: if the locally cached PIN/biometric state ever drifts from
+  // what the server actually has (e.g. a lock-state sync bug), there'd otherwise be no way
+  // back into the app from here. Logging out and back in re-fetches the real state fresh.
+  const handleForgotPin = () => {
+    Alert.alert(
+      'Log Out?',
+      "If your PIN isn't working, you can log out and sign back in with your username and password.",
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Log Out', style: 'destructive', onPress: () => logout() },
+      ]
+    );
+  };
 
   useEffect(() => {
     checkBiometrics();
@@ -193,6 +207,10 @@ export default function PinLockScreen() {
       )}
 
       {renderNumberPad()}
+
+      <TouchableOpacity onPress={handleForgotPin} style={styles.forgotPinButton}>
+        <Text style={[styles.forgotPinText, { color: colors.textMuted }]}>Forgot PIN? Log Out</Text>
+      </TouchableOpacity>
     </View>
   );
 }
@@ -281,5 +299,14 @@ const styles = StyleSheet.create({
   biometricText: {
     fontSize: 16,
     fontWeight: '600',
+  },
+  forgotPinButton: {
+    alignSelf: 'center',
+    marginTop: 16,
+    padding: 8,
+  },
+  forgotPinText: {
+    fontSize: 14,
+    textDecorationLine: 'underline',
   },
 });

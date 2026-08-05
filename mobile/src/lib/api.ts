@@ -2,6 +2,7 @@ import type {
   Account, Category, Transaction, Budget, ScheduledPayment,
   User, DashboardData, DashboardSummary, WeeklySummary, NextMonthForecast, ForecastItemType, InsertAccount, InsertTransaction,
   InsertBudget, InsertScheduledPayment, PaymentOccurrence, PaymentOccurrencesCycleResponse,
+  PlannedIncomeEntry, InsertPlannedIncomeEntry,
   SavingsGoal, SavingsContribution, InsertSavingsGoal, InsertSavingsContribution,
   SalaryProfile, SalaryCycle, InsertSalaryProfile,
   Loan, LoanInstallment, InsertLoan, LoanBtAllocation, LoanSpendingEntry, InsertLoanSpendingEntry,
@@ -349,9 +350,20 @@ export const api = {
     apiRequest<ScheduledPayment>(`/api/scheduled-payments/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   deleteScheduledPayment: (id: number) => 
     apiRequest<void>(`/api/scheduled-payments/${id}`, { method: 'DELETE' }),
-  getScheduledPaymentBillingAmount: (id: number) => 
+  getScheduledPaymentBillingAmount: (id: number) =>
     apiRequest<{ calculatedAmount: string; cycleStart: string; cycleEnd: string; cycleLabel: string; transactionCount: number }>(`/api/scheduled-payments/${id}/billing-amount`),
-  
+
+  getPlannedIncomeEntries: (month?: number, year?: number) => {
+    const query = month && year ? `?month=${month}&year=${year}` : '';
+    return apiRequest<PlannedIncomeEntry[]>(`/api/planned-income-entries${query}`);
+  },
+  createPlannedIncomeEntry: (data: InsertPlannedIncomeEntry) =>
+    apiRequest<PlannedIncomeEntry>('/api/planned-income-entries', { method: 'POST', body: JSON.stringify(data) }),
+  updatePlannedIncomeEntry: (id: number, data: Partial<InsertPlannedIncomeEntry>) =>
+    apiRequest<PlannedIncomeEntry>(`/api/planned-income-entries/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  deletePlannedIncomeEntry: (id: number) =>
+    apiRequest<void>(`/api/planned-income-entries/${id}`, { method: 'DELETE' }),
+
   getPaymentOccurrences: (month: number, year: number) =>
     apiRequest<any[]>(`/api/payment-occurrences?month=${month}&year=${year}`),
   getPaymentOccurrencesCycle: (anchorIso?: string) =>
@@ -363,11 +375,12 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ month, year })
     }),
-  updatePaymentOccurrence: (id: number, data: { 
-    status?: string; 
-    affectTransaction?: boolean; 
+  updatePaymentOccurrence: (id: number, data: {
+    status?: string;
+    affectTransaction?: boolean;
     affectAccountBalance?: boolean;
-  }) => 
+    paidAmount?: string;
+  }) =>
     apiRequest<any>(`/api/payment-occurrences/${id}`, { 
       method: 'PATCH', 
       body: JSON.stringify(data) 
@@ -759,6 +772,11 @@ export const api = {
     }),
   deleteUserAccount: () =>
     apiRequest<{ message: string }>('/api/users/delete-account', { method: 'DELETE' }),
+  exportData: (format: 'csv' | 'json') =>
+    apiRequest<{ content: string; filename: string; format: string }>('/api/export', {
+      method: 'POST',
+      body: JSON.stringify({ format }),
+    }),
   getSmsLogsCleanupPreview: () =>
     apiRequest<{ count: number; oldestReceivedAt: string | null; newestReceivedAt: string | null }>('/api/sms-logs/cleanup-preview'),
   cleanupSmsLogs: () =>

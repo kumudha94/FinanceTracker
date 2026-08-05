@@ -11,7 +11,7 @@ import { RootStackParamList, TabParamList } from '../../App';
 import { useState, useCallback, useMemo, useEffect } from 'react';
 import { useTheme } from '../contexts/ThemeContext';
 import { useAuth } from '../contexts/AuthContext';
-import { BillItem, NextMonthForecast, NextMonthForecastItem, ForecastItemType, WeeklySummary } from '../lib/types';
+import { BillItem, NextMonthForecast, NextMonthForecastItem, ForecastItemType, WeeklySummary, ScheduledPayment, PlannedIncomeEntry } from '../lib/types';
 import { isAutoReadEnabled, hasSmsPermission } from '../lib/smsAutoReader';
 
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
@@ -26,7 +26,7 @@ type NavigationProp = CompositeNavigationProp<
 type ActiveTab = 'income' | 'expense' | 'bills';
 type BillsAccordion = 'scheduled' | 'creditCard' | 'loans' | 'insurance' | 'billsInbox' | null;
 type ForecastAccordion = 'scheduled' | 'insurance' | 'loans' | 'creditCard' | 'savings' | 'others' | null;
-type OthersDraft = { id: string; name: string; amount: number };
+type OthersDraft = { id: string; name: string; amount: number; type: 'debit' | 'credit' };
 
 const LOADING_MESSAGES = [
   'Setting up your current month finances…',
@@ -56,6 +56,8 @@ export default function DashboardScreen() {
   const [othersDrafts, setOthersDrafts] = useState<OthersDraft[]>([]);
   const [othersNameInput, setOthersNameInput] = useState('');
   const [othersAmountInput, setOthersAmountInput] = useState('');
+  const [othersTypeInput, setOthersTypeInput] = useState<'debit' | 'credit'>('debit');
+  const [updatingPlannedIncomeId, setUpdatingPlannedIncomeId] = useState<number | null>(null);
   const [savingDraftId, setSavingDraftId] = useState<string | null>(null);
   const [togglingKey, setTogglingKey] = useState<string | null>(null);
   const [showSmsNudgeModal, setShowSmsNudgeModal] = useState(false);
@@ -115,19 +117,38 @@ export default function DashboardScreen() {
     },
   });
 
-  const saveOthersDraftMutation = useMutation({
+  const saveOthersDraftMutation = useMutation<ScheduledPayment | PlannedIncomeEntry, Error, OthersDraft>({
     mutationFn: (draft: OthersDraft) =>
-      api.createScheduledPayment({
-        name: draft.name,
-        amount: draft.amount.toString(),
-        frequency: 'one_time',
-        startMonth: forecast?.nextMonth,
-        dueDate: null,
-      }),
+      draft.type === 'credit'
+        ? api.createPlannedIncomeEntry({
+            name: draft.name,
+            amount: draft.amount.toString(),
+            expectedMonth: forecast!.nextMonth,
+            expectedYear: forecast!.nextYear,
+          })
+        : api.createScheduledPayment({
+            name: draft.name,
+            amount: draft.amount.toString(),
+            frequency: 'one_time',
+            startMonth: forecast?.nextMonth,
+            dueDate: null,
+          }),
     onSuccess: (_data, draft) => {
       setOthersDrafts(prev => prev.filter(d => d.id !== draft.id));
       queryClient.invalidateQueries({ queryKey: ['/api/next-month-forecast'] });
     },
+  });
+
+  // Status-only bookkeeping — the real money already lands as its own transaction via
+  // SMS auto-read, so this just stops the entry from being counted as still-planned.
+  // No transaction is created and no account balance changes.
+  const updatePlannedIncomeStatusMutation = useMutation({
+    mutationFn: ({ id, status }: { id: number; status: 'received' | 'cancelled' }) =>
+      api.updatePlannedIncomeEntry(id, { status }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/next-month-forecast'] });
+    },
+    onSettled: () => setUpdatingPlannedIncomeId(null),
   });
 
   useFocusEffect(
@@ -207,20 +228,35 @@ export default function DashboardScreen() {
       .reduce((sum, item) => sum + effectiveAmount('savings_goal', item), 0);
   }, [forecast, whatIfAmounts]);
 
-  const othersTotal = useMemo(
-    () => othersDrafts.reduce((sum, d) => sum + d.amount, 0),
+  const othersDebitTotal = useMemo(
+    () => othersDrafts.filter(d => d.type === 'debit').reduce((sum, d) => sum + d.amount, 0),
     [othersDrafts]
   );
+  const othersCreditTotal = useMemo(
+    () => othersDrafts.filter(d => d.type === 'credit').reduce((sum, d) => sum + d.amount, 0),
+    [othersDrafts]
+  );
+  // othersTotal drives the accordion header/footer total — net of unsaved credit drafts
+  // against unsaved debit drafts, same sign convention as everywhere else that shows outflow.
+  const othersTotal = othersDebitTotal - othersCreditTotal;
+
+  // No what-if amount editing on planned income rows (only exclude/include), so
+  // forecast.totalIncome already reflects the server-side excluded state exactly —
+  // no separate "effective" recomputation needed the way credit card bills/savings have.
+  const effectiveTotalIncome = useMemo(() => {
+    if (!forecast) return 0;
+    return forecast.totalIncome + othersCreditTotal;
+  }, [forecast, othersCreditTotal]);
 
   const effectiveTotalOutflow = useMemo(() => {
     if (!forecast) return 0;
-    return forecast.totalOutflow - forecast.totalCreditCardBills - forecast.totalSavings + effectiveCreditCardTotal + effectiveSavingsTotal + othersTotal;
-  }, [forecast, effectiveCreditCardTotal, effectiveSavingsTotal, othersTotal]);
+    return forecast.totalOutflow - forecast.totalCreditCardBills - forecast.totalSavings + effectiveCreditCardTotal + effectiveSavingsTotal + othersDebitTotal;
+  }, [forecast, effectiveCreditCardTotal, effectiveSavingsTotal, othersDebitTotal]);
 
   const effectiveNet = useMemo(() => {
     if (!forecast) return 0;
-    return forecast.totalIncome - effectiveTotalOutflow;
-  }, [forecast, effectiveTotalOutflow]);
+    return effectiveTotalIncome - effectiveTotalOutflow;
+  }, [effectiveTotalIncome, effectiveTotalOutflow]);
 
   useEffect(() => {
     if (!isLoading) return;
@@ -486,21 +522,21 @@ export default function DashboardScreen() {
     const trimmedName = othersNameInput.trim();
     const parsedAmount = parseFloat(othersAmountInput);
     if (!trimmedName || isNaN(parsedAmount) || parsedAmount <= 0) return;
-    setOthersDrafts(prev => [...prev, { id: `${Date.now()}-${Math.random()}`, name: trimmedName, amount: parsedAmount }]);
+    setOthersDrafts(prev => [...prev, { id: `${Date.now()}-${Math.random()}`, name: trimmedName, amount: parsedAmount, type: othersTypeInput }]);
     setOthersNameInput('');
     setOthersAmountInput('');
   };
 
   const renderOthersDraftRow = (draft: OthersDraft) => (
     <View key={draft.id} style={[styles.forecastRow, { borderBottomColor: colors.border }]}>
-      <View style={[styles.forecastDot, { backgroundColor: '#0ea5e9' }]} />
+      <View style={[styles.forecastDot, { backgroundColor: draft.type === 'credit' ? '#10b981' : '#0ea5e9' }]} />
       <View style={styles.forecastRowInfo}>
         <Text style={[styles.forecastRowName, { color: colors.text }]} numberOfLines={1}>
           {draft.name}
         </Text>
       </View>
-      <Text style={[styles.forecastRowAmt, { color: '#ef4444' }]}>
-        -{formatCurrency(draft.amount)}
+      <Text style={[styles.forecastRowAmt, { color: draft.type === 'credit' ? '#10b981' : '#ef4444' }]}>
+        {draft.type === 'credit' ? '+' : '-'}{formatCurrency(draft.amount)}
       </Text>
       <TouchableOpacity
         onPress={() => {
@@ -523,6 +559,82 @@ export default function DashboardScreen() {
       </TouchableOpacity>
     </View>
   );
+
+  const renderPlannedIncomeRow = (item: NextMonthForecastItem) => {
+    const key = whatIfKey('planned_income', item.id);
+    return (
+      <View key={`fpi-${item.id}`} style={[styles.forecastRow, { borderBottomColor: colors.border }, item.excluded && { opacity: 0.5 }]}>
+        <View style={[styles.forecastDot, { backgroundColor: '#10b981' }]} />
+        <View style={styles.forecastRowInfo}>
+          <Text style={[styles.forecastRowName, { color: colors.text }, item.excluded && { textDecorationLine: 'line-through' }]} numberOfLines={1}>
+            {item.name}
+          </Text>
+        </View>
+        <Text style={[styles.forecastRowAmt, { color: item.excluded ? colors.textMuted : '#10b981' }]}>
+          +{formatCurrency(item.amount)}
+        </Text>
+        <TouchableOpacity
+          onPress={() => {
+            if (togglingKey) return;
+            setTogglingKey(key);
+            toggleExclusionMutation.mutate({ itemType: 'planned_income', itemId: item.id }, { onSettled: () => setTogglingKey(null) });
+          }}
+          disabled={togglingKey === key}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          style={styles.forecastToggleBtn}
+        >
+          {togglingKey === key ? (
+            <ActivityIndicator size="small" color={colors.textMuted} />
+          ) : (
+            <Ionicons
+              name={item.excluded ? 'add-circle' : 'remove-circle'}
+              size={20}
+              color={item.excluded ? '#10b981' : colors.textMuted}
+            />
+          )}
+        </TouchableOpacity>
+        {updatingPlannedIncomeId === item.id ? (
+          <ActivityIndicator size="small" color={colors.textMuted} style={styles.forecastToggleBtn} />
+        ) : (
+          <>
+            <TouchableOpacity
+              onPress={() => {
+                setUpdatingPlannedIncomeId(item.id as number);
+                updatePlannedIncomeStatusMutation.mutate({ id: item.id as number, status: 'received' });
+              }}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              style={styles.forecastToggleBtn}
+            >
+              <Ionicons name="checkmark-circle-outline" size={20} color="#10b981" />
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => {
+                Alert.alert(
+                  'Cancel Planned Income',
+                  `Remove "${item.name}" from planned income? This can't be undone.`,
+                  [
+                    { text: 'Keep It', style: 'cancel' },
+                    {
+                      text: 'Cancel Entry',
+                      style: 'destructive',
+                      onPress: () => {
+                        setUpdatingPlannedIncomeId(item.id as number);
+                        updatePlannedIncomeStatusMutation.mutate({ id: item.id as number, status: 'cancelled' });
+                      },
+                    },
+                  ]
+                );
+              }}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              style={styles.forecastToggleBtn}
+            >
+              <Ionicons name="close-circle-outline" size={20} color={colors.textMuted} />
+            </TouchableOpacity>
+          </>
+        )}
+      </View>
+    );
+  };
 
   const renderBillsInboxSection = () => {
     if (pendingBillMappings.length === 0) return null;
@@ -952,7 +1064,7 @@ export default function DashboardScreen() {
             <View style={styles.forecastSummaryRow}>
               <View style={styles.forecastSummaryStat}>
                 <Text style={[styles.forecastStatLabel, { color: colors.textMuted }]}>Income</Text>
-                <Text style={[styles.forecastStatValue, { color: '#10b981' }]}>+{formatCurrency(forecast.totalIncome)}</Text>
+                <Text style={[styles.forecastStatValue, { color: '#10b981' }]}>+{formatCurrency(effectiveTotalIncome)}</Text>
               </View>
               <View style={[styles.loanDivider, { backgroundColor: colors.border }]} />
               <View style={styles.forecastSummaryStat}>
@@ -1158,7 +1270,12 @@ export default function DashboardScreen() {
                   <View style={styles.accordionTitleArea}>
                     <Text style={[styles.accordionTitle, { color: colors.text }]}>Others</Text>
                     <Text style={[styles.accordionSubtitle, { color: colors.textMuted }]}>
-                      {othersDrafts.length > 0 ? `${othersDrafts.length} item${othersDrafts.length > 1 ? 's' : ''}` : 'Tap to add'}
+                      {othersDrafts.length === 0 && forecast.plannedIncome.length === 0
+                        ? 'Tap to add'
+                        : [
+                            othersDrafts.length > 0 ? `${othersDrafts.length} draft${othersDrafts.length > 1 ? 's' : ''}` : null,
+                            forecast.plannedIncome.length > 0 ? `${forecast.plannedIncome.length} income` : null,
+                          ].filter(Boolean).join(' · ')}
                     </Text>
                   </View>
                   <View style={styles.accordionRight}>
@@ -1168,8 +1285,23 @@ export default function DashboardScreen() {
                 </TouchableOpacity>
                 {forecastAccordion === 'others' && (
                   <View style={styles.accordionContent}>
+                    {forecast.plannedIncome.map((item) => renderPlannedIncomeRow(item))}
                     {othersDrafts.map((draft) => renderOthersDraftRow(draft))}
                     <View style={styles.othersAddRow}>
+                      <View style={[styles.othersTypeToggle, { borderColor: colors.border }]}>
+                        <TouchableOpacity
+                          onPress={() => setOthersTypeInput('debit')}
+                          style={[styles.othersTypeButton, othersTypeInput === 'debit' && { backgroundColor: '#ef444420' }]}
+                        >
+                          <Text style={[styles.othersTypeButtonText, { color: othersTypeInput === 'debit' ? '#ef4444' : colors.textMuted }]}>−</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          onPress={() => setOthersTypeInput('credit')}
+                          style={[styles.othersTypeButton, othersTypeInput === 'credit' && { backgroundColor: '#10b98120' }]}
+                        >
+                          <Text style={[styles.othersTypeButtonText, { color: othersTypeInput === 'credit' ? '#10b981' : colors.textMuted }]}>+</Text>
+                        </TouchableOpacity>
+                      </View>
                       <TextInput
                         style={[styles.othersNameInput, { color: colors.text, borderColor: colors.border }]}
                         value={othersNameInput}
@@ -1193,7 +1325,9 @@ export default function DashboardScreen() {
                     {othersDrafts.length > 0 && (
                       <View style={styles.forecastTabTotal}>
                         <Text style={[styles.forecastTabTotalLabel, { color: colors.textMuted }]}>Total</Text>
-                        <Text style={[styles.forecastTabTotalValue, { color: '#ef4444' }]}>-{formatCurrency(othersTotal)}</Text>
+                        <Text style={[styles.forecastTabTotalValue, { color: othersTotal >= 0 ? '#ef4444' : '#10b981' }]}>
+                          {othersTotal >= 0 ? '-' : '+'}{formatCurrency(Math.abs(othersTotal))}
+                        </Text>
                       </View>
                     )}
                   </View>
@@ -1356,7 +1490,7 @@ export default function DashboardScreen() {
           <View style={[styles.card, { backgroundColor: colors.card }]}>
             <View style={styles.cardHeader}>
               <Text style={[styles.cardTitle, { color: colors.text }]}>Loans & EMI</Text>
-              <TouchableOpacity onPress={() => navigation.navigate('Loans' as any)} data-testid="button-view-loans">
+              <TouchableOpacity onPress={() => navigation.navigate('More' as any, { screen: 'Loans' })} data-testid="button-view-loans">
                 <Text style={[styles.viewAll, { color: colors.primary }]}>Manage</Text>
               </TouchableOpacity>
             </View>
@@ -1415,7 +1549,7 @@ export default function DashboardScreen() {
           <View style={styles.actionsGrid}>
             <TouchableOpacity
               style={[styles.actionButton, { backgroundColor: colors.primary + '12' }]}
-              onPress={() => navigation.navigate('ScheduledPayments' as any)}
+              onPress={() => navigation.navigate('More' as any, { screen: 'ScheduledPayments' })}
               data-testid="button-quick-payments"
             >
               <Ionicons name="repeat-outline" size={22} color={colors.primary} />
@@ -1423,7 +1557,7 @@ export default function DashboardScreen() {
             </TouchableOpacity>
             <TouchableOpacity
               style={[styles.actionButton, { backgroundColor: '#f59e0b' + '12' }]}
-              onPress={() => navigation.navigate('Loans' as any)}
+              onPress={() => navigation.navigate('More' as any, { screen: 'Loans' })}
               data-testid="button-quick-loans"
             >
               <Ionicons name="card-outline" size={22} color="#f59e0b" />
@@ -1431,7 +1565,7 @@ export default function DashboardScreen() {
             </TouchableOpacity>
             <TouchableOpacity
               style={[styles.actionButton, { backgroundColor: '#8b5cf6' + '12' }]}
-              onPress={() => navigation.navigate('Insurances' as any)}
+              onPress={() => navigation.navigate('More' as any, { screen: 'Insurance' })}
               data-testid="button-quick-insurance"
             >
               <Ionicons name="shield-checkmark-outline" size={22} color="#8b5cf6" />
@@ -1439,7 +1573,7 @@ export default function DashboardScreen() {
             </TouchableOpacity>
             <TouchableOpacity
               style={[styles.actionButton, { backgroundColor: '#10b981' + '12' }]}
-              onPress={() => navigation.navigate('SavingsGoals' as any)}
+              onPress={() => navigation.navigate('More' as any, { screen: 'SavingsGoals' })}
               data-testid="button-quick-savings"
             >
               <Ionicons name="trophy-outline" size={22} color="#10b981" />
@@ -2395,6 +2529,22 @@ const styles = StyleSheet.create({
     gap: 8,
     paddingVertical: 8,
     paddingLeft: 4,
+  },
+  othersTypeToggle: {
+    flexDirection: 'row',
+    borderWidth: 1,
+    borderRadius: 8,
+    overflow: 'hidden',
+  },
+  othersTypeButton: {
+    width: 28,
+    height: 28,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  othersTypeButtonText: {
+    fontSize: 16,
+    fontWeight: '700',
   },
   othersNameInput: {
     flex: 1,

@@ -464,8 +464,8 @@ export default function SavingsGoalsScreen() {
               <Text style={[styles.totalSubtitle]}>of {formatCurrency(totalTarget)} target</Text>
               {totalExpectedMonthly > 0 && (
                 <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginTop: 8, gap: 6 }}>
-                  <Ionicons name="calendar-outline" size={14} color={colors.primary} />
-                  <Text style={[styles.totalSubtitle, { color: colors.primary, fontWeight: '600' }]}>
+                  <Ionicons name="calendar-outline" size={14} color="#fff" />
+                  <Text style={[styles.totalSubtitle, { color: '#fff', opacity: 1, fontWeight: '600' }]}>
                     ₹{totalExpectedMonthly.toFixed(2)}/month expected
                   </Text>
                 </View>

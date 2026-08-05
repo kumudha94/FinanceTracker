@@ -641,9 +641,13 @@ export default function LoanDetailsScreen() {
   const partPaymentPreview = calculatePartPaymentPreview();
 
   const getUpcomingInstallments = () => {
-    const now = new Date();
+    // Compare calendar dates, not exact timestamps — an installment due dates at
+    // midnight today, so a plain `>= new Date()` check drops out of "upcoming" the
+    // moment any time passes after midnight on its due day.
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
     return installments
-      .filter(i => i.status === 'pending' && new Date(i.dueDate) >= now)
+      .filter(i => i.status === 'pending' && new Date(i.dueDate) >= startOfToday)
       .slice(0, 6);
   };
 
@@ -968,7 +972,12 @@ export default function LoanDetailsScreen() {
                 upcomingInstallments.map((installment, index) => {
                   const dueDate = new Date(installment.dueDate);
                   const now = new Date();
-                  const isPastDue = dueDate < now;
+                  const startOfToday = new Date();
+                  startOfToday.setHours(0, 0, 0, 0);
+                  // Same calendar-date comparison as getUpcomingInstallments — an
+                  // installment due today shouldn't flip to "past due" styling just
+                  // because the clock has ticked past midnight.
+                  const isPastDue = dueDate < startOfToday;
                   // Check if this is the current month's EMI (due in current or past month)
                   const isCurrentOrPastMonth = dueDate.getFullYear() < now.getFullYear() ||
                     (dueDate.getFullYear() === now.getFullYear() && dueDate.getMonth() <= now.getMonth());

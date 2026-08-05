@@ -194,6 +194,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
       setUser(userData);
       setHasPassword(userData.hasPassword);
+      setHasPin(userData.hasPin);
+      hasPinRef.current = userData.hasPin;
     } catch (error) {
       console.error('Failed to update user:', error);
     }

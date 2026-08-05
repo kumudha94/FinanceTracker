@@ -252,7 +252,7 @@ export interface NextMonthForecastItem {
   excluded: boolean;
 }
 
-export type ForecastItemType = 'scheduled_payment' | 'insurance' | 'loan' | 'credit_card_bill' | 'savings_goal';
+export type ForecastItemType = 'scheduled_payment' | 'insurance' | 'loan' | 'credit_card_bill' | 'savings_goal' | 'planned_income';
 
 export interface NextMonthForecast {
   monthLabel: string;
@@ -266,6 +266,7 @@ export interface NextMonthForecast {
     creditDate: string;
     creditDay: number;
   }>;
+  plannedIncome: NextMonthForecastItem[];
   scheduledPayments: NextMonthForecastItem[];
   loans: NextMonthForecastItem[];
   insurance: NextMonthForecastItem[];
@@ -274,6 +275,7 @@ export interface NextMonthForecast {
   totalIncome: number;
   totalOutflow: number;
   net: number;
+  totalPlannedIncome: number;
   totalScheduled: number;
   totalLoans: number;
   totalInsurance: number;
@@ -329,6 +331,26 @@ export interface InsertScheduledPayment {
   startMonth?: number | null;
   status?: 'active' | 'inactive';
   notes?: string | null;
+}
+
+export interface PlannedIncomeEntry {
+  id: number;
+  userId: number;
+  name: string;
+  amount: string;
+  expectedMonth: number;
+  expectedYear: number;
+  status: 'planned' | 'received' | 'cancelled';
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface InsertPlannedIncomeEntry {
+  name: string;
+  amount: string;
+  expectedMonth: number;
+  expectedYear: number;
+  status?: 'planned' | 'received' | 'cancelled';
 }
 
 export interface PaymentOccurrence {

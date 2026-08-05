@@ -28,7 +28,7 @@ const CREDIT_KEYWORDS = [
 const DUE_KEYWORDS = [
   "dues of", "minimum due", "total due", "total outstanding",
   "outstanding amount", "amount due", "bill amount", "payment due",
-  "e-mandate", "will be deducted", "will be debited"
+  "e-mandate", "will be deducted", "will be debited", "is due on"
 ];
 
 // "X will be deducted/debited on <future date>" (e-mandate / subscription pre-notifications)
@@ -47,6 +47,10 @@ function extractAmount(msg: string): number | null {
     /(?:rs\.?|inr|₹)\s*([\d,]+(?:\.\d{1,2})?)/i,
     /([\d,]+(?:\.\d{1,2})?)\s*(?:rs\.?|inr|₹)/i,
     /(?:rs\.?|inr|₹)([\d,]+(?:\.\d{1,2})?)/i,
+    // Loan/EMI due reminders often state the amount with no currency marker at all
+    // ("your personal loan EMI of   63,897.00  for a/c ... is due on 04/08/26") — narrowly
+    // scoped to "emi/installment of <amount>" rather than loosening the patterns above.
+    /(?:emi|installment)\s+of\s+([\d,]+(?:\.\d{1,2})?)/i,
   ];
   for (const pattern of patterns) {
     const match = msg.match(pattern);
@@ -232,7 +236,12 @@ export function parseSmsByRegex(message: string, sender?: string): ParsedSmsData
 export function parseDueSms(message: string): ParsedDueSmsData | null {
   const lowerMsg = message.toLowerCase();
 
-  if (!lowerMsg.includes("rs") && !lowerMsg.includes("inr") && !lowerMsg.includes("₹")) {
+  // Most due-reminders carry a currency marker next to the amount, but loan/EMI due
+  // notices often don't ("personal loan EMI of 63,897.00 ... is due on 04/08/26") — let
+  // that narrow, specific phrasing through even with no rs/inr/₹ anywhere in the message.
+  const hasCurrencyMarker = lowerMsg.includes("rs") || lowerMsg.includes("inr") || lowerMsg.includes("₹");
+  const hasEmiAmountPhrasing = /(?:emi|installment)\s+of\s+[\d,]/i.test(message);
+  if (!hasCurrencyMarker && !hasEmiAmountPhrasing) {
     return null;
   }
 

@@ -236,8 +236,8 @@ function MoreStackNavigator() {
           title: route.params?.loanId ? 'Edit Loan' : 'Add Loan' 
         })}
       />
-      <MoreStack.Screen 
-        name="LoanDetails" 
+      <MoreStack.Screen
+        name="LoanDetails"
         component={LoanDetailsScreen}
         options={{ title: 'Loan Details' }}
       />
