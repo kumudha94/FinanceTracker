@@ -303,6 +303,39 @@ export const insertScheduledPaymentSchema = createInsertSchema(scheduledPayments
 export type InsertScheduledPayment = z.infer<typeof insertScheduledPaymentSchema>;
 export type ScheduledPayment = typeof scheduledPayments.$inferSelect;
 
+// Planned Income Entries — the income-side counterpart to saving an "Others" ad-hoc entry
+// as a one-time scheduled payment (freelance payment, refund, bonus, etc). scheduled_payments
+// is structurally expense-only (no direction/type column, and every forecast total treats it
+// as outflow), so this is a small isolated table rather than a type flag bolted onto payments.
+export const plannedIncomeEntries = pgTable("planned_income_entries", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull().references(() => users.id),
+  name: varchar("name", { length: 200 }).notNull(),
+  amount: decimal("amount", { precision: 12, scale: 2 }).notNull(),
+  expectedMonth: integer("expected_month").notNull(), // 1-12
+  expectedYear: integer("expected_year").notNull(),
+  status: varchar("status", { length: 20 }).notNull().default("planned"), // 'planned', 'received', 'cancelled'
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const insertPlannedIncomeEntrySchema = createInsertSchema(plannedIncomeEntries).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+}).extend({
+  name: z.string().min(1, "Name is required"),
+  amount: z.string().min(1, "Amount is required").refine((val) => !isNaN(Number(val)) && Number(val) > 0, {
+    message: "Amount must be a positive number",
+  }),
+  expectedMonth: z.number().min(1).max(12),
+  expectedYear: z.number().min(2000),
+  status: z.enum(["planned", "received", "cancelled"]).optional(),
+});
+
+export type InsertPlannedIncomeEntry = z.infer<typeof insertPlannedIncomeEntrySchema>;
+export type PlannedIncomeEntry = typeof plannedIncomeEntries.$inferSelect;
+
 // Payment Occurrences (monthly checklist for scheduled payments)
 export const paymentOccurrences = pgTable("payment_occurrences", {
   id: serial("id").primaryKey(),
@@ -1181,7 +1214,7 @@ export type InsuranceWithRelations = Insurance & {
 export const forecastExclusions = pgTable("forecast_exclusions", {
   id: serial("id").primaryKey(),
   userId: integer("user_id").notNull().references(() => users.id),
-  itemType: varchar("item_type", { length: 20 }).notNull(), // 'scheduled_payment', 'insurance', 'loan', 'credit_card_bill'
+  itemType: varchar("item_type", { length: 20 }).notNull(), // 'scheduled_payment', 'insurance', 'loan', 'credit_card_bill', 'savings_goal', 'planned_income'
   itemId: varchar("item_id", { length: 50 }).notNull(), // source record id, or 'cc-auto-<accountId>' for auto-detected credit card bills
   cycleStart: timestamp("cycle_start").notNull(),
   createdAt: timestamp("created_at").notNull().defaultNow(),
@@ -1193,7 +1226,7 @@ export const insertForecastExclusionSchema = createInsertSchema(forecastExclusio
   id: true,
   createdAt: true,
 }).extend({
-  itemType: z.enum(["scheduled_payment", "insurance", "loan", "credit_card_bill", "savings_goal"]),
+  itemType: z.enum(["scheduled_payment", "insurance", "loan", "credit_card_bill", "savings_goal", "planned_income"]),
   cycleStart: z.union([z.string(), z.date()]).transform((val) => new Date(val)),
 });
 

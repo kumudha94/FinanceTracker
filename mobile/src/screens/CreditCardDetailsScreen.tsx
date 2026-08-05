@@ -9,11 +9,13 @@ import { formatCurrency, getThemedColors, getOrdinalSuffix } from '../lib/utils'
 import type { Loan } from '../lib/types';
 import { useState, useMemo } from 'react';
 import { useTheme } from '../contexts/ThemeContext';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const screenWidth = Dimensions.get('window').width;
 
 export default function CreditCardDetailsScreen() {
   const navigation = useNavigation();
+  const insets = useSafeAreaInsets();
   const { resolvedTheme } = useTheme();
   const colors = useMemo(() => getThemedColors(resolvedTheme), [resolvedTheme]);
   
@@ -716,6 +718,57 @@ export default function CreditCardDetailsScreen() {
         
         <View style={{ height: 20 }} />
       </ScrollView>
+
+      {/* Bottom Tab Bar
+          This screen is pushed on the root navigator (not nested inside the More tab's
+          stack) so back/tab-switch behavior stays correct — see Section 6.1 in TODO.md
+          for the bug that pattern avoids. This bar is a visual-only replica of TabNavigator
+          in App.tsx; tapping an item jumps back into the real tab navigator (popping this
+          screen) rather than rendering an actual nested tab. Keep the icons/labels/routes
+          in sync with TabNavigator if that changes. */}
+      <View
+        style={[
+          styles.tabBar,
+          {
+            backgroundColor: colors.background,
+            borderTopColor: colors.border,
+            paddingBottom: Math.max(insets.bottom, 5),
+          },
+        ]}
+      >
+        <TouchableOpacity
+          style={styles.tabItem}
+          onPress={() => (navigation.navigate as any)('Main', { screen: 'Dashboard' })}
+          data-testid="button-tab-dashboard"
+        >
+          <Ionicons name="home-outline" size={24} color={colors.textMuted} />
+          <Text style={[styles.tabLabel, { color: colors.textMuted }]}>My Tracker</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={styles.tabItem}
+          onPress={() => (navigation.navigate as any)('Main', { screen: 'Accounts' })}
+          data-testid="button-tab-accounts"
+        >
+          <Ionicons name="wallet-outline" size={24} color={colors.textMuted} />
+          <Text style={[styles.tabLabel, { color: colors.textMuted }]}>Accounts</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={styles.tabItem}
+          onPress={() => (navigation.navigate as any)('Main', { screen: 'Transactions' })}
+          data-testid="button-tab-transactions"
+        >
+          <Ionicons name="list-outline" size={24} color={colors.textMuted} />
+          <Text style={[styles.tabLabel, { color: colors.textMuted }]}>Transactions</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={styles.tabItem}
+          onPress={() => (navigation.navigate as any)('Main', { screen: 'More' })}
+          data-testid="button-tab-more"
+        >
+          <Ionicons name="menu-outline" size={24} color={colors.textMuted} />
+          <Text style={[styles.tabLabel, { color: colors.textMuted }]}>More</Text>
+        </TouchableOpacity>
+      </View>
     </View>
   );
 }
@@ -748,6 +801,21 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#fff',
     letterSpacing: 0.5,
+  },
+  tabBar: {
+    flexDirection: 'row',
+    borderTopWidth: StyleSheet.hairlineWidth,
+    paddingTop: 5,
+  },
+  tabItem: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 4,
+  },
+  tabLabel: {
+    fontSize: 11,
+    marginTop: 2,
   },
   scrollView: {
     flex: 1,

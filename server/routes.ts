@@ -21,7 +21,8 @@ import {
   insertLoanPaymentSchema,
   insertCardDetailsSchema,
   insertInsuranceSchema,
-  insertInsurancePremiumSchema
+  insertInsurancePremiumSchema,
+  insertPlannedIncomeEntrySchema
 } from "@shared/schema";
 import { suggestCategory, parseSmsMessage, parseStatementPDF, ExtractedTransaction } from "./openai";
 import { deriveInstitutionKey, parseDueSms } from "./smsParser";
@@ -1230,6 +1231,75 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
     } catch (error) {
       res.status(500).json({ error: "Failed to delete scheduled payment" });
+    }
+  });
+
+  // ========== Planned Income Entries ==========
+  // Income-side counterpart to saving an "Others" ad-hoc debit entry as a one-time scheduled
+  // payment — see shared/schema.ts's plannedIncomeEntries comment for why this is a separate
+  // table rather than a type flag on scheduled_payments.
+  app.post("/api/planned-income-entries", authenticateToken, async (req, res) => {
+    try {
+      const userId = req.user!.userId;
+      const validatedData = insertPlannedIncomeEntrySchema.parse({ ...req.body, userId });
+      const entry = await storage.createPlannedIncomeEntry(validatedData);
+      res.status(201).json(entry);
+    } catch (error: any) {
+      res.status(400).json({ error: error.message || "Invalid planned income data" });
+    }
+  });
+
+  app.get("/api/planned-income-entries", authenticateToken, async (req, res) => {
+    try {
+      const userId = req.user!.userId;
+      const month = req.query.month ? parseInt(req.query.month as string) : undefined;
+      const year = req.query.year ? parseInt(req.query.year as string) : undefined;
+      const entries = await storage.getPlannedIncomeEntries(userId, month, year);
+      res.json(entries);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch planned income entries" });
+    }
+  });
+
+  app.patch("/api/planned-income-entries/:id", authenticateToken, async (req, res) => {
+    try {
+      const userId = req.user!.userId;
+      const entryId = parseInt(req.params.id);
+
+      const existingEntry = await storage.getPlannedIncomeEntry(entryId);
+      if (!existingEntry || existingEntry.userId !== userId) {
+        return res.status(404).json({ error: "Planned income entry not found" });
+      }
+
+      const entry = await storage.updatePlannedIncomeEntry(entryId, req.body);
+      if (entry) {
+        res.json(entry);
+      } else {
+        res.status(404).json({ error: "Planned income entry not found" });
+      }
+    } catch (error: any) {
+      res.status(400).json({ error: error.message || "Invalid planned income data" });
+    }
+  });
+
+  app.delete("/api/planned-income-entries/:id", authenticateToken, async (req, res) => {
+    try {
+      const userId = req.user!.userId;
+      const entryId = parseInt(req.params.id);
+
+      const existingEntry = await storage.getPlannedIncomeEntry(entryId);
+      if (!existingEntry || existingEntry.userId !== userId) {
+        return res.status(404).json({ error: "Planned income entry not found" });
+      }
+
+      const deleted = await storage.deletePlannedIncomeEntry(entryId);
+      if (deleted) {
+        res.status(204).send();
+      } else {
+        res.status(404).json({ error: "Planned income entry not found" });
+      }
+    } catch (error) {
+      res.status(500).json({ error: "Failed to delete planned income entry" });
     }
   });
 
@@ -2886,6 +2956,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
         totalIncome += amount;
       }
 
+      const plannedIncomeEntriesForCycle = (await storage.getPlannedIncomeEntries(userId, nextMonth, nextYear))
+        .filter(e => e.status === 'planned');
+      const plannedIncomeItems: any[] = [];
+      let totalPlannedIncome = 0;
+      for (const entry of plannedIncomeEntriesForCycle) {
+        const amount = parseFloat(entry.amount);
+        const excluded = isExcluded('planned_income', entry.id);
+        plannedIncomeItems.push({
+          id: entry.id,
+          name: entry.name,
+          amount,
+          dueDate: null,
+          excluded,
+        });
+        if (!excluded) totalPlannedIncome += amount;
+      }
+      totalIncome += totalPlannedIncome;
+
       const allPayments = await storage.getAllScheduledPayments(userId);
       const activePayments = allPayments.filter(p => p.status === 'active');
 
@@ -3117,6 +3205,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         nextMonth,
         nextYear,
         salary: salaryItems,
+        plannedIncome: plannedIncomeItems,
         scheduledPayments: scheduledPaymentItems.sort((a, b) => (a.dueDate || 99) - (b.dueDate || 99)),
         loans: loanItems.sort((a, b) => (a.dueDate || 99) - (b.dueDate || 99)),
         insurance: insuranceItems.sort((a, b) => (a.dueDate || 99) - (b.dueDate || 99)),
@@ -3125,6 +3214,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         totalIncome,
         totalOutflow,
         net: totalIncome - totalOutflow,
+        totalPlannedIncome,
         totalScheduled,
         totalLoans,
         totalInsurance,
@@ -5759,6 +5849,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { db } = await import("./db");
       const { sql } = await import("drizzle-orm");
 
+      // sms_logs holds no-action FKs into credit_card_statements, payment_occurrences,
+      // bill_sender_mappings and sender_institution_mappings, so it must be cleared before
+      // any of those, even though nothing else references sms_logs itself.
+      await db.execute(sql`DELETE FROM sms_logs WHERE user_id = ${userId} OR transaction_id IN (SELECT id FROM transactions WHERE user_id = ${userId})`);
+
+      // Also leaf tables, but bill_sender_mappings points at scheduled_payments so it must go
+      // before that table is cleared below.
+      await db.execute(sql`DELETE FROM sender_institution_mappings WHERE user_id = ${userId}`);
+      await db.execute(sql`DELETE FROM bill_sender_mappings WHERE user_id = ${userId}`);
+      await db.execute(sql`DELETE FROM forecast_exclusions WHERE user_id = ${userId}`);
+
+      await db.execute(sql`DELETE FROM loan_spending_entries WHERE loan_id IN (SELECT id FROM loans WHERE user_id = ${userId})`);
       await db.execute(sql`DELETE FROM loan_payments WHERE loan_id IN (SELECT id FROM loans WHERE user_id = ${userId})`);
       await db.execute(sql`DELETE FROM loan_installments WHERE loan_id IN (SELECT id FROM loans WHERE user_id = ${userId})`);
       await db.execute(sql`DELETE FROM loan_components WHERE loan_id IN (SELECT id FROM loans WHERE user_id = ${userId})`);
@@ -5781,7 +5883,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
       await db.execute(sql`DELETE FROM salary_cycles WHERE salary_profile_id IN (SELECT id FROM salary_profiles WHERE user_id = ${userId})`);
       await db.execute(sql`DELETE FROM salary_profiles WHERE user_id = ${userId}`);
 
-      await db.execute(sql`DELETE FROM sms_logs WHERE user_id = ${userId} OR transaction_id IN (SELECT id FROM transactions WHERE user_id = ${userId})`);
       await db.execute(sql`DELETE FROM budgets WHERE user_id = ${userId}`);
       await db.execute(sql`DELETE FROM transactions WHERE user_id = ${userId}`);
       await db.execute(sql`DELETE FROM accounts WHERE user_id = ${userId}`);

@@ -3,6 +3,8 @@ import { View, Text, StyleSheet, TouchableOpacity, Switch, Alert, TextInput, Mod
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as FileSystem from 'expo-file-system';
+import * as Sharing from 'expo-sharing';
 import { api } from '../lib/api';
 import { getThemedColors } from '../lib/utils';
 import { useTheme } from '../contexts/ThemeContext';
@@ -15,6 +17,7 @@ export default function SettingsScreen() {
   const [pin, setPin] = useState('');
   const [isDeletingAccount, setIsDeletingAccount] = useState(false);
   const [isCleaningUpSmsLogs, setIsCleaningUpSmsLogs] = useState(false);
+  const [isExportingData, setIsExportingData] = useState(false);
   const { theme, setTheme, resolvedTheme } = useTheme();
   const { checkPinRequired, user: authUser, setUser, logout } = useAuth();
   const colors = useMemo(() => getThemedColors(resolvedTheme), [resolvedTheme]);
@@ -96,6 +99,11 @@ export default function SettingsScreen() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/user'] });
       checkPinRequired();
+      // checkPinRequired() only updates the in-memory hasPin flag used for same-session
+      // locking — it doesn't touch the cached/persisted user object, so a cold restart
+      // (or any later setUser call that spreads the stale object) would still read
+      // hasPin: false and skip the lock screen. Keep the object itself in sync too.
+      if (authUser) setUser({ ...authUser, hasPin: true });
       setShowPinModal(false);
       setPin('');
       Alert.alert('Success', 'PIN has been set. Next time you open the app, you will be asked to enter your PIN.');
@@ -110,6 +118,11 @@ export default function SettingsScreen() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/user'] });
       checkPinRequired();
+      // Same fix as setPinMutation above, in the other direction — without this, the
+      // stale hasPin: true in the cached user object can get re-persisted by an unrelated
+      // later setUser call (e.g. toggling biometric), locking the user out with no valid
+      // PIN behind it and no way back in from the lock screen.
+      if (authUser) setUser({ ...authUser, hasPin: false });
       Alert.alert('Success', 'PIN has been removed');
     },
   });
@@ -224,6 +237,41 @@ export default function SettingsScreen() {
     } catch (error: any) {
       setIsCleaningUpSmsLogs(false);
       Alert.alert('Error', error.message || 'Failed to check SMS logs. Please try again.');
+    }
+  };
+
+  const handleExportData = () => {
+    Alert.alert(
+      'Export Data',
+      'Choose a format to export your transactions.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'CSV', onPress: () => exportData('csv') },
+        { text: 'JSON', onPress: () => exportData('json') },
+      ]
+    );
+  };
+
+  const exportData = async (format: 'csv' | 'json') => {
+    setIsExportingData(true);
+    try {
+      const result = await api.exportData(format);
+      const fileUri = `${FileSystem.cacheDirectory}${result.filename}`;
+      await FileSystem.writeAsStringAsync(fileUri, result.content, {
+        encoding: FileSystem.EncodingType.UTF8,
+      });
+      setIsExportingData(false);
+      if (await Sharing.isAvailableAsync()) {
+        await Sharing.shareAsync(fileUri, {
+          mimeType: format === 'csv' ? 'text/csv' : 'application/json',
+          dialogTitle: 'Export Data',
+        });
+      } else {
+        Alert.alert('Saved', `File saved to ${fileUri}`);
+      }
+    } catch (error: any) {
+      setIsExportingData(false);
+      Alert.alert('Error', error.message || 'Failed to export data. Please try again.');
     }
   };
 
@@ -431,9 +479,17 @@ export default function SettingsScreen() {
 
       <Text style={[styles.sectionTitle, { color: colors.textMuted }]}>Data</Text>
       <View style={[styles.section, { backgroundColor: colors.card }]}>
-        <TouchableOpacity style={styles.settingRowButton}>
+        <TouchableOpacity
+          style={styles.settingRowButton}
+          onPress={handleExportData}
+          disabled={isExportingData}
+        >
           <View style={styles.settingInfo}>
-            <Ionicons name="download-outline" size={22} color={colors.text} />
+            {isExportingData ? (
+              <ActivityIndicator size="small" color={colors.text} />
+            ) : (
+              <Ionicons name="download-outline" size={22} color={colors.text} />
+            )}
             <View>
               <Text style={[styles.settingTitle, { color: colors.text }]}>Export Data</Text>
               <Text style={[styles.settingSubtitle, { color: colors.textMuted }]}>Download your transactions</Text>
@@ -445,7 +501,7 @@ export default function SettingsScreen() {
 
       <Text style={[styles.sectionTitle, { color: colors.textMuted }]}>Account</Text>
       <View style={[styles.section, { backgroundColor: colors.card }]}>
-        <TouchableOpacity 
+        <TouchableOpacity
           style={styles.settingRowButton}
           onPress={() => {
             Alert.alert(

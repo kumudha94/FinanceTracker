@@ -3,7 +3,7 @@ import {
   paymentOccurrences, savingsGoals, savingsContributions, salaryProfiles, salaryCycles,
   loans, loanComponents, loanInstallments, loanSpendingEntries, loanTerms, loanPayments, loanBtAllocations, cardDetails,
   insurances, insurancePremiums, creditCardStatements, senderInstitutionMappings, billSenderMappings,
-  forecastExclusions, smsPaymentMatchReviews, smsPaymentMatchCandidates,
+  forecastExclusions, smsPaymentMatchReviews, smsPaymentMatchCandidates, plannedIncomeEntries,
   type User, type InsertUser,
   type Account, type InsertAccount,
   type Category, type InsertCategory,
@@ -32,11 +32,12 @@ import {
   type ForecastExclusion, type InsertForecastExclusion,
   type SmsPaymentMatchReview, type InsertSmsPaymentMatchReview,
   type SmsPaymentMatchCandidate, type InsertSmsPaymentMatchCandidate,
+  type PlannedIncomeEntry, type InsertPlannedIncomeEntry,
   type DashboardStats,
   DEFAULT_CATEGORIES
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, and, gte, lte, lt, desc, sql, ilike, or, inArray } from "drizzle-orm";
+import { eq, and, gte, lte, lt, ne, desc, sql, ilike, or, inArray } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 
 // A pending loan installment / insurance premium / scheduled payment occurrence that matched a
@@ -121,6 +122,13 @@ export interface IStorage {
   updateScheduledPayment(id: number, payment: Partial<InsertScheduledPayment>): Promise<ScheduledPayment | undefined>;
   deleteScheduledPayment(id: number): Promise<boolean>;
   getCreditCardBills(userId: number): Promise<any[]>;
+
+  // Planned Income Entries
+  getPlannedIncomeEntries(userId: number, month?: number, year?: number): Promise<PlannedIncomeEntry[]>;
+  getPlannedIncomeEntry(id: number): Promise<PlannedIncomeEntry | undefined>;
+  createPlannedIncomeEntry(entry: InsertPlannedIncomeEntry): Promise<PlannedIncomeEntry>;
+  updatePlannedIncomeEntry(id: number, entry: Partial<InsertPlannedIncomeEntry>): Promise<PlannedIncomeEntry | undefined>;
+  deletePlannedIncomeEntry(id: number): Promise<boolean>;
 
   // Credit Card Statements
   getCreditCardStatements(accountId: number): Promise<CreditCardStatement[]>;
@@ -863,9 +871,42 @@ export class DatabaseStorage implements IStorage {
   async deleteScheduledPayment(id: number): Promise<boolean> {
     // First delete all payment occurrences for this scheduled payment
     await db.delete(paymentOccurrences).where(eq(paymentOccurrences.scheduledPaymentId, id));
-    
+
     // Then delete the scheduled payment
     const result = await db.delete(scheduledPayments).where(eq(scheduledPayments.id, id)).returning();
+    return result.length > 0;
+  }
+
+  // Planned Income Entries — the income-side counterpart to a one-time scheduled payment.
+  async getPlannedIncomeEntries(userId: number, month?: number, year?: number): Promise<PlannedIncomeEntry[]> {
+    const conditions = [eq(plannedIncomeEntries.userId, userId)];
+    if (month !== undefined && year !== undefined) {
+      conditions.push(eq(plannedIncomeEntries.expectedMonth, month));
+      conditions.push(eq(plannedIncomeEntries.expectedYear, year));
+    }
+    return db.select().from(plannedIncomeEntries).where(and(...conditions));
+  }
+
+  async getPlannedIncomeEntry(id: number): Promise<PlannedIncomeEntry | undefined> {
+    const [entry] = await db.select().from(plannedIncomeEntries).where(eq(plannedIncomeEntries.id, id));
+    return entry || undefined;
+  }
+
+  async createPlannedIncomeEntry(entry: InsertPlannedIncomeEntry): Promise<PlannedIncomeEntry> {
+    const [newEntry] = await db.insert(plannedIncomeEntries).values(entry).returning();
+    return newEntry;
+  }
+
+  async updatePlannedIncomeEntry(id: number, entry: Partial<InsertPlannedIncomeEntry>): Promise<PlannedIncomeEntry | undefined> {
+    const [updated] = await db.update(plannedIncomeEntries)
+      .set({ ...entry, updatedAt: new Date() })
+      .where(eq(plannedIncomeEntries.id, id))
+      .returning();
+    return updated || undefined;
+  }
+
+  async deletePlannedIncomeEntry(id: number): Promise<boolean> {
+    const result = await db.delete(plannedIncomeEntries).where(eq(plannedIncomeEntries.id, id)).returning();
     return result.length > 0;
   }
 
@@ -2335,17 +2376,8 @@ export class DatabaseStorage implements IStorage {
 
   // Loan Installments
   async regenerateLoanInstallments(loanId: number): Promise<LoanInstallment[]> {
-    // console.log('Storage: Regenerating installments for loan:', loanId);
-    // Delete all pending installments
-    const deleteResult = await db.delete(loanInstallments)
-      .where(and(
-        eq(loanInstallments.loanId, loanId),
-        eq(loanInstallments.status, 'pending')
-      ));
-    // console.log('Storage: Deleted pending installments');
-    
-    // Generate new installments using current date as base
-    // console.log('Storage: Generating new installments from current date...');
+    // Deleting non-paid installments and continuing the number sequence past whatever's
+    // already paid is handled inside generateLoanInstallments itself.
     const newInstallments = await this.generateLoanInstallments(loanId, true);
     // console.log('Storage: Generated', newInstallments.length, 'new installments');
     
@@ -2403,8 +2435,21 @@ export class DatabaseStorage implements IStorage {
     const loan = await this.getLoan(loanId);
     if (!loan || !loan.emiAmount || !loan.tenure) return [];
 
-    // Delete existing installments for this loan
-    await db.delete(loanInstallments).where(eq(loanInstallments.loanId, loanId));
+    // Paid installments are a permanent payment record — never wipe them on regenerate.
+    // Only non-paid rows (pending/overdue/etc.) are cleared and rebuilt from today onward,
+    // continuing the installment-number sequence after whatever's already been paid.
+    const paidInstallments = await db.select().from(loanInstallments)
+      .where(and(eq(loanInstallments.loanId, loanId), eq(loanInstallments.status, 'paid')));
+    const paidCount = paidInstallments.length;
+    const lastPaidInstallmentNumber = paidInstallments.reduce(
+      (max, inst) => Math.max(max, inst.installmentNumber), 0
+    );
+
+    await db.delete(loanInstallments)
+      .where(and(eq(loanInstallments.loanId, loanId), ne(loanInstallments.status, 'paid')));
+
+    const remainingCount = Math.max(0, loan.tenure - paidCount);
+    if (remainingCount === 0) return [];
 
     const generatedInstallments: LoanInstallment[] = [];
     const emiAmount = parseFloat(loan.emiAmount);
@@ -2450,7 +2495,7 @@ export class DatabaseStorage implements IStorage {
     //             'Should include current month:', shouldIncludeCurrentMonth, 
     //             'Start index:', startIndex, 'Use current date:', useCurrentDate);
 
-    for (let i = startIndex; i <= loan.tenure + startIndex - 1; i++) {
+    for (let i = startIndex; i <= remainingCount + startIndex - 1; i++) {
       // Calculate interest for this installment
       const interestAmount = remainingPrincipal * interestRate;
       // Principal is the remaining amount after interest
@@ -2469,8 +2514,9 @@ export class DatabaseStorage implements IStorage {
       const lastDayOfMonth = new Date(dueDate.getFullYear(), dueDate.getMonth() + 1, 0).getDate();
       dueDate.setDate(Math.min(emiDay, lastDayOfMonth));
 
-      // Installment number should always start from 1
-      const installmentNumber = i - startIndex + 1;
+      // Numbering continues on from whatever's already been paid, not from 1 —
+      // otherwise a fresh pending installment could collide with a paid one's number.
+      const installmentNumber = lastPaidInstallmentNumber + (i - startIndex + 1);
 
       const [newInstallment] = await db.insert(loanInstallments).values({
         loanId,

@@ -288,10 +288,11 @@ export default function ScheduledPaymentsScreen() {
       }
 
       // Update occurrence status and toggle settings
-      await api.updatePaymentOccurrence(occurrenceId, { 
+      await api.updatePaymentOccurrence(occurrenceId, {
         status: 'paid',
         affectTransaction,
-        affectAccountBalance
+        affectAccountBalance,
+        ...(finalAmount && { paidAmount: finalAmount }),
       });
     },
     onSuccess: () => {

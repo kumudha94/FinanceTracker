@@ -245,6 +245,17 @@ test("total outstanding with no card digits (routes to Bills Inbox)", () => {
   assert.equal(r!.cardLastFourDigits, undefined);
 });
 
+test("personal loan EMI due with no currency marker (routes to Bills Inbox)", () => {
+  const msg = "Dear KUMUDHA GLORY, your personal loan EMI of   63,897.00  for a/c 701***138103  is due on 04/08/26. Please ensure availability of funds - From VD-INDUSB-SS";
+  const r = parseDueSms(msg);
+  assert(r !== null);
+  assert.equal(r!.amount, 63897);
+  assert.equal(r!.dueDate, "2026-08-04T00:00:00.000Z");
+  assert.equal(r!.cardLastFourDigits, undefined);
+  // Not a completed transaction — must not be picked up by the transaction parser too.
+  assert.equal(parseSmsByRegex(msg), null);
+});
+
 test("due SMS must not be misclassified as a transaction", () => {
   const r = parseSmsByRegex(
     "Dear Customer, Your YES BANK Credit Card x2613 has dues of Rs. 9,629.90.\nConvert it into EMIs with no hidden charges.\nConfirm: ccybl.in/YESBNK/MAt7Sk1jgU -YES BANK LTD"

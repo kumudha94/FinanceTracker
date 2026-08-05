@@ -11,8 +11,9 @@ import { RootStackParamList, TabParamList } from '../../App';
 import { useState, useCallback, useMemo, useEffect } from 'react';
 import { useTheme } from '../contexts/ThemeContext';
 import { useAuth } from '../contexts/AuthContext';
-import { BillItem, NextMonthForecast, NextMonthForecastItem, ForecastItemType, WeeklySummary } from '../lib/types';
+import { BillItem, NextMonthForecast, NextMonthForecastItem, ForecastItemType, WeeklySummary, ScheduledPayment, PlannedIncomeEntry } from '../lib/types';
 import { isAutoReadEnabled, hasSmsPermission } from '../lib/smsAutoReader';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
@@ -26,7 +27,10 @@ type NavigationProp = CompositeNavigationProp<
 type ActiveTab = 'income' | 'expense' | 'bills';
 type BillsAccordion = 'scheduled' | 'creditCard' | 'loans' | 'insurance' | 'billsInbox' | null;
 type ForecastAccordion = 'scheduled' | 'insurance' | 'loans' | 'creditCard' | 'savings' | 'others' | null;
-type OthersDraft = { id: string; name: string; amount: number };
+type OthersDraft = { id: string; name: string; amount: number; type: 'debit' | 'credit' };
+type OthersTipModal = { title: string; message: string; onConfirm: () => void };
+
+const OTHERS_TIPS_ENABLED_KEY = 'othersTipsEnabled';
 
 const LOADING_MESSAGES = [
   'Setting up your current month finances…',
@@ -50,15 +54,45 @@ export default function DashboardScreen() {
   const [forecastAccordion, setForecastAccordion] = useState<ForecastAccordion>(null);
   const [hideBalance, setHideBalance] = useState(true);
   const [showCycleInfoModal, setShowCycleInfoModal] = useState(false);
+  const [showNextCycleInfoModal, setShowNextCycleInfoModal] = useState(false);
   const [whatIfAmounts, setWhatIfAmounts] = useState<Record<string, number>>({});
   const [editingRowKey, setEditingRowKey] = useState<string | null>(null);
   const [editingText, setEditingText] = useState('');
   const [othersDrafts, setOthersDrafts] = useState<OthersDraft[]>([]);
   const [othersNameInput, setOthersNameInput] = useState('');
   const [othersAmountInput, setOthersAmountInput] = useState('');
+  const [othersTypeInput, setOthersTypeInput] = useState<'debit' | 'credit'>('debit');
+  const [updatingPlannedIncomeId, setUpdatingPlannedIncomeId] = useState<number | null>(null);
   const [savingDraftId, setSavingDraftId] = useState<string | null>(null);
   const [togglingKey, setTogglingKey] = useState<string | null>(null);
   const [showSmsNudgeModal, setShowSmsNudgeModal] = useState(false);
+  const [othersTipsEnabled, setOthersTipsEnabled] = useState(true);
+  const [othersTipModal, setOthersTipModal] = useState<OthersTipModal | null>(null);
+  const [othersTipDontShowAgain, setOthersTipDontShowAgain] = useState(false);
+
+  useEffect(() => {
+    AsyncStorage.getItem(OTHERS_TIPS_ENABLED_KEY).then(value => {
+      if (value !== null) setOthersTipsEnabled(value === 'true');
+    });
+  }, []);
+
+  const updateOthersTipsEnabled = useCallback((enabled: boolean) => {
+    setOthersTipsEnabled(enabled);
+    AsyncStorage.setItem(OTHERS_TIPS_ENABLED_KEY, String(enabled));
+  }, []);
+
+  // First-tap education for the Others section's less-obvious icons (exclude/include,
+  // mark received, cancel, save, discard draft) — skipped entirely once the user has
+  // turned tips off, either via the "Don't show again" checkbox here or the toggle in
+  // the Next Cycle Plan info modal.
+  const confirmOthersAction = useCallback((title: string, message: string, onConfirm: () => void) => {
+    if (!othersTipsEnabled) {
+      onConfirm();
+      return;
+    }
+    setOthersTipDontShowAgain(false);
+    setOthersTipModal({ title, message, onConfirm });
+  }, [othersTipsEnabled]);
 
   const { data: summary, isLoading } = useQuery({
     queryKey: ['/api/dashboard-summary'],
@@ -115,19 +149,38 @@ export default function DashboardScreen() {
     },
   });
 
-  const saveOthersDraftMutation = useMutation({
+  const saveOthersDraftMutation = useMutation<ScheduledPayment | PlannedIncomeEntry, Error, OthersDraft>({
     mutationFn: (draft: OthersDraft) =>
-      api.createScheduledPayment({
-        name: draft.name,
-        amount: draft.amount.toString(),
-        frequency: 'one_time',
-        startMonth: forecast?.nextMonth,
-        dueDate: null,
-      }),
+      draft.type === 'credit'
+        ? api.createPlannedIncomeEntry({
+            name: draft.name,
+            amount: draft.amount.toString(),
+            expectedMonth: forecast!.nextMonth,
+            expectedYear: forecast!.nextYear,
+          })
+        : api.createScheduledPayment({
+            name: draft.name,
+            amount: draft.amount.toString(),
+            frequency: 'one_time',
+            startMonth: forecast?.nextMonth,
+            dueDate: null,
+          }),
     onSuccess: (_data, draft) => {
       setOthersDrafts(prev => prev.filter(d => d.id !== draft.id));
       queryClient.invalidateQueries({ queryKey: ['/api/next-month-forecast'] });
     },
+  });
+
+  // Status-only bookkeeping — the real money already lands as its own transaction via
+  // SMS auto-read, so this just stops the entry from being counted as still-planned.
+  // No transaction is created and no account balance changes.
+  const updatePlannedIncomeStatusMutation = useMutation({
+    mutationFn: ({ id, status }: { id: number; status: 'received' | 'cancelled' }) =>
+      api.updatePlannedIncomeEntry(id, { status }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/next-month-forecast'] });
+    },
+    onSettled: () => setUpdatingPlannedIncomeId(null),
   });
 
   useFocusEffect(
@@ -207,20 +260,35 @@ export default function DashboardScreen() {
       .reduce((sum, item) => sum + effectiveAmount('savings_goal', item), 0);
   }, [forecast, whatIfAmounts]);
 
-  const othersTotal = useMemo(
-    () => othersDrafts.reduce((sum, d) => sum + d.amount, 0),
+  const othersDebitTotal = useMemo(
+    () => othersDrafts.filter(d => d.type === 'debit').reduce((sum, d) => sum + d.amount, 0),
     [othersDrafts]
   );
+  const othersCreditTotal = useMemo(
+    () => othersDrafts.filter(d => d.type === 'credit').reduce((sum, d) => sum + d.amount, 0),
+    [othersDrafts]
+  );
+  // othersTotal drives the accordion header/footer total — net of unsaved credit drafts
+  // against unsaved debit drafts, same sign convention as everywhere else that shows outflow.
+  const othersTotal = othersDebitTotal - othersCreditTotal;
+
+  // No what-if amount editing on planned income rows (only exclude/include), so
+  // forecast.totalIncome already reflects the server-side excluded state exactly —
+  // no separate "effective" recomputation needed the way credit card bills/savings have.
+  const effectiveTotalIncome = useMemo(() => {
+    if (!forecast) return 0;
+    return forecast.totalIncome + othersCreditTotal;
+  }, [forecast, othersCreditTotal]);
 
   const effectiveTotalOutflow = useMemo(() => {
     if (!forecast) return 0;
-    return forecast.totalOutflow - forecast.totalCreditCardBills - forecast.totalSavings + effectiveCreditCardTotal + effectiveSavingsTotal + othersTotal;
-  }, [forecast, effectiveCreditCardTotal, effectiveSavingsTotal, othersTotal]);
+    return forecast.totalOutflow - forecast.totalCreditCardBills - forecast.totalSavings + effectiveCreditCardTotal + effectiveSavingsTotal + othersDebitTotal;
+  }, [forecast, effectiveCreditCardTotal, effectiveSavingsTotal, othersDebitTotal]);
 
   const effectiveNet = useMemo(() => {
     if (!forecast) return 0;
-    return forecast.totalIncome - effectiveTotalOutflow;
-  }, [forecast, effectiveTotalOutflow]);
+    return effectiveTotalIncome - effectiveTotalOutflow;
+  }, [effectiveTotalIncome, effectiveTotalOutflow]);
 
   useEffect(() => {
     if (!isLoading) return;
@@ -486,27 +554,35 @@ export default function DashboardScreen() {
     const trimmedName = othersNameInput.trim();
     const parsedAmount = parseFloat(othersAmountInput);
     if (!trimmedName || isNaN(parsedAmount) || parsedAmount <= 0) return;
-    setOthersDrafts(prev => [...prev, { id: `${Date.now()}-${Math.random()}`, name: trimmedName, amount: parsedAmount }]);
+    setOthersDrafts(prev => [...prev, { id: `${Date.now()}-${Math.random()}`, name: trimmedName, amount: parsedAmount, type: othersTypeInput }]);
     setOthersNameInput('');
     setOthersAmountInput('');
   };
 
   const renderOthersDraftRow = (draft: OthersDraft) => (
     <View key={draft.id} style={[styles.forecastRow, { borderBottomColor: colors.border }]}>
-      <View style={[styles.forecastDot, { backgroundColor: '#0ea5e9' }]} />
+      <View style={[styles.forecastDot, { backgroundColor: draft.type === 'credit' ? '#10b981' : '#0ea5e9' }]} />
       <View style={styles.forecastRowInfo}>
         <Text style={[styles.forecastRowName, { color: colors.text }]} numberOfLines={1}>
           {draft.name}
         </Text>
       </View>
-      <Text style={[styles.forecastRowAmt, { color: '#ef4444' }]}>
-        -{formatCurrency(draft.amount)}
+      <Text style={[styles.forecastRowAmt, { color: draft.type === 'credit' ? '#10b981' : '#ef4444' }]}>
+        {draft.type === 'credit' ? '+' : '-'}{formatCurrency(draft.amount)}
       </Text>
       <TouchableOpacity
         onPress={() => {
           if (savingDraftId) return;
-          setSavingDraftId(draft.id);
-          saveOthersDraftMutation.mutate(draft, { onSettled: () => setSavingDraftId(null) });
+          confirmOthersAction(
+            'Save Entry?',
+            draft.type === 'credit'
+              ? 'This becomes a real planned income entry, counted in Next Cycle’s Income total.'
+              : 'This becomes a real one-time scheduled payment, counted in Next Cycle’s Outflow total.',
+            () => {
+              setSavingDraftId(draft.id);
+              saveOthersDraftMutation.mutate(draft, { onSettled: () => setSavingDraftId(null) });
+            }
+          );
         }}
         disabled={savingDraftId === draft.id}
         hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
@@ -515,7 +591,11 @@ export default function DashboardScreen() {
         <Ionicons name="save-outline" size={18} color={colors.primary} />
       </TouchableOpacity>
       <TouchableOpacity
-        onPress={() => removeOthersDraft(draft.id)}
+        onPress={() => confirmOthersAction(
+          'Discard Draft?',
+          'This hasn’t been saved yet, so this just removes it from your list here — nothing to undo.',
+          () => removeOthersDraft(draft.id)
+        )}
         hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
         style={styles.forecastToggleBtn}
       >
@@ -523,6 +603,85 @@ export default function DashboardScreen() {
       </TouchableOpacity>
     </View>
   );
+
+  const renderPlannedIncomeRow = (item: NextMonthForecastItem) => {
+    const key = whatIfKey('planned_income', item.id);
+    return (
+      <View key={`fpi-${item.id}`} style={[styles.forecastRow, { borderBottomColor: colors.border }, item.excluded && { opacity: 0.5 }]}>
+        <View style={[styles.forecastDot, { backgroundColor: '#10b981' }]} />
+        <View style={styles.forecastRowInfo}>
+          <Text style={[styles.forecastRowName, { color: colors.text }, item.excluded && { textDecorationLine: 'line-through' }]} numberOfLines={1}>
+            {item.name}
+          </Text>
+        </View>
+        <Text style={[styles.forecastRowAmt, { color: item.excluded ? colors.textMuted : '#10b981' }]}>
+          +{formatCurrency(item.amount)}
+        </Text>
+        <TouchableOpacity
+          onPress={() => {
+            if (togglingKey) return;
+            confirmOthersAction(
+              item.excluded ? 'Include in Next Cycle?' : 'Exclude from Next Cycle?',
+              item.excluded
+                ? 'This adds it back into this cycle’s Income total.'
+                : 'This removes it from this cycle’s Income total only — it’s automatically included again next cycle. Nothing is deleted.',
+              () => {
+                setTogglingKey(key);
+                toggleExclusionMutation.mutate({ itemType: 'planned_income', itemId: item.id }, { onSettled: () => setTogglingKey(null) });
+              }
+            );
+          }}
+          disabled={togglingKey === key}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          style={styles.forecastToggleBtn}
+        >
+          {togglingKey === key ? (
+            <ActivityIndicator size="small" color={colors.textMuted} />
+          ) : (
+            <Ionicons
+              name={item.excluded ? 'add-circle' : 'remove-circle'}
+              size={20}
+              color={item.excluded ? '#10b981' : colors.textMuted}
+            />
+          )}
+        </TouchableOpacity>
+        {updatingPlannedIncomeId === item.id ? (
+          <ActivityIndicator size="small" color={colors.textMuted} style={styles.forecastToggleBtn} />
+        ) : (
+          <>
+            <TouchableOpacity
+              onPress={() => confirmOthersAction(
+                'Mark as Received?',
+                'This confirms the amount already arrived, so it stops counting as planned income going forward. No transaction is created — your bank SMS already logged the real one.',
+                () => {
+                  setUpdatingPlannedIncomeId(item.id as number);
+                  updatePlannedIncomeStatusMutation.mutate({ id: item.id as number, status: 'received' });
+                }
+              )}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              style={styles.forecastToggleBtn}
+            >
+              <Ionicons name="checkmark-circle-outline" size={20} color="#10b981" />
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => confirmOthersAction(
+                'Cancel Planned Income?',
+                `This permanently removes "${item.name}" — not just for this cycle. This can't be undone.`,
+                () => {
+                  setUpdatingPlannedIncomeId(item.id as number);
+                  updatePlannedIncomeStatusMutation.mutate({ id: item.id as number, status: 'cancelled' });
+                }
+              )}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              style={styles.forecastToggleBtn}
+            >
+              <Ionicons name="close-circle-outline" size={20} color={colors.textMuted} />
+            </TouchableOpacity>
+          </>
+        )}
+      </View>
+    );
+  };
 
   const renderBillsInboxSection = () => {
     if (pendingBillMappings.length === 0) return null;
@@ -936,9 +1095,15 @@ export default function DashboardScreen() {
                   <Text style={[styles.username, { color: colors.text }]}>Next Cycle Plan</Text>
                 </View>
               </View>
-              <View style={[styles.cycleBadge, { backgroundColor: colors.primary + '18' }]}>
+              <TouchableOpacity
+                onPress={() => setShowNextCycleInfoModal(true)}
+                style={[styles.cycleBadge, { backgroundColor: colors.primary + '18' }]}
+                activeOpacity={0.7}
+                data-testid="button-next-cycle-info"
+              >
                 <Text style={[styles.cycleBadgeText, { color: colors.primary }]}>{forecast.monthLabel}</Text>
-              </View>
+                <Ionicons name="information-circle-outline" size={14} color={colors.primary} style={{ marginLeft: 4 }} />
+              </TouchableOpacity>
             </View>
 
             {hasWhatIf && (
@@ -952,7 +1117,7 @@ export default function DashboardScreen() {
             <View style={styles.forecastSummaryRow}>
               <View style={styles.forecastSummaryStat}>
                 <Text style={[styles.forecastStatLabel, { color: colors.textMuted }]}>Income</Text>
-                <Text style={[styles.forecastStatValue, { color: '#10b981' }]}>+{formatCurrency(forecast.totalIncome)}</Text>
+                <Text style={[styles.forecastStatValue, { color: '#10b981' }]}>+{formatCurrency(effectiveTotalIncome)}</Text>
               </View>
               <View style={[styles.loanDivider, { backgroundColor: colors.border }]} />
               <View style={styles.forecastSummaryStat}>
@@ -1158,7 +1323,14 @@ export default function DashboardScreen() {
                   <View style={styles.accordionTitleArea}>
                     <Text style={[styles.accordionTitle, { color: colors.text }]}>Others</Text>
                     <Text style={[styles.accordionSubtitle, { color: colors.textMuted }]}>
-                      {othersDrafts.length > 0 ? `${othersDrafts.length} item${othersDrafts.length > 1 ? 's' : ''}` : 'Tap to add'}
+                      {forecastAccordion === 'others'
+                        ? 'Tap ✓ to save — unsaved entries are cleared if you leave'
+                        : othersDrafts.length === 0 && forecast.plannedIncome.length === 0
+                          ? 'Tap to add'
+                          : [
+                              othersDrafts.length > 0 ? `${othersDrafts.length} draft${othersDrafts.length > 1 ? 's' : ''}` : null,
+                              forecast.plannedIncome.length > 0 ? `${forecast.plannedIncome.length} income` : null,
+                            ].filter(Boolean).join(' · ')}
                     </Text>
                   </View>
                   <View style={styles.accordionRight}>
@@ -1168,8 +1340,23 @@ export default function DashboardScreen() {
                 </TouchableOpacity>
                 {forecastAccordion === 'others' && (
                   <View style={styles.accordionContent}>
+                    {forecast.plannedIncome.map((item) => renderPlannedIncomeRow(item))}
                     {othersDrafts.map((draft) => renderOthersDraftRow(draft))}
                     <View style={styles.othersAddRow}>
+                      <View style={[styles.othersTypeToggle, { borderColor: colors.border }]}>
+                        <TouchableOpacity
+                          onPress={() => setOthersTypeInput('debit')}
+                          style={[styles.othersTypeButton, othersTypeInput === 'debit' && { backgroundColor: '#ef444420' }]}
+                        >
+                          <Text style={[styles.othersTypeButtonText, { color: othersTypeInput === 'debit' ? '#ef4444' : colors.textMuted }]}>−</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          onPress={() => setOthersTypeInput('credit')}
+                          style={[styles.othersTypeButton, othersTypeInput === 'credit' && { backgroundColor: '#10b98120' }]}
+                        >
+                          <Text style={[styles.othersTypeButtonText, { color: othersTypeInput === 'credit' ? '#10b981' : colors.textMuted }]}>+</Text>
+                        </TouchableOpacity>
+                      </View>
                       <TextInput
                         style={[styles.othersNameInput, { color: colors.text, borderColor: colors.border }]}
                         value={othersNameInput}
@@ -1193,7 +1380,9 @@ export default function DashboardScreen() {
                     {othersDrafts.length > 0 && (
                       <View style={styles.forecastTabTotal}>
                         <Text style={[styles.forecastTabTotalLabel, { color: colors.textMuted }]}>Total</Text>
-                        <Text style={[styles.forecastTabTotalValue, { color: '#ef4444' }]}>-{formatCurrency(othersTotal)}</Text>
+                        <Text style={[styles.forecastTabTotalValue, { color: othersTotal >= 0 ? '#ef4444' : '#10b981' }]}>
+                          {othersTotal >= 0 ? '-' : '+'}{formatCurrency(Math.abs(othersTotal))}
+                        </Text>
                       </View>
                     )}
                   </View>
@@ -1356,7 +1545,7 @@ export default function DashboardScreen() {
           <View style={[styles.card, { backgroundColor: colors.card }]}>
             <View style={styles.cardHeader}>
               <Text style={[styles.cardTitle, { color: colors.text }]}>Loans & EMI</Text>
-              <TouchableOpacity onPress={() => navigation.navigate('Loans' as any)} data-testid="button-view-loans">
+              <TouchableOpacity onPress={() => navigation.navigate('More' as any, { screen: 'Loans' })} data-testid="button-view-loans">
                 <Text style={[styles.viewAll, { color: colors.primary }]}>Manage</Text>
               </TouchableOpacity>
             </View>
@@ -1415,7 +1604,7 @@ export default function DashboardScreen() {
           <View style={styles.actionsGrid}>
             <TouchableOpacity
               style={[styles.actionButton, { backgroundColor: colors.primary + '12' }]}
-              onPress={() => navigation.navigate('ScheduledPayments' as any)}
+              onPress={() => navigation.navigate('More' as any, { screen: 'ScheduledPayments' })}
               data-testid="button-quick-payments"
             >
               <Ionicons name="repeat-outline" size={22} color={colors.primary} />
@@ -1423,7 +1612,7 @@ export default function DashboardScreen() {
             </TouchableOpacity>
             <TouchableOpacity
               style={[styles.actionButton, { backgroundColor: '#f59e0b' + '12' }]}
-              onPress={() => navigation.navigate('Loans' as any)}
+              onPress={() => navigation.navigate('More' as any, { screen: 'Loans' })}
               data-testid="button-quick-loans"
             >
               <Ionicons name="card-outline" size={22} color="#f59e0b" />
@@ -1431,7 +1620,7 @@ export default function DashboardScreen() {
             </TouchableOpacity>
             <TouchableOpacity
               style={[styles.actionButton, { backgroundColor: '#8b5cf6' + '12' }]}
-              onPress={() => navigation.navigate('Insurances' as any)}
+              onPress={() => navigation.navigate('More' as any, { screen: 'Insurance' })}
               data-testid="button-quick-insurance"
             >
               <Ionicons name="shield-checkmark-outline" size={22} color="#8b5cf6" />
@@ -1439,7 +1628,7 @@ export default function DashboardScreen() {
             </TouchableOpacity>
             <TouchableOpacity
               style={[styles.actionButton, { backgroundColor: '#10b981' + '12' }]}
-              onPress={() => navigation.navigate('SavingsGoals' as any)}
+              onPress={() => navigation.navigate('More' as any, { screen: 'SavingsGoals' })}
               data-testid="button-quick-savings"
             >
               <Ionicons name="trophy-outline" size={22} color="#10b981" />
@@ -1517,6 +1706,133 @@ export default function DashboardScreen() {
             )}
           </View>
         </TouchableOpacity>
+      </Modal>
+
+      <Modal
+        visible={showNextCycleInfoModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowNextCycleInfoModal(false)}
+      >
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => setShowNextCycleInfoModal(false)}
+        >
+          <View style={[styles.modalContent, { backgroundColor: colors.card }]}>
+            <View style={styles.modalHeader}>
+              <Text style={[styles.modalTitle, { color: colors.text }]}>Getting the Most from Next Cycle Plan</Text>
+              <TouchableOpacity onPress={() => setShowNextCycleInfoModal(false)} data-testid="button-close-next-cycle-info">
+                <Ionicons name="close" size={22} color={colors.textMuted} />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.modalBody}>
+              <Text style={[styles.modalExplain, { color: colors.textMuted }]}>
+                This card projects your {forecast?.monthLabel} cycle — Income, Outflow, and Balance — from everything already set up in the app, before it actually happens.
+              </Text>
+
+              <View style={[styles.infoRow, { backgroundColor: colors.textMuted + '10', borderColor: colors.textMuted + '30' }]}>
+                <Ionicons name="remove-circle-outline" size={18} color={colors.textMuted} />
+                <View style={styles.infoRowText}>
+                  <Text style={[styles.infoLabel, { color: colors.textMuted }]}>Include / Exclude</Text>
+                  <Text style={[styles.infoValue, { color: colors.text }]}>
+                    Tap the +/− on any row to leave it out of this cycle's totals — it resets back to included next cycle.
+                  </Text>
+                </View>
+              </View>
+
+              <View style={[styles.infoRow, { backgroundColor: colors.primary + '10', borderColor: colors.primary + '30' }]}>
+                <Ionicons name="create-outline" size={18} color={colors.primary} />
+                <View style={styles.infoRowText}>
+                  <Text style={[styles.infoLabel, { color: colors.textMuted }]}>What-If Amounts</Text>
+                  <Text style={[styles.infoValue, { color: colors.text }]}>
+                    Tap a credit card bill or savings amount to try a different number and see the effect on Balance — nothing is saved for real.
+                  </Text>
+                </View>
+              </View>
+
+              <View style={[styles.infoRow, { backgroundColor: '#0ea5e910', borderColor: '#0ea5e930' }]}>
+                <Ionicons name="receipt-outline" size={18} color="#0ea5e9" />
+                <View style={styles.infoRowText}>
+                  <Text style={[styles.infoLabel, { color: colors.textMuted }]}>Others</Text>
+                  <Text style={[styles.infoValue, { color: colors.text }]}>
+                    Plan one-off items that aren't scheduled anywhere — an expense (−) or expected income (+). Tap ✓ to save it for real; unsaved entries are cleared when you leave.
+                  </Text>
+                </View>
+              </View>
+
+              <Text style={[styles.modalExplain, { color: colors.textMuted, marginTop: 6 }]}>
+                Everything here updates the moment you add, edit, or exclude something — use it to check "can I afford this?" before the cycle even starts.
+              </Text>
+
+              <TouchableOpacity
+                onPress={() => updateOthersTipsEnabled(!othersTipsEnabled)}
+                style={styles.tipsCheckboxRow}
+                activeOpacity={0.7}
+              >
+                <Ionicons
+                  name={othersTipsEnabled ? 'checkbox' : 'square-outline'}
+                  size={20}
+                  color={othersTipsEnabled ? colors.primary : colors.textMuted}
+                />
+                <Text style={[styles.tipsCheckboxLabel, { color: colors.text }]}>
+                  Show tips before Others actions (save, discard, exclude, mark received, cancel)
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      <Modal
+        visible={!!othersTipModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setOthersTipModal(null)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContent, { backgroundColor: colors.card }]}>
+            <View style={styles.modalHeader}>
+              <Text style={[styles.modalTitle, { color: colors.text }]}>{othersTipModal?.title}</Text>
+            </View>
+            <View style={styles.modalBody}>
+              <Text style={[styles.modalExplain, { color: colors.textMuted }]}>{othersTipModal?.message}</Text>
+
+              <TouchableOpacity
+                onPress={() => setOthersTipDontShowAgain(prev => !prev)}
+                style={styles.tipsCheckboxRow}
+                activeOpacity={0.7}
+              >
+                <Ionicons
+                  name={othersTipDontShowAgain ? 'checkbox' : 'square-outline'}
+                  size={20}
+                  color={othersTipDontShowAgain ? colors.primary : colors.textMuted}
+                />
+                <Text style={[styles.tipsCheckboxLabel, { color: colors.text }]}>Don't show these tips again</Text>
+              </TouchableOpacity>
+
+              <View style={styles.tipModalActions}>
+                <TouchableOpacity
+                  onPress={() => setOthersTipModal(null)}
+                  style={[styles.tipModalButton, { borderColor: colors.border }]}
+                >
+                  <Text style={[styles.tipModalButtonText, { color: colors.textMuted }]}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => {
+                    if (othersTipDontShowAgain) updateOthersTipsEnabled(false);
+                    othersTipModal?.onConfirm();
+                    setOthersTipModal(null);
+                  }}
+                  style={[styles.tipModalButton, { backgroundColor: colors.primary, borderColor: colors.primary }]}
+                >
+                  <Text style={[styles.tipModalButtonText, { color: '#fff' }]}>OK</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </View>
       </Modal>
 
       <Modal
@@ -2396,6 +2712,22 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     paddingLeft: 4,
   },
+  othersTypeToggle: {
+    flexDirection: 'row',
+    borderWidth: 1,
+    borderRadius: 8,
+    overflow: 'hidden',
+  },
+  othersTypeButton: {
+    width: 28,
+    height: 28,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  othersTypeButtonText: {
+    fontSize: 16,
+    fontWeight: '700',
+  },
   othersNameInput: {
     flex: 1,
     fontSize: 13,
@@ -2478,5 +2810,31 @@ const styles = StyleSheet.create({
   modalExplain: {
     fontSize: 13,
     lineHeight: 19,
+  },
+  tipsCheckboxRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginTop: 4,
+  },
+  tipsCheckboxLabel: {
+    flex: 1,
+    fontSize: 13,
+  },
+  tipModalActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 10,
+    marginTop: 4,
+  },
+  tipModalButton: {
+    paddingVertical: 8,
+    paddingHorizontal: 18,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  tipModalButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
   },
 });
