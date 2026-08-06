@@ -33,11 +33,16 @@ Thumbs.db
 
 # Build outputs
 *.jks
+*.keystore
 *.p8
 *.p12
 *.key
 *.mobileprovision
 *.orig.*
+
+# Signing credentials
+credentials.json
+credentials/
 
 # Metro
 .metro-health-check*
