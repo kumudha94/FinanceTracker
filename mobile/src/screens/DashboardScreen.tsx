@@ -361,7 +361,7 @@ export default function DashboardScreen() {
 
   const maskValue = (val: string) => hideBalance ? '\u2022\u2022\u2022\u2022\u2022\u2022' : val;
 
-  const renderBillItem = (bill: BillItem, showSubLabel?: string) => {
+  const renderBillItem = (bill: BillItem, showSubLabel?: string, onMarkPaid?: (bill: BillItem) => void) => {
     const statusColor = bill.isPaid ? '#10b981' : bill.status === 'overdue' ? '#ef4444' : bill.status === 'due_today' ? '#3b82f6' : '#f59e0b';
     const statusIcon: keyof typeof Ionicons.glyphMap = bill.isPaid ? 'checkmark-circle' : bill.status === 'overdue' ? 'alert-circle' : bill.status === 'due_today' ? 'today' : 'time';
     const statusText = bill.isPaid ? 'Paid' : bill.status === 'overdue' ? 'Overdue' : bill.status === 'due_today' ? 'Due Today' : 'Pending';
@@ -393,6 +393,16 @@ export default function DashboardScreen() {
             </Text>
           </View>
         </View>
+        {onMarkPaid && !bill.isPaid && (
+          <TouchableOpacity
+            onPress={() => onMarkPaid(bill)}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            style={{ marginLeft: 8 }}
+            data-testid={`button-mark-paid-${bill.id}`}
+          >
+            <Ionicons name="checkmark-circle-outline" size={22} color={colors.primary} />
+          </TouchableOpacity>
+        )}
       </View>
     );
   };
@@ -401,11 +411,12 @@ export default function DashboardScreen() {
     title: string,
     icon: keyof typeof Ionicons.glyphMap,
     iconColor: string,
-    sectionKey: BillsAccordion,
+    isOpen: boolean,
+    onToggle: () => void,
     items: BillItem[],
     subLabelFn?: (item: BillItem) => string,
+    onMarkPaid?: (item: BillItem) => void,
   ) => {
-    const isOpen = billsAccordion === sectionKey;
     const paidCount = items.filter(b => b.isPaid).length;
     const totalAmount = items.reduce((s, b) => s + b.amount, 0);
     const pendingAmount = items.filter(b => !b.isPaid).reduce((s, b) => s + b.amount, 0);
@@ -413,10 +424,10 @@ export default function DashboardScreen() {
     if (items.length === 0) return null;
 
     return (
-      <View key={sectionKey}>
+      <View>
         <TouchableOpacity
           style={[styles.accordionHeader, { borderBottomColor: colors.border }]}
-          onPress={() => toggleBillsAccordion(sectionKey)}
+          onPress={onToggle}
           activeOpacity={0.7}
         >
           <View style={[styles.accordionIconWrap, { backgroundColor: iconColor + '15' }]}>
@@ -435,7 +446,7 @@ export default function DashboardScreen() {
         </TouchableOpacity>
         {isOpen && (
           <View style={styles.accordionContent}>
-            {items.map(item => renderBillItem(item, subLabelFn ? subLabelFn(item) : undefined))}
+            {items.map(item => renderBillItem(item, subLabelFn ? subLabelFn(item) : undefined, onMarkPaid))}
           </View>
         )}
       </View>
@@ -986,22 +997,26 @@ export default function DashboardScreen() {
                   ) : (
                     <>
                       {renderAccordionSection(
-                        'Scheduled Payments', 'repeat-outline', '#6366f1', 'scheduled',
+                        'Scheduled Payments', 'repeat-outline', '#6366f1',
+                        billsAccordion === 'scheduled', () => toggleBillsAccordion('scheduled'),
                         billsDueDetails?.scheduledPayments || [],
                         (item) => item.frequency === 'monthly' ? 'Monthly' : item.frequency === 'quarterly' ? 'Quarterly' : item.frequency === 'half_yearly' ? 'Half Yearly' : item.frequency === 'yearly' ? 'Yearly' : item.frequency === 'custom' ? 'Custom' : '',
                       )}
                       {renderAccordionSection(
-                        'Credit Card Bills', 'card-outline', '#ec4899', 'creditCard',
+                        'Credit Card Bills', 'card-outline', '#ec4899',
+                        billsAccordion === 'creditCard', () => toggleBillsAccordion('creditCard'),
                         billsDueDetails?.creditCardBills || [],
                         (item) => `${item.bankName || ''}${item.creditLimit ? ` · Limit: ${formatCurrency(item.creditLimit)}` : ''}`.replace(/^[\s·]+/, ''),
                       )}
                       {renderAccordionSection(
-                        'Loan EMIs', 'cash-outline', '#f59e0b', 'loans',
+                        'Loan EMIs', 'cash-outline', '#f59e0b',
+                        billsAccordion === 'loans', () => toggleBillsAccordion('loans'),
                         billsDueDetails?.loans || [],
                         (item) => `${getLoanTypeLabel(item.loanType)}${item.lenderName ? ` \u00B7 ${item.lenderName}` : ''}`,
                       )}
                       {renderAccordionSection(
-                        'Insurance Premiums', 'shield-checkmark-outline', '#8b5cf6', 'insurance',
+                        'Insurance Premiums', 'shield-checkmark-outline', '#8b5cf6',
+                        billsAccordion === 'insurance', () => toggleBillsAccordion('insurance'),
                         billsDueDetails?.insurance || [],
                         (item) => `${getInsuranceTypeLabel(item.insuranceType)}${item.providerName ? ` \u00B7 ${item.providerName}` : ''}`,
                       )}
