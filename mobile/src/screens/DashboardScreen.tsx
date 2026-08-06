@@ -206,6 +206,7 @@ export default function DashboardScreen() {
   const markPaidMutation = useMutation({
     mutationFn: async ({ item, category, amount }: { item: BillItem; category: MarkPaidCategory; amount: string }) => {
       const defaultAccountId = accounts.find(a => a.isDefault)?.id ?? accounts[0]?.id;
+      if (!defaultAccountId) throw new Error('Add an account first');
 
       if (category === 'scheduled' || category === 'creditCard') {
         if (!item.occurrenceId) throw new Error('No occurrence found for this cycle yet');
