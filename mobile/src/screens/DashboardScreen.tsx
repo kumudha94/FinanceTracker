@@ -306,6 +306,30 @@ export default function DashboardScreen() {
     return effectiveTotalIncome - effectiveTotalOutflow;
   }, [effectiveTotalIncome, effectiveTotalOutflow]);
 
+  // Sum of every not-yet-paid item across all four current-cycle bill categories. A
+  // saved current-cycle Others debit is a real one-time scheduled payment, so it's
+  // already inside billsDueDetails.scheduledPayments and already counted here — it
+  // must not be added again in Task 7.
+  const pendingOutflow = useMemo(() => {
+    if (!summary) return 0;
+    const d = summary.billsDueDetails;
+    return [...d.scheduledPayments, ...d.creditCardBills, ...d.loans, ...d.insurance]
+      .filter(b => !b.isPaid)
+      .reduce((sum, b) => sum + b.amount, 0);
+  }, [summary]);
+
+  // othersCreditTotal is 0 until Task 7 introduces current-cycle planned income entries —
+  // this line is replaced in Task 7 to add that term.
+  const projectedIncome = useMemo(() => {
+    if (!summary) return 0;
+    return summary.totalIncome;
+  }, [summary]);
+
+  const projectedOutflow = useMemo(() => {
+    if (!summary) return 0;
+    return summary.totalSpent + pendingOutflow;
+  }, [summary, pendingOutflow]);
+
   useEffect(() => {
     if (!isLoading) return;
     const interval = setInterval(() => {
@@ -1965,6 +1989,69 @@ export default function DashboardScreen() {
                   </Text>
                 </TouchableOpacity>
               </View>
+
+              <View style={[styles.forecastSummaryRow, { marginTop: 16 }]}>
+                <View style={styles.forecastSummaryStat}>
+                  <Text style={[styles.forecastStatLabel, { color: colors.textMuted }]}>Income</Text>
+                  <Text style={[styles.forecastStatValue, { color: '#10b981' }]}>
+                    +{formatCurrency(cycleView === 'actual' ? summary.totalIncome : projectedIncome)}
+                  </Text>
+                </View>
+                <View style={[styles.loanDivider, { backgroundColor: colors.border }]} />
+                <View style={styles.forecastSummaryStat}>
+                  <Text style={[styles.forecastStatLabel, { color: colors.textMuted }]}>Outflow</Text>
+                  <Text style={[styles.forecastStatValue, { color: '#ef4444' }]}>
+                    -{formatCurrency(cycleView === 'actual' ? summary.totalSpent : projectedOutflow)}
+                  </Text>
+                </View>
+                <View style={[styles.loanDivider, { backgroundColor: colors.border }]} />
+                <View style={styles.forecastSummaryStat}>
+                  <Text style={[styles.forecastStatLabel, { color: colors.textMuted }]}>Balance</Text>
+                  <Text style={[styles.forecastStatValueSmall, { color: colors.text }]}>
+                    {(() => {
+                      const balance = cycleView === 'actual'
+                        ? summary.totalIncome - summary.totalSpent
+                        : projectedIncome - projectedOutflow;
+                      return `${balance >= 0 ? '+' : ''}${formatCurrency(balance)}`;
+                    })()}
+                  </Text>
+                </View>
+              </View>
+
+              {cycleView === 'projected' ? (
+                <View style={[styles.subCard, { backgroundColor: colors.background, borderColor: colors.border, marginTop: 16 }]}>
+                  {renderAccordionSection(
+                    'Scheduled Payments', 'repeat-outline', '#6366f1',
+                    currentCycleAccordion === 'scheduled', () => toggleCurrentCycleAccordion('scheduled'),
+                    (summary.billsDueDetails.scheduledPayments || []).filter(b => !b.isPaid && b.frequency !== 'one_time'),
+                  )}
+                  {renderAccordionSection(
+                    'Credit Card Bills', 'card-outline', '#ec4899',
+                    currentCycleAccordion === 'creditCard', () => toggleCurrentCycleAccordion('creditCard'),
+                    (summary.billsDueDetails.creditCardBills || []).filter(b => !b.isPaid),
+                  )}
+                  {renderAccordionSection(
+                    'Loan EMIs', 'cash-outline', '#f59e0b',
+                    currentCycleAccordion === 'loans', () => toggleCurrentCycleAccordion('loans'),
+                    (summary.billsDueDetails.loans || []).filter(b => !b.isPaid),
+                  )}
+                  {renderAccordionSection(
+                    'Insurance Premiums', 'shield-checkmark-outline', '#8b5cf6',
+                    currentCycleAccordion === 'insurance', () => toggleCurrentCycleAccordion('insurance'),
+                    (summary.billsDueDetails.insurance || []).filter(b => !b.isPaid),
+                  )}
+                  {pendingOutflow === 0 && (
+                    <View style={styles.emptyState}>
+                      <Ionicons name="checkmark-circle-outline" size={24} color="#10b981" />
+                      <Text style={[styles.emptyText, { color: colors.textMuted }]}>Nothing pending — you're all caught up</Text>
+                    </View>
+                  )}
+                </View>
+              ) : (
+                <Text style={[styles.modalExplain, { color: colors.textMuted, marginTop: 16 }]}>
+                  Actual reflects only what's already happened this cycle. Switch to Projected to include pending bills.
+                </Text>
+              )}
             </ScrollView>
           </View>
         </View>
