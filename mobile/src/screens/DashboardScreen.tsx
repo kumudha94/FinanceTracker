@@ -27,6 +27,7 @@ type NavigationProp = CompositeNavigationProp<
 type ActiveTab = 'income' | 'expense' | 'bills';
 type BillsAccordion = 'scheduled' | 'creditCard' | 'loans' | 'insurance' | 'billsInbox' | null;
 type ForecastAccordion = 'scheduled' | 'insurance' | 'loans' | 'creditCard' | 'savings' | 'others' | null;
+type CurrentCyclePlanAccordion = 'scheduled' | 'creditCard' | 'loans' | 'insurance' | 'others' | null;
 type OthersDraft = { id: string; name: string; amount: number; type: 'debit' | 'credit' };
 type OthersTipModal = { title: string; message: string; onConfirm: () => void };
 
@@ -69,6 +70,16 @@ export default function DashboardScreen() {
   const [othersTipsEnabled, setOthersTipsEnabled] = useState(true);
   const [othersTipModal, setOthersTipModal] = useState<OthersTipModal | null>(null);
   const [othersTipDontShowAgain, setOthersTipDontShowAgain] = useState(false);
+  const [showCurrentCyclePlanModal, setShowCurrentCyclePlanModal] = useState(false);
+  const [cycleView, setCycleView] = useState<'actual' | 'projected'>('actual');
+  const [currentCycleAccordion, setCurrentCycleAccordion] = useState<CurrentCyclePlanAccordion>(null);
+
+  useEffect(() => {
+    if (showCurrentCyclePlanModal) {
+      setCycleView('actual');
+      setCurrentCycleAccordion(null);
+    }
+  }, [showCurrentCyclePlanModal]);
 
   useEffect(() => {
     AsyncStorage.getItem(OTHERS_TIPS_ENABLED_KEY).then(value => {
@@ -228,6 +239,11 @@ export default function DashboardScreen() {
   const toggleForecastAccordion = useCallback((section: ForecastAccordion) => {
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
     setForecastAccordion(prev => prev === section ? null : section);
+  }, []);
+
+  const toggleCurrentCycleAccordion = useCallback((section: CurrentCyclePlanAccordion) => {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setCurrentCycleAccordion(prev => prev === section ? null : section);
   }, []);
 
   const activeGoals = useMemo(() => savingsGoals?.filter(g => g.status === 'active') || [], [savingsGoals]);
@@ -791,8 +807,8 @@ export default function DashboardScreen() {
                 <Text style={[styles.cycleBadgeText, { color: colors.primary }]}>{summary.monthLabel}</Text>
                 <Ionicons name="information-circle-outline" size={14} color={colors.primary} style={{ marginLeft: 4 }} />
               </TouchableOpacity>
-              <TouchableOpacity onPress={() => navigation.navigate('Settings')} style={styles.settingsBtn} data-testid="button-settings">
-                <Ionicons name="settings-outline" size={20} color={colors.textMuted} />
+              <TouchableOpacity onPress={() => setShowCurrentCyclePlanModal(true)} style={styles.settingsBtn} data-testid="button-plan-current-cycle">
+                <Ionicons name="calculator-outline" size={20} color={colors.primary} />
               </TouchableOpacity>
             </View>
           </View>
@@ -1898,6 +1914,61 @@ export default function DashboardScreen() {
           </View>
         </TouchableOpacity>
       </Modal>
+
+      <Modal
+        visible={showCurrentCyclePlanModal}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setShowCurrentCyclePlanModal(false)}
+      >
+        <View style={styles.cyclePlanModalOverlay}>
+          <View style={[styles.cyclePlanModalContent, { backgroundColor: colors.card }]}>
+            <View style={[styles.cyclePlanModalHeader, { borderBottomColor: colors.border }]}>
+              <View>
+                <Text style={[styles.modalTitle, { color: colors.text }]}>Plan This Cycle</Text>
+                <Text style={[styles.accordionSubtitle, { color: colors.textMuted }]}>{summary.monthLabel}</Text>
+              </View>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 16 }}>
+                <TouchableOpacity
+                  onPress={() => {
+                    setShowCurrentCyclePlanModal(false);
+                    navigation.navigate('Settings');
+                  }}
+                  data-testid="button-cycle-plan-settings"
+                >
+                  <Ionicons name="settings-outline" size={20} color={colors.textMuted} />
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => setShowCurrentCyclePlanModal(false)} data-testid="button-close-cycle-plan">
+                  <Ionicons name="close" size={22} color={colors.textMuted} />
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            <ScrollView style={styles.cyclePlanModalScroll} contentContainerStyle={{ padding: 20 }}>
+              <View style={[styles.tabContainer, { borderBottomColor: colors.border }]}>
+                <TouchableOpacity
+                  style={[styles.tab, cycleView === 'actual' && styles.activeTab]}
+                  onPress={() => setCycleView('actual')}
+                  data-testid="button-cycle-view-actual"
+                >
+                  <Text style={[styles.tabText, { color: cycleView === 'actual' ? colors.text : colors.textMuted }, cycleView === 'actual' && styles.activeTabText]}>
+                    Actual
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.tab, cycleView === 'projected' && styles.activeTab]}
+                  onPress={() => setCycleView('projected')}
+                  data-testid="button-cycle-view-projected"
+                >
+                  <Text style={[styles.tabText, { color: cycleView === 'projected' ? colors.text : colors.textMuted }, cycleView === 'projected' && styles.activeTabText]}>
+                    Projected
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -2785,6 +2856,26 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     padding: 20,
     maxWidth: 400,
+  },
+  cyclePlanModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'flex-end',
+  },
+  cyclePlanModalContent: {
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    maxHeight: '85%',
+  },
+  cyclePlanModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 20,
+    borderBottomWidth: 1,
+  },
+  cyclePlanModalScroll: {
+    maxHeight: '100%',
   },
   modalHeader: {
     flexDirection: 'row',
