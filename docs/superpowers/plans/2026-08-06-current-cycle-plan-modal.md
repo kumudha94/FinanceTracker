@@ -1395,7 +1395,59 @@ Replace with:
 ```
 (This memo must now be declared *after* `othersCreditTotal`, from Step 2 above — move it if the two end up in the wrong order relative to each other; both must still be above the component's early return.)
 
-- [ ] **Step 4: Render the Others accordion**
+- [ ] **Step 4: Add `renderOthersEntryRow`, a shared row renderer for both debit and credit Others entries**
+
+Add this function directly after `openMarkPaidSheet` (Task 6 Step 1) and before `markPaidMutation`, so it's available to the JSX added in Step 5 below:
+```ts
+  const renderOthersEntryRow = (entry: CurrentCycleOthersEntry, dotColor: string, amountColor: string, amountPrefix: '+' | '-') => {
+    const isEditing = editingOthersEntry?.kind === entry.kind && editingOthersEntry.id === entry.id;
+    return (
+      <View key={`${entry.kind}-${entry.id}`} style={[styles.forecastRow, { borderBottomColor: colors.border }]}>
+        {isEditing ? (
+          <>
+            <TextInput
+              style={[styles.othersNameInput, { color: colors.text, borderColor: colors.border }]}
+              value={othersCurrentNameInput}
+              onChangeText={setOthersCurrentNameInput}
+            />
+            <TextInput
+              style={[styles.othersAmountInput, { color: colors.text, borderColor: colors.border }]}
+              value={othersCurrentAmountInput}
+              onChangeText={setOthersCurrentAmountInput}
+              keyboardType="numeric"
+            />
+            <TouchableOpacity onPress={() => {
+              const parsed = parseFloat(othersCurrentAmountInput);
+              const trimmed = othersCurrentNameInput.trim();
+              if (!trimmed || isNaN(parsed) || parsed <= 0) return;
+              updateOthersEntryMutation.mutate({ ...entry, name: trimmed, amount: parsed });
+            }} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+              <Ionicons name="checkmark-circle" size={20} color={colors.primary} />
+            </TouchableOpacity>
+          </>
+        ) : (
+          <>
+            <View style={[styles.forecastDot, { backgroundColor: dotColor }]} />
+            <TouchableOpacity style={styles.forecastRowInfo} onPress={() => {
+              setEditingOthersEntry(entry);
+              setOthersCurrentNameInput(entry.name);
+              setOthersCurrentAmountInput(String(entry.amount));
+            }}>
+              <Text style={[styles.forecastRowName, { color: colors.text }]} numberOfLines={1}>{entry.name}</Text>
+            </TouchableOpacity>
+            <Text style={[styles.forecastRowAmt, { color: amountColor }]}>{amountPrefix}{formatCurrency(entry.amount)}</Text>
+            <TouchableOpacity onPress={() => deleteOthersEntryMutation.mutate(entry)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+              <Ionicons name="trash-outline" size={18} color={colors.textMuted} />
+            </TouchableOpacity>
+          </>
+        )}
+      </View>
+    );
+  };
+```
+This single function renders both debit rows (`dotColor="#0ea5e9"`, `amountColor="#ef4444"`, `amountPrefix="-"`) and credit rows (`dotColor="#10b981"`, `amountColor="#10b981"`, `amountPrefix="+"`) — the two lists differ only in these three display values, not in structure or behavior, so they share one implementation rather than two near-identical copies.
+
+- [ ] **Step 5: Render the Others accordion**
 
 Current code (from Task 6 Step 2, the end of the four bill accordions inside `cycleView === 'projected'`):
 ```ts
@@ -1436,98 +1488,12 @@ Replace with (inserts the Others accordion between the empty state and the closi
                     </TouchableOpacity>
                     {currentCycleAccordion === 'others' && (
                       <View style={styles.accordionContent}>
-                        {currentCycleOneTimeDebits.map((d) => {
-                          const entry: CurrentCycleOthersEntry = { kind: 'debit', id: d.id as number, name: d.name, amount: d.amount };
-                          const isEditing = editingOthersEntry?.kind === 'debit' && editingOthersEntry.id === entry.id;
-                          return (
-                            <View key={`debit-${entry.id}`} style={[styles.forecastRow, { borderBottomColor: colors.border }]}>
-                              {isEditing ? (
-                                <>
-                                  <TextInput
-                                    style={[styles.othersNameInput, { color: colors.text, borderColor: colors.border }]}
-                                    value={othersCurrentNameInput}
-                                    onChangeText={setOthersCurrentNameInput}
-                                  />
-                                  <TextInput
-                                    style={[styles.othersAmountInput, { color: colors.text, borderColor: colors.border }]}
-                                    value={othersCurrentAmountInput}
-                                    onChangeText={setOthersCurrentAmountInput}
-                                    keyboardType="numeric"
-                                  />
-                                  <TouchableOpacity onPress={() => {
-                                    const parsed = parseFloat(othersCurrentAmountInput);
-                                    const trimmed = othersCurrentNameInput.trim();
-                                    if (!trimmed || isNaN(parsed) || parsed <= 0) return;
-                                    updateOthersEntryMutation.mutate({ ...entry, name: trimmed, amount: parsed });
-                                  }} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                                    <Ionicons name="checkmark-circle" size={20} color={colors.primary} />
-                                  </TouchableOpacity>
-                                </>
-                              ) : (
-                                <>
-                                  <View style={[styles.forecastDot, { backgroundColor: '#0ea5e9' }]} />
-                                  <TouchableOpacity style={styles.forecastRowInfo} onPress={() => {
-                                    setEditingOthersEntry(entry);
-                                    setOthersCurrentNameInput(entry.name);
-                                    setOthersCurrentAmountInput(String(entry.amount));
-                                  }}>
-                                    <Text style={[styles.forecastRowName, { color: colors.text }]} numberOfLines={1}>{entry.name}</Text>
-                                  </TouchableOpacity>
-                                  <Text style={[styles.forecastRowAmt, { color: '#ef4444' }]}>-{formatCurrency(entry.amount)}</Text>
-                                  <TouchableOpacity onPress={() => deleteOthersEntryMutation.mutate(entry)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                                    <Ionicons name="trash-outline" size={18} color={colors.textMuted} />
-                                  </TouchableOpacity>
-                                </>
-                              )}
-                            </View>
-                          );
-                        })}
-                        {currentCyclePlannedIncome.map((e) => {
-                          const entry: CurrentCycleOthersEntry = { kind: 'credit', id: e.id, name: e.name, amount: parseFloat(e.amount) };
-                          const isEditing = editingOthersEntry?.kind === 'credit' && editingOthersEntry.id === entry.id;
-                          return (
-                            <View key={`credit-${entry.id}`} style={[styles.forecastRow, { borderBottomColor: colors.border }]}>
-                              {isEditing ? (
-                                <>
-                                  <TextInput
-                                    style={[styles.othersNameInput, { color: colors.text, borderColor: colors.border }]}
-                                    value={othersCurrentNameInput}
-                                    onChangeText={setOthersCurrentNameInput}
-                                  />
-                                  <TextInput
-                                    style={[styles.othersAmountInput, { color: colors.text, borderColor: colors.border }]}
-                                    value={othersCurrentAmountInput}
-                                    onChangeText={setOthersCurrentAmountInput}
-                                    keyboardType="numeric"
-                                  />
-                                  <TouchableOpacity onPress={() => {
-                                    const parsed = parseFloat(othersCurrentAmountInput);
-                                    const trimmed = othersCurrentNameInput.trim();
-                                    if (!trimmed || isNaN(parsed) || parsed <= 0) return;
-                                    updateOthersEntryMutation.mutate({ ...entry, name: trimmed, amount: parsed });
-                                  }} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                                    <Ionicons name="checkmark-circle" size={20} color={colors.primary} />
-                                  </TouchableOpacity>
-                                </>
-                              ) : (
-                                <>
-                                  <View style={[styles.forecastDot, { backgroundColor: '#10b981' }]} />
-                                  <TouchableOpacity style={styles.forecastRowInfo} onPress={() => {
-                                    setEditingOthersEntry(entry);
-                                    setOthersCurrentNameInput(entry.name);
-                                    setOthersCurrentAmountInput(String(entry.amount));
-                                  }}>
-                                    <Text style={[styles.forecastRowName, { color: colors.text }]} numberOfLines={1}>{entry.name}</Text>
-                                  </TouchableOpacity>
-                                  <Text style={[styles.forecastRowAmt, { color: '#10b981' }]}>+{formatCurrency(entry.amount)}</Text>
-                                  <TouchableOpacity onPress={() => deleteOthersEntryMutation.mutate(entry)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                                    <Ionicons name="trash-outline" size={18} color={colors.textMuted} />
-                                  </TouchableOpacity>
-                                </>
-                              )}
-                            </View>
-                          );
-                        })}
+                        {currentCycleOneTimeDebits.map((d) =>
+                          renderOthersEntryRow({ kind: 'debit', id: d.id as number, name: d.name, amount: d.amount }, '#0ea5e9', '#ef4444', '-')
+                        )}
+                        {currentCyclePlannedIncome.map((e) =>
+                          renderOthersEntryRow({ kind: 'credit', id: e.id, name: e.name, amount: parseFloat(e.amount) }, '#10b981', '#10b981', '+')
+                        )}
 
                         <View style={styles.othersAddRow}>
                           <TouchableOpacity
@@ -1572,7 +1538,7 @@ Replace with (inserts the Others accordion between the empty state and the closi
 ```
 (`styles.othersNameInput`/`othersAmountInput`/`forecastRow`/`forecastDot`/`forecastRowInfo`/`forecastRowName`/`forecastRowAmt`/`othersAddRow` all already exist in this file, added by the earlier Next Cycle Plan Others feature — no new styles needed for this step.)
 
-- [ ] **Step 5: Reset Others editing state when the modal closes**
+- [ ] **Step 6: Reset Others editing state when the modal closes**
 
 Current code (Task 4 Step 2's `useEffect`):
 ```ts
@@ -1598,16 +1564,16 @@ Replace with:
   }, [showCurrentCyclePlanModal]);
 ```
 
-- [ ] **Step 6: Type-check**
+- [ ] **Step 7: Type-check**
 
 Run: `cd mobile && npx tsc --noEmit 2>&1 | grep -c "error TS"`
 Expected: no increase vs. baseline.
 
-- [ ] **Step 7: Manual verification**
+- [ ] **Step 8: Manual verification**
 
 No device/simulator available — verify by code trace: confirm `currentCyclePlannedIncome` query's `enabled` flag prevents it from firing while the modal is closed (check by reading the `enabled` expression, not by running the app); confirm `projectedIncome`'s Step 3 edit is textually after `othersCreditTotal`'s declaration in the file (JS doesn't require this for `useMemo` correctness since both are plain function calls evaluated in render order, but reading top-to-bottom should still make the dependency obvious to a future reader); confirm add/edit for both debit and credit reject an empty trimmed name or non-positive amount identically (mirrors the validation already used by `addOthersDraft`, `mobile/src/screens/DashboardScreen.tsx`, for the Next Cycle Others feature); confirm delete never asks for confirmation (matches this file's existing convention — `removeOthersDraft` also deletes without a confirm dialog) but only ever targets the tapped entry's own `id`+`kind` pair, never affecting the other list; confirm a saved one-time debit entry does **not** appear in the "Scheduled Payments" pending accordion from Task 5 (its `frequency !== 'one_time'` filter excludes it) so it shows exactly once, under Others.
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 9: Commit**
 
 ```bash
 cd mobile && git add src/screens/DashboardScreen.tsx
@@ -1618,4 +1584,4 @@ git commit -m "feat: add Others add/edit/delete section to Current Cycle Plan mo
 
 ## Post-plan check (do this after Task 7, not as its own task)
 
-Re-read the full modal block end-to-end once (Tasks 4-7 combined) and confirm: `showCurrentCyclePlanModal`'s open/close, `cycleView`, `currentCycleAccordion`, `markPaidTarget`, and the Others editing state all reset correctly on close (Task 4 Step 2 + Task 7 Step 5's combined `useEffect`); the Bills tab (Task 3's refactor target) still opens/closes its own four sections independently of the new modal's four sections, since they now use separate state (`billsAccordion` vs. `currentCycleAccordion`) — this was the specific coupling bug this plan's Task 3 exists to avoid.
+Re-read the full modal block end-to-end once (Tasks 4-7 combined) and confirm: `showCurrentCyclePlanModal`'s open/close, `cycleView`, `currentCycleAccordion`, `markPaidTarget`, and the Others editing state all reset correctly on close (Task 4 Step 2 + Task 7 Step 6's combined `useEffect`); the Bills tab (Task 3's refactor target) still opens/closes its own four sections independently of the new modal's four sections, since they now use separate state (`billsAccordion` vs. `currentCycleAccordion`) — this was the specific coupling bug this plan's Task 3 exists to avoid.
