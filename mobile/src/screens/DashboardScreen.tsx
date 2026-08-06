@@ -14,6 +14,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { BillItem, NextMonthForecast, NextMonthForecastItem, ForecastItemType, WeeklySummary, ScheduledPayment, PlannedIncomeEntry } from '../lib/types';
 import { isAutoReadEnabled, hasSmsPermission } from '../lib/smsAutoReader';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import Toast from 'react-native-toast-message';
 
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
@@ -134,6 +135,11 @@ export default function DashboardScreen() {
     queryKey: ['/api/planned-income-entries', 'current', summary?.currentMonth, summary?.currentYear],
     queryFn: () => api.getPlannedIncomeEntries(summary!.currentMonth, summary!.currentYear),
     enabled: !!summary && showCurrentCyclePlanModal,
+    // The backend doesn't filter by status — 'received' entries already landed as a real
+    // transaction (and are already inside Actual income), and 'cancelled' entries are dead.
+    // Filter here, once, so nothing downstream double-counts or renders a stale "still
+    // expected" row. Mirrors the same filter the next-month-forecast endpoint applies server-side.
+    select: (data) => data.filter(e => e.status === 'planned'),
   });
 
   const { data: salaryProfile } = useQuery({
@@ -222,18 +228,18 @@ export default function DashboardScreen() {
           <>
             <TextInput
               style={[styles.othersNameInput, { color: colors.text, borderColor: colors.border }]}
-              value={othersCurrentNameInput}
-              onChangeText={setOthersCurrentNameInput}
+              value={editingOthersNameInput}
+              onChangeText={setEditingOthersNameInput}
             />
             <TextInput
               style={[styles.othersAmountInput, { color: colors.text, borderColor: colors.border }]}
-              value={othersCurrentAmountInput}
-              onChangeText={setOthersCurrentAmountInput}
+              value={editingOthersAmountInput}
+              onChangeText={setEditingOthersAmountInput}
               keyboardType="numeric"
             />
             <TouchableOpacity onPress={() => {
-              const parsed = parseFloat(othersCurrentAmountInput);
-              const trimmed = othersCurrentNameInput.trim();
+              const parsed = parseFloat(editingOthersAmountInput);
+              const trimmed = editingOthersNameInput.trim();
               if (!trimmed || isNaN(parsed) || parsed <= 0) return;
               updateOthersEntryMutation.mutate({ ...entry, name: trimmed, amount: parsed });
             }} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
@@ -245,8 +251,8 @@ export default function DashboardScreen() {
             <View style={[styles.forecastDot, { backgroundColor: dotColor }]} />
             <TouchableOpacity style={styles.forecastRowInfo} onPress={() => {
               setEditingOthersEntry(entry);
-              setOthersCurrentNameInput(entry.name);
-              setOthersCurrentAmountInput(String(entry.amount));
+              setEditingOthersNameInput(entry.name);
+              setEditingOthersAmountInput(String(entry.amount));
             }}>
               <Text style={[styles.forecastRowName, { color: colors.text }]} numberOfLines={1}>{entry.name}</Text>
             </TouchableOpacity>
@@ -294,7 +300,11 @@ export default function DashboardScreen() {
           paidAmount: amount,
           accountId: defaultAccountId,
           createTransaction: true,
-          affectBalance: true,
+          // createTransaction already moves the money via storage.createTransaction on the
+          // server (it subtracts from the account balance whenever accountId is set) — leaving
+          // affectBalance true as well double-deducts. Match InsuranceDetailsScreen/
+          // LoanDetailsScreen's convention: never send both flags true at once.
+          affectBalance: false,
         });
       }
 
@@ -303,7 +313,9 @@ export default function DashboardScreen() {
         amount,
         accountId: defaultAccountId,
         createTransaction: true,
-        affectAccountBalance: true,
+        // Same double-deduction hazard as the loans branch above — createTransaction already
+        // deducts via storage.createTransaction, so affectAccountBalance must stay off.
+        affectAccountBalance: false,
       });
     },
     onSuccess: () => {
@@ -311,6 +323,14 @@ export default function DashboardScreen() {
       queryClient.invalidateQueries({ queryKey: ['/api/accounts'] });
       queryClient.invalidateQueries({ queryKey: ['/api/transactions'] });
       setMarkPaidTarget(null);
+    },
+    onError: (error: any) => {
+      Toast.show({
+        type: 'error',
+        text1: 'Error',
+        text2: error.message || 'Failed to mark as paid',
+        position: 'bottom',
+      });
     },
   });
 
@@ -332,6 +352,12 @@ export default function DashboardScreen() {
   );
 
   const [editingOthersEntry, setEditingOthersEntry] = useState<CurrentCycleOthersEntry | null>(null);
+  // Separate from the always-present "add new" row's state below — sharing state between the
+  // inline edit form and the add row caused field bleed (editing an entry pre-filled the add
+  // row too) and left the add row pre-filled with a just-saved entry's values after an edit,
+  // one stray tap away from creating a duplicate.
+  const [editingOthersNameInput, setEditingOthersNameInput] = useState('');
+  const [editingOthersAmountInput, setEditingOthersAmountInput] = useState('');
   const [othersCurrentNameInput, setOthersCurrentNameInput] = useState('');
   const [othersCurrentAmountInput, setOthersCurrentAmountInput] = useState('');
   const [addingOthersType, setAddingOthersType] = useState<'debit' | 'credit'>('debit');
@@ -370,6 +396,8 @@ export default function DashboardScreen() {
         : api.updateScheduledPayment(entry.id, { name: entry.name, amount: entry.amount.toString() }),
     onSuccess: (_data, entry) => {
       setEditingOthersEntry(null);
+      setEditingOthersNameInput('');
+      setEditingOthersAmountInput('');
       if (entry.kind === 'credit') {
         queryClient.invalidateQueries({ queryKey: ['/api/planned-income-entries', 'current', summary?.currentMonth, summary?.currentYear] });
       } else {
@@ -627,7 +655,13 @@ export default function DashboardScreen() {
             </Text>
           </View>
         </View>
-        {onMarkPaid && !bill.isPaid && (
+        {/* Loan/insurance rows always carry their installmentId/premiumId key (possibly null,
+            but present) once the bill exists for this cycle, per the backend. Scheduled/CC
+            rows only carry occurrenceId, and auto-calculated CC bills (isAutoCalculated,
+            id `cc-auto-*`) never get one — so gate on occurrenceId being truthy for those,
+            otherwise the checkmark opens a sheet whose submit is guaranteed to throw
+            "No occurrence found for this cycle yet". */}
+        {onMarkPaid && !bill.isPaid && (bill.installmentId !== undefined || bill.premiumId !== undefined || !!bill.occurrenceId) && (
           <TouchableOpacity
             onPress={() => onMarkPaid(bill)}
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
