@@ -38,13 +38,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<(User & { hasPin: boolean; hasPassword: boolean; biometricEnabled: boolean }) | null>(null);
   const appState = useRef(AppState.currentState);
   const hasPinRef = useRef(false);
+  // Biometric-only accounts (hasPin: false, biometricEnabled: true) are a valid,
+  // independently-toggled combination (see SettingsScreen's toggleBiometric, which never
+  // requires a PIN to be set). Locking must trigger for that case too, or the lock screen
+  // — the only place biometric auth is invoked — never renders and login is skipped entirely.
+  const requiresLockRef = useRef(false);
 
   useEffect(() => {
     hasPinRef.current = hasPin;
-  }, [hasPin]);
+    requiresLockRef.current = hasPin || !!user?.biometricEnabled;
+  }, [hasPin, user?.biometricEnabled]);
 
   const lockApp = useCallback(() => {
-    if (hasPinRef.current) {
+    if (requiresLockRef.current) {
       setIsLocked(true);
     }
   }, []);
@@ -116,8 +122,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           await AsyncStorage.setItem(STORAGE_KEYS.USERNAME, userData.name);
         }
         
-        // Lock if PIN is set
-        if (userHasPin) {
+        // Lock if PIN is set, or if biometric-only (no PIN, but biometric enabled)
+        if (userHasPin || userData.biometricEnabled) {
           setIsLocked(true);
         } else {
           setIsLocked(false);
@@ -143,8 +149,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const userHasPin = !!apiUser?.pinHash;
       setHasPin(userHasPin);
       hasPinRef.current = userHasPin;
-      
-      if (!userHasPin) {
+      requiresLockRef.current = userHasPin || !!apiUser?.biometricEnabled;
+
+      if (!userHasPin && !apiUser?.biometricEnabled) {
         setIsLocked(false);
       } else {
         setIsLocked(true);
@@ -175,9 +182,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setHasPin(userData.hasPin);
       setHasPassword(userData.hasPassword);
       hasPinRef.current = userData.hasPin;
-      
-      // If no PIN, unlock immediately
-      if (!userData.hasPin) {
+      requiresLockRef.current = userData.hasPin || userData.biometricEnabled;
+
+      // If no PIN and no biometric, unlock immediately
+      if (!userData.hasPin && !userData.biometricEnabled) {
         setIsLocked(false);
       }
     } catch (error) {

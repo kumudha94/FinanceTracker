@@ -685,8 +685,16 @@ export default function LoanDetailsScreen() {
         {/* Outstanding Card */}
         <View style={[styles.outstandingCard, { backgroundColor: '#1e293b' }]}>
           {/* Loan Name */}
-          <Text style={[styles.outstandingLoanName, { color: '#fff' }]}>{loan.name}</Text>
-          
+          <View style={styles.outstandingNameRow}>
+            <Text style={[styles.outstandingLoanName, { color: '#fff', marginBottom: 0 }]}>{loan.name}</Text>
+            <TouchableOpacity
+              onPress={() => (navigation as any).navigate('AddLoan', { loanId: loan.id })}
+              data-testid="button-edit-loan"
+            >
+              <Ionicons name="settings-outline" size={22} color="rgba(255,255,255,0.8)" />
+            </TouchableOpacity>
+          </View>
+
           <View style={styles.outstandingContent}>
             <View>
               <Text style={styles.outstandingLabel}>Outstanding</Text>
@@ -743,6 +751,19 @@ export default function LoanDetailsScreen() {
               <Text style={[styles.existingLoanBannerTitle, { color: colors.text }]}>Existing Loan Tracking</Text>
               <Text style={[styles.existingLoanBannerText, { color: colors.textMuted }]}>
                 This is a simplified view for loans started before tracking. Only future EMIs are shown.
+              </Text>
+            </View>
+          </View>
+        )}
+
+        {/* Auto-Mark-as-Paid Banner */}
+        {loan.autoMarkPaidEnabled && (
+          <View style={[styles.existingLoanBanner, { backgroundColor: '#8b5cf615', borderColor: '#8b5cf630' }]}>
+            <Ionicons name="flash" size={20} color="#8b5cf6" />
+            <View style={{ flex: 1, marginLeft: 10 }}>
+              <Text style={[styles.existingLoanBannerTitle, { color: colors.text }]}>Auto-Mark as Paid Enabled</Text>
+              <Text style={[styles.existingLoanBannerText, { color: colors.textMuted }]}>
+                The next EMI is auto-marked paid when an SMS containing "{loan.autoMarkKeyword}" and the exact EMI amount arrives near the due date.
               </Text>
             </View>
           </View>
@@ -2421,6 +2442,12 @@ const styles = StyleSheet.create({
   outstandingLoanName: {
     fontSize: 18,
     fontWeight: '600',
+    marginBottom: 12,
+  },
+  outstandingNameRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
     marginBottom: 12,
   },
   typeBadge: {

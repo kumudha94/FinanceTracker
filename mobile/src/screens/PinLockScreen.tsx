@@ -13,7 +13,7 @@ export default function PinLockScreen() {
   const [isVerifying, setIsVerifying] = useState(false);
   const [biometricInfo, setBiometricInfo] = useState<BiometricInfo | null>(null);
   const [showBiometric, setShowBiometric] = useState(true);
-  const { user, unlock, logout } = useAuth();
+  const { user, hasPin, unlock, logout } = useAuth();
   const { resolvedTheme } = useTheme();
   const colors = getThemedColors(resolvedTheme);
 
@@ -23,7 +23,9 @@ export default function PinLockScreen() {
   const handleForgotPin = () => {
     Alert.alert(
       'Log Out?',
-      "If your PIN isn't working, you can log out and sign back in with your username and password.",
+      hasPin
+        ? "If your PIN isn't working, you can log out and sign back in with your username and password."
+        : "If biometric unlock isn't working, you can log out and sign back in with your username and password.",
       [
         { text: 'Cancel', style: 'cancel' },
         { text: 'Log Out', style: 'destructive', onPress: () => logout() },
@@ -172,9 +174,13 @@ export default function PinLockScreen() {
         <View style={[styles.iconContainer, { backgroundColor: colors.primary + '20' }]}>
           <Ionicons name="lock-closed" size={40} color={colors.primary} />
         </View>
-        <Text style={[styles.title, { color: colors.text }]}>Enter PIN</Text>
+        <Text style={[styles.title, { color: colors.text }]}>
+          {hasPin ? 'Enter PIN' : 'Unlock'}
+        </Text>
         <Text style={[styles.subtitle, { color: colors.textMuted }]}>
-          Enter your 4-digit PIN to unlock
+          {hasPin
+            ? 'Enter your 4-digit PIN to unlock'
+            : `Use ${getBiometricName(biometricInfo?.biometricType ?? 'none')} to unlock`}
         </Text>
       </View>
 
@@ -184,19 +190,22 @@ export default function PinLockScreen() {
         </View>
       ) : (
         <>
-          {renderDots()}
+          {hasPin && renderDots()}
           {error ? <Text style={[styles.errorText, { color: colors.danger }]}>{error}</Text> : null}
-          
-          {/* Biometric Button */}
-          {biometricInfo?.isAvailable && biometricInfo?.isEnrolled && user?.biometricEnabled && showBiometric && (
+
+          {/* Biometric Button. Biometric-only accounts (no PIN) have no fallback input, so the
+              retry button must stay available even after a failed attempt — otherwise "Log Out"
+              would be the only way back in. PIN accounts still hide it after a failure since the
+              PIN pad below is a real fallback. */}
+          {biometricInfo?.isAvailable && biometricInfo?.isEnrolled && user?.biometricEnabled && (showBiometric || !hasPin) && (
             <TouchableOpacity
               style={[styles.biometricButton, { backgroundColor: colors.card }]}
               onPress={handleBiometricAuth}
             >
-              <Ionicons 
-                name={biometricInfo.biometricType === 'facial' ? 'scan' : 'finger-print'} 
-                size={32} 
-                color={colors.primary} 
+              <Ionicons
+                name={biometricInfo.biometricType === 'facial' ? 'scan' : 'finger-print'}
+                size={32}
+                color={colors.primary}
               />
               <Text style={[styles.biometricText, { color: colors.text }]}>
                 Use {getBiometricName(biometricInfo.biometricType)}
@@ -206,10 +215,12 @@ export default function PinLockScreen() {
         </>
       )}
 
-      {renderNumberPad()}
+      {hasPin && renderNumberPad()}
 
       <TouchableOpacity onPress={handleForgotPin} style={styles.forgotPinButton}>
-        <Text style={[styles.forgotPinText, { color: colors.textMuted }]}>Forgot PIN? Log Out</Text>
+        <Text style={[styles.forgotPinText, { color: colors.textMuted }]}>
+          {hasPin ? 'Forgot PIN? Log Out' : 'Log Out'}
+        </Text>
       </TouchableOpacity>
     </View>
   );

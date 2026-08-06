@@ -1,4 +1,4 @@
-import {Platform } from 'react-native';
+import { Platform, PermissionsAndroid } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Notifications from 'expo-notifications';
 import NetInfo from '@react-native-community/netinfo';
@@ -48,16 +48,15 @@ export async function requestSmsAndNotificationPermissions(): Promise<{
 }> {
   let smsGranted = false;
 
-  // TODO: uncomment after local web testing
-  // if (Platform.OS === 'android') {
-  //   const results = await PermissionsAndroid.requestMultiple([
-  //     PermissionsAndroid.PERMISSIONS.RECEIVE_SMS,
-  //     PermissionsAndroid.PERMISSIONS.READ_SMS,
-  //   ]);
-  //   smsGranted =
-  //     results[PermissionsAndroid.PERMISSIONS.RECEIVE_SMS] === PermissionsAndroid.RESULTS.GRANTED &&
-  //     results[PermissionsAndroid.PERMISSIONS.READ_SMS] === PermissionsAndroid.RESULTS.GRANTED;
-  // }
+  if (Platform.OS === 'android') {
+    const results = await PermissionsAndroid.requestMultiple([
+      PermissionsAndroid.PERMISSIONS.RECEIVE_SMS,
+      PermissionsAndroid.PERMISSIONS.READ_SMS,
+    ]);
+    smsGranted =
+      results[PermissionsAndroid.PERMISSIONS.RECEIVE_SMS] === PermissionsAndroid.RESULTS.GRANTED &&
+      results[PermissionsAndroid.PERMISSIONS.READ_SMS] === PermissionsAndroid.RESULTS.GRANTED;
+  }
 
   const notificationPermission = await Notifications.requestPermissionsAsync();
   const notificationsGranted = notificationPermission.granted;
@@ -67,10 +66,7 @@ export async function requestSmsAndNotificationPermissions(): Promise<{
 
 export async function hasSmsPermission(): Promise<boolean> {
   if (Platform.OS !== 'android') return false;
-  // TODO: uncomment after local web testing
-  // const granted = await PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.READ_SMS);
-  // return granted;
-  return false;
+  return PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.READ_SMS);
 }
 
 // Cheap on-device pre-filter so we don't ship every OTP/promo SMS to the server for parsing.
