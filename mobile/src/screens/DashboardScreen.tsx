@@ -78,6 +78,11 @@ export default function DashboardScreen() {
     if (showCurrentCyclePlanModal) {
       setCycleView('actual');
       setCurrentCycleAccordion(null);
+    } else {
+      setEditingOthersEntry(null);
+      setOthersCurrentNameInput('');
+      setOthersCurrentAmountInput('');
+      setAddingOthersType('debit');
     }
   }, [showCurrentCyclePlanModal]);
 
@@ -123,6 +128,12 @@ export default function DashboardScreen() {
   const { data: forecast } = useQuery({
     queryKey: ['/api/next-month-forecast'],
     queryFn: api.getNextMonthForecast,
+  });
+
+  const { data: currentCyclePlannedIncome = [] } = useQuery({
+    queryKey: ['/api/planned-income-entries', 'current', summary?.currentMonth, summary?.currentYear],
+    queryFn: () => api.getPlannedIncomeEntries(summary!.currentMonth, summary!.currentYear),
+    enabled: !!summary && showCurrentCyclePlanModal,
   });
 
   const { data: salaryProfile } = useQuery({
@@ -203,6 +214,52 @@ export default function DashboardScreen() {
     setMarkPaidAmountInput(String(item.amount));
   };
 
+  const renderOthersEntryRow = (entry: CurrentCycleOthersEntry, dotColor: string, amountColor: string, amountPrefix: '+' | '-') => {
+    const isEditing = editingOthersEntry?.kind === entry.kind && editingOthersEntry.id === entry.id;
+    return (
+      <View key={`${entry.kind}-${entry.id}`} style={[styles.forecastRow, { borderBottomColor: colors.border }]}>
+        {isEditing ? (
+          <>
+            <TextInput
+              style={[styles.othersNameInput, { color: colors.text, borderColor: colors.border }]}
+              value={othersCurrentNameInput}
+              onChangeText={setOthersCurrentNameInput}
+            />
+            <TextInput
+              style={[styles.othersAmountInput, { color: colors.text, borderColor: colors.border }]}
+              value={othersCurrentAmountInput}
+              onChangeText={setOthersCurrentAmountInput}
+              keyboardType="numeric"
+            />
+            <TouchableOpacity onPress={() => {
+              const parsed = parseFloat(othersCurrentAmountInput);
+              const trimmed = othersCurrentNameInput.trim();
+              if (!trimmed || isNaN(parsed) || parsed <= 0) return;
+              updateOthersEntryMutation.mutate({ ...entry, name: trimmed, amount: parsed });
+            }} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+              <Ionicons name="checkmark-circle" size={20} color={colors.primary} />
+            </TouchableOpacity>
+          </>
+        ) : (
+          <>
+            <View style={[styles.forecastDot, { backgroundColor: dotColor }]} />
+            <TouchableOpacity style={styles.forecastRowInfo} onPress={() => {
+              setEditingOthersEntry(entry);
+              setOthersCurrentNameInput(entry.name);
+              setOthersCurrentAmountInput(String(entry.amount));
+            }}>
+              <Text style={[styles.forecastRowName, { color: colors.text }]} numberOfLines={1}>{entry.name}</Text>
+            </TouchableOpacity>
+            <Text style={[styles.forecastRowAmt, { color: amountColor }]}>{amountPrefix}{formatCurrency(entry.amount)}</Text>
+            <TouchableOpacity onPress={() => deleteOthersEntryMutation.mutate(entry)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+              <Ionicons name="trash-outline" size={18} color={colors.textMuted} />
+            </TouchableOpacity>
+          </>
+        )}
+      </View>
+    );
+  };
+
   const markPaidMutation = useMutation({
     mutationFn: async ({ item, category, amount }: { item: BillItem; category: MarkPaidCategory; amount: string }) => {
       const defaultAccountId = accounts.find(a => a.isDefault)?.id ?? accounts[0]?.id;
@@ -254,6 +311,82 @@ export default function DashboardScreen() {
       queryClient.invalidateQueries({ queryKey: ['/api/accounts'] });
       queryClient.invalidateQueries({ queryKey: ['/api/transactions'] });
       setMarkPaidTarget(null);
+    },
+  });
+
+  type CurrentCycleOthersEntry =
+    | { kind: 'debit'; id: number; name: string; amount: number }
+    | { kind: 'credit'; id: number; name: string; amount: number };
+
+  const currentCycleOneTimeDebits = useMemo(() => {
+    if (!summary) return [];
+    return (summary.billsDueDetails.scheduledPayments || []).filter(b => b.frequency === 'one_time');
+  }, [summary]);
+
+  // Named distinctly from the pre-existing Next Cycle Plan `othersCreditTotal` memo
+  // (declared later in this component for `effectiveTotalIncome`) — that name is
+  // already taken in this scope by the unrelated draft-based feature.
+  const currentCycleOthersCreditTotal = useMemo(
+    () => currentCyclePlannedIncome.reduce((sum, e) => sum + parseFloat(e.amount), 0),
+    [currentCyclePlannedIncome]
+  );
+
+  const [editingOthersEntry, setEditingOthersEntry] = useState<CurrentCycleOthersEntry | null>(null);
+  const [othersCurrentNameInput, setOthersCurrentNameInput] = useState('');
+  const [othersCurrentAmountInput, setOthersCurrentAmountInput] = useState('');
+  const [addingOthersType, setAddingOthersType] = useState<'debit' | 'credit'>('debit');
+
+  const createOthersEntryMutation = useMutation<ScheduledPayment | PlannedIncomeEntry, Error, { type: 'debit' | 'credit'; name: string; amount: string }>({
+    mutationFn: (entry) =>
+      entry.type === 'credit'
+        ? api.createPlannedIncomeEntry({
+            name: entry.name,
+            amount: entry.amount,
+            expectedMonth: summary!.currentMonth,
+            expectedYear: summary!.currentYear,
+          })
+        : api.createScheduledPayment({
+            name: entry.name,
+            amount: entry.amount,
+            frequency: 'one_time',
+            startMonth: summary!.currentMonth,
+            dueDate: null,
+          }),
+    onSuccess: (_data, entry) => {
+      setOthersCurrentNameInput('');
+      setOthersCurrentAmountInput('');
+      if (entry.type === 'credit') {
+        queryClient.invalidateQueries({ queryKey: ['/api/planned-income-entries', 'current', summary?.currentMonth, summary?.currentYear] });
+      } else {
+        queryClient.invalidateQueries({ queryKey: ['/api/dashboard-summary'] });
+      }
+    },
+  });
+
+  const updateOthersEntryMutation = useMutation<ScheduledPayment | PlannedIncomeEntry, Error, CurrentCycleOthersEntry>({
+    mutationFn: (entry) =>
+      entry.kind === 'credit'
+        ? api.updatePlannedIncomeEntry(entry.id, { name: entry.name, amount: entry.amount.toString() })
+        : api.updateScheduledPayment(entry.id, { name: entry.name, amount: entry.amount.toString() }),
+    onSuccess: (_data, entry) => {
+      setEditingOthersEntry(null);
+      if (entry.kind === 'credit') {
+        queryClient.invalidateQueries({ queryKey: ['/api/planned-income-entries', 'current', summary?.currentMonth, summary?.currentYear] });
+      } else {
+        queryClient.invalidateQueries({ queryKey: ['/api/dashboard-summary'] });
+      }
+    },
+  });
+
+  const deleteOthersEntryMutation = useMutation({
+    mutationFn: (entry: CurrentCycleOthersEntry) =>
+      entry.kind === 'credit' ? api.deletePlannedIncomeEntry(entry.id) : api.deleteScheduledPayment(entry.id),
+    onSuccess: (_data, entry) => {
+      if (entry.kind === 'credit') {
+        queryClient.invalidateQueries({ queryKey: ['/api/planned-income-entries', 'current', summary?.currentMonth, summary?.currentYear] });
+      } else {
+        queryClient.invalidateQueries({ queryKey: ['/api/dashboard-summary'] });
+      }
     },
   });
 
@@ -381,12 +514,10 @@ export default function DashboardScreen() {
       .reduce((sum, b) => sum + b.amount, 0);
   }, [summary]);
 
-  // othersCreditTotal is 0 until Task 7 introduces current-cycle planned income entries —
-  // this line is replaced in Task 7 to add that term.
   const projectedIncome = useMemo(() => {
     if (!summary) return 0;
-    return summary.totalIncome;
-  }, [summary]);
+    return summary.totalIncome + currentCycleOthersCreditTotal;
+  }, [summary, currentCycleOthersCreditTotal]);
 
   const projectedOutflow = useMemo(() => {
     if (!summary) return 0;
@@ -2117,6 +2248,71 @@ export default function DashboardScreen() {
                       <Text style={[styles.emptyText, { color: colors.textMuted }]}>Nothing pending — you're all caught up</Text>
                     </View>
                   )}
+
+                  <View>
+                    <TouchableOpacity
+                      style={[styles.accordionHeader, { borderBottomColor: colors.border }]}
+                      onPress={() => toggleCurrentCycleAccordion('others')}
+                      activeOpacity={0.7}
+                    >
+                      <View style={[styles.accordionIconWrap, { backgroundColor: '#0ea5e9' + '15' }]}>
+                        <Ionicons name="receipt-outline" size={16} color="#0ea5e9" />
+                      </View>
+                      <View style={styles.accordionTitleArea}>
+                        <Text style={[styles.accordionTitle, { color: colors.text }]}>Others</Text>
+                        <Text style={[styles.accordionSubtitle, { color: colors.textMuted }]}>
+                          {currentCycleOneTimeDebits.length + currentCyclePlannedIncome.length} item{(currentCycleOneTimeDebits.length + currentCyclePlannedIncome.length) === 1 ? '' : 's'}
+                        </Text>
+                      </View>
+                      <Ionicons name={currentCycleAccordion === 'others' ? 'chevron-up' : 'chevron-down'} size={14} color={colors.textMuted} />
+                    </TouchableOpacity>
+                    {currentCycleAccordion === 'others' && (
+                      <View style={styles.accordionContent}>
+                        {currentCycleOneTimeDebits.map((d) =>
+                          renderOthersEntryRow({ kind: 'debit', id: d.id as number, name: d.name, amount: d.amount }, '#0ea5e9', '#ef4444', '-')
+                        )}
+                        {currentCyclePlannedIncome.map((e) =>
+                          renderOthersEntryRow({ kind: 'credit', id: e.id, name: e.name, amount: parseFloat(e.amount) }, '#10b981', '#10b981', '+')
+                        )}
+
+                        <View style={styles.othersAddRow}>
+                          <TouchableOpacity
+                            onPress={() => setAddingOthersType(prev => prev === 'debit' ? 'credit' : 'debit')}
+                            style={{ paddingHorizontal: 4 }}
+                          >
+                            <Ionicons
+                              name={addingOthersType === 'debit' ? 'arrow-down-circle' : 'arrow-up-circle'}
+                              size={22}
+                              color={addingOthersType === 'debit' ? '#ef4444' : '#10b981'}
+                            />
+                          </TouchableOpacity>
+                          <TextInput
+                            style={[styles.othersNameInput, { color: colors.text, borderColor: colors.border }]}
+                            value={othersCurrentNameInput}
+                            onChangeText={setOthersCurrentNameInput}
+                            placeholder="Topic"
+                            placeholderTextColor={colors.textMuted}
+                          />
+                          <TextInput
+                            style={[styles.othersAmountInput, { color: colors.text, borderColor: colors.border }]}
+                            value={othersCurrentAmountInput}
+                            onChangeText={setOthersCurrentAmountInput}
+                            placeholder="Amount"
+                            placeholderTextColor={colors.textMuted}
+                            keyboardType="numeric"
+                          />
+                          <TouchableOpacity onPress={() => {
+                            const trimmed = othersCurrentNameInput.trim();
+                            const parsed = parseFloat(othersCurrentAmountInput);
+                            if (!trimmed || isNaN(parsed) || parsed <= 0) return;
+                            createOthersEntryMutation.mutate({ type: addingOthersType, name: trimmed, amount: parsed.toString() });
+                          }} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                            <Ionicons name="add-circle" size={22} color={colors.primary} />
+                          </TouchableOpacity>
+                        </View>
+                      </View>
+                    )}
+                  </View>
                 </View>
               ) : (
                 <Text style={[styles.modalExplain, { color: colors.textMuted, marginTop: 16 }]}>
