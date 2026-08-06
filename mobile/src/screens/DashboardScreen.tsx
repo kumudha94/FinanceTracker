@@ -194,6 +194,68 @@ export default function DashboardScreen() {
     onSettled: () => setUpdatingPlannedIncomeId(null),
   });
 
+  type MarkPaidCategory = 'scheduled' | 'creditCard' | 'loans' | 'insurance';
+  const [markPaidTarget, setMarkPaidTarget] = useState<{ item: BillItem; category: MarkPaidCategory } | null>(null);
+  const [markPaidAmountInput, setMarkPaidAmountInput] = useState('');
+
+  const openMarkPaidSheet = (item: BillItem, category: MarkPaidCategory) => {
+    setMarkPaidTarget({ item, category });
+    setMarkPaidAmountInput(String(item.amount));
+  };
+
+  const markPaidMutation = useMutation({
+    mutationFn: async ({ item, category, amount }: { item: BillItem; category: MarkPaidCategory; amount: string }) => {
+      const defaultAccountId = accounts.find(a => a.isDefault)?.id ?? accounts[0]?.id;
+
+      if (category === 'scheduled' || category === 'creditCard') {
+        if (!item.occurrenceId) throw new Error('No occurrence found for this cycle yet');
+        if (defaultAccountId) {
+          await api.createTransaction({
+            type: 'debit',
+            amount,
+            merchant: item.name,
+            description: `Scheduled payment: ${item.name}`,
+            categoryId: item.categoryId ?? null,
+            accountId: defaultAccountId,
+            transactionDate: new Date().toISOString(),
+            paymentOccurrenceId: item.occurrenceId,
+          });
+        }
+        return api.updatePaymentOccurrence(item.occurrenceId, {
+          status: 'paid',
+          affectTransaction: true,
+          affectAccountBalance: true,
+          paidAmount: amount,
+        });
+      }
+
+      if (category === 'loans') {
+        if (!item.installmentId) throw new Error('No installment found for this cycle yet');
+        return api.markInstallmentPaid(item.id as number, item.installmentId, {
+          paidDate: new Date().toISOString(),
+          paidAmount: amount,
+          accountId: defaultAccountId,
+          createTransaction: true,
+          affectBalance: true,
+        });
+      }
+
+      if (!item.premiumId) throw new Error('No premium found for this cycle yet');
+      return api.markPremiumPaid(item.id as number, item.premiumId, {
+        amount,
+        accountId: defaultAccountId,
+        createTransaction: true,
+        affectAccountBalance: true,
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/dashboard-summary'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/accounts'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/transactions'] });
+      setMarkPaidTarget(null);
+    },
+  });
+
   useFocusEffect(
     useCallback(() => {
       clearWhatIf();
@@ -2024,21 +2086,29 @@ export default function DashboardScreen() {
                     'Scheduled Payments', 'repeat-outline', '#6366f1',
                     currentCycleAccordion === 'scheduled', () => toggleCurrentCycleAccordion('scheduled'),
                     (summary.billsDueDetails.scheduledPayments || []).filter(b => !b.isPaid && b.frequency !== 'one_time'),
+                    undefined,
+                    (item) => openMarkPaidSheet(item, 'scheduled'),
                   )}
                   {renderAccordionSection(
                     'Credit Card Bills', 'card-outline', '#ec4899',
                     currentCycleAccordion === 'creditCard', () => toggleCurrentCycleAccordion('creditCard'),
                     (summary.billsDueDetails.creditCardBills || []).filter(b => !b.isPaid),
+                    undefined,
+                    (item) => openMarkPaidSheet(item, 'creditCard'),
                   )}
                   {renderAccordionSection(
                     'Loan EMIs', 'cash-outline', '#f59e0b',
                     currentCycleAccordion === 'loans', () => toggleCurrentCycleAccordion('loans'),
                     (summary.billsDueDetails.loans || []).filter(b => !b.isPaid),
+                    undefined,
+                    (item) => openMarkPaidSheet(item, 'loans'),
                   )}
                   {renderAccordionSection(
                     'Insurance Premiums', 'shield-checkmark-outline', '#8b5cf6',
                     currentCycleAccordion === 'insurance', () => toggleCurrentCycleAccordion('insurance'),
                     (summary.billsDueDetails.insurance || []).filter(b => !b.isPaid),
+                    undefined,
+                    (item) => openMarkPaidSheet(item, 'insurance'),
                   )}
                   {pendingOutflow === 0 && (
                     <View style={styles.emptyState}>
@@ -2053,6 +2123,54 @@ export default function DashboardScreen() {
                 </Text>
               )}
             </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        visible={!!markPaidTarget}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setMarkPaidTarget(null)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContent, { backgroundColor: colors.card }]}>
+            <View style={styles.modalHeader}>
+              <Text style={[styles.modalTitle, { color: colors.text }]}>Mark Paid</Text>
+              <TouchableOpacity onPress={() => setMarkPaidTarget(null)} data-testid="button-close-mark-paid">
+                <Ionicons name="close" size={22} color={colors.textMuted} />
+              </TouchableOpacity>
+            </View>
+            <View style={styles.modalBody}>
+              <Text style={[styles.infoValue, { color: colors.text }]}>{markPaidTarget?.item.name}</Text>
+              <View style={[styles.amountInputContainer, { backgroundColor: colors.background, borderColor: colors.border }]}>
+                <Text style={[styles.currencySymbol, { color: colors.primary }]}>₹</Text>
+                <TextInput
+                  style={[styles.amountInput, { color: colors.text }]}
+                  value={markPaidAmountInput}
+                  onChangeText={setMarkPaidAmountInput}
+                  keyboardType="decimal-pad"
+                  placeholder="0"
+                  placeholderTextColor={colors.textMuted}
+                  data-testid="input-mark-paid-amount"
+                />
+              </View>
+              <TouchableOpacity
+                style={[styles.getStartedButton, { backgroundColor: colors.primary, opacity: markPaidMutation.isPending ? 0.6 : 1 }]}
+                disabled={markPaidMutation.isPending}
+                onPress={() => {
+                  if (!markPaidTarget) return;
+                  const parsed = parseFloat(markPaidAmountInput);
+                  if (isNaN(parsed) || parsed <= 0) return;
+                  markPaidMutation.mutate({ item: markPaidTarget.item, category: markPaidTarget.category, amount: parsed.toString() });
+                }}
+                activeOpacity={0.8}
+                data-testid="button-confirm-mark-paid"
+              >
+                <Ionicons name="checkmark-circle-outline" size={16} color="#fff" />
+                <Text style={styles.getStartedButtonText}>Confirm Paid</Text>
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
       </Modal>
@@ -2963,6 +3081,25 @@ const styles = StyleSheet.create({
   },
   cyclePlanModalScroll: {
     maxHeight: '100%',
+  },
+  amountInputContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    marginTop: 12,
+    marginBottom: 16,
+  },
+  currencySymbol: {
+    fontSize: 18,
+    fontWeight: '600',
+    marginRight: 6,
+  },
+  amountInput: {
+    flex: 1,
+    fontSize: 18,
+    paddingVertical: 10,
   },
   modalHeader: {
     flexDirection: 'row',
