@@ -202,6 +202,10 @@ export interface BillItem {
   creditLimit?: number | null;
   bankName?: string;
   isAutoCalculated?: boolean;
+  occurrenceId?: number | null;
+  categoryId?: number | null;
+  installmentId?: number | null;
+  premiumId?: number | null;
 }
 
 export interface BillsDueDetails {
@@ -231,6 +235,8 @@ export interface PaymentOccurrencesCycleResponse {
 
 export interface DashboardSummary {
   monthLabel: string;
+  currentMonth: number;
+  currentYear: number;
   totalIncome: number;
   totalSpent: number;
   totalSpentToday: number;

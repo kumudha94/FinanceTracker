@@ -722,7 +722,7 @@ export const api = {
     apiRequest<InsurancePremium>(`/api/insurances/${insuranceId}/premiums`, { method: 'POST', body: JSON.stringify(data) }),
   updateInsurancePremium: (insuranceId: number, id: number, data: Partial<InsertInsurancePremium>) => 
     apiRequest<InsurancePremium>(`/api/insurances/${insuranceId}/premiums/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
-  markPremiumPaid: (insuranceId: number, premiumId: number, data: { amount: string; accountId?: number; createTransaction?: boolean }) => 
+  markPremiumPaid: (insuranceId: number, premiumId: number, data: { amount: string; accountId?: number; createTransaction?: boolean; affectAccountBalance?: boolean }) =>
     apiRequest<InsurancePremium>(`/api/insurances/${insuranceId}/premiums/${premiumId}/pay`, { method: 'POST', body: JSON.stringify(data) }),
   deleteInsurancePremium: (insuranceId: number, id: number) => 
     apiRequest<void>(`/api/insurances/${insuranceId}/premiums/${id}`, { method: 'DELETE' }),
