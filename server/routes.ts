@@ -2670,6 +2670,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
             isPaid,
             paidAmount,
             status: isPaid ? 'paid' : (p.dueDate && resolveDueDate(p.dueDate) < startOfToday ? 'overdue' : 'pending'),
+            occurrenceId: occurrence?.id ?? null,
+            categoryId: p.categoryId ?? null,
           },
         };
       }));
@@ -2748,6 +2750,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           paidAmount: currentInstallment?.paidAmount ? parseFloat(currentInstallment.paidAmount) : 0,
           status: currentInstallment?.status || (loan.emiDay && resolveDueDate(loan.emiDay) < startOfToday ? 'overdue' : 'pending'),
           lenderName: loan.lenderName || '',
+          installmentId: currentInstallment?.id ?? null,
         };
       }));
 
@@ -2774,6 +2777,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             isPaid: currentPremium.status === 'paid',
             paidAmount: currentPremium.paidAmount ? parseFloat(currentPremium.paidAmount) : 0,
             status: currentPremium.status || 'pending',
+            premiumId: currentPremium.id ?? null,
           });
         }
       }
@@ -2807,6 +2811,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       res.json({
         monthLabel: cycleDatesObj.cycleLabel,
+        currentMonth,
+        currentYear,
         totalIncome,
         totalSpent,
         totalSpentToday,
