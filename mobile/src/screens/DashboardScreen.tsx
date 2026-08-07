@@ -1626,20 +1626,16 @@ export default function DashboardScreen() {
                     {forecast.plannedIncome.map((item) => renderPlannedIncomeRow(item))}
                     {othersDrafts.map((draft) => renderOthersDraftRow(draft))}
                     <View style={styles.othersAddRow}>
-                      <View style={[styles.othersTypeToggle, { borderColor: colors.border }]}>
-                        <TouchableOpacity
-                          onPress={() => setOthersTypeInput('debit')}
-                          style={[styles.othersTypeButton, othersTypeInput === 'debit' && { backgroundColor: '#ef444420' }]}
-                        >
-                          <Text style={[styles.othersTypeButtonText, { color: othersTypeInput === 'debit' ? '#ef4444' : colors.textMuted }]}>−</Text>
-                        </TouchableOpacity>
-                        <TouchableOpacity
-                          onPress={() => setOthersTypeInput('credit')}
-                          style={[styles.othersTypeButton, othersTypeInput === 'credit' && { backgroundColor: '#10b98120' }]}
-                        >
-                          <Text style={[styles.othersTypeButtonText, { color: othersTypeInput === 'credit' ? '#10b981' : colors.textMuted }]}>+</Text>
-                        </TouchableOpacity>
-                      </View>
+                      <TouchableOpacity
+                        onPress={() => setOthersTypeInput(prev => prev === 'debit' ? 'credit' : 'debit')}
+                        style={{ paddingHorizontal: 4 }}
+                      >
+                        <Ionicons
+                          name={othersTypeInput === 'debit' ? 'arrow-down-circle' : 'arrow-up-circle'}
+                          size={22}
+                          color={othersTypeInput === 'debit' ? '#ef4444' : '#10b981'}
+                        />
+                      </TouchableOpacity>
                       <TextInput
                         style={[styles.othersNameInput, { color: colors.text, borderColor: colors.border }]}
                         value={othersNameInput}
@@ -3233,22 +3229,6 @@ const styles = StyleSheet.create({
     gap: 8,
     paddingVertical: 8,
     paddingLeft: 4,
-  },
-  othersTypeToggle: {
-    flexDirection: 'row',
-    borderWidth: 1,
-    borderRadius: 8,
-    overflow: 'hidden',
-  },
-  othersTypeButton: {
-    width: 28,
-    height: 28,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  othersTypeButtonText: {
-    fontSize: 16,
-    fontWeight: '700',
   },
   othersNameInput: {
     flex: 1,
