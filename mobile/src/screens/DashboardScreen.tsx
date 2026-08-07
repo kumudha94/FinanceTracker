@@ -3310,9 +3310,7 @@ const styles = StyleSheet.create({
     padding: 20,
     borderBottomWidth: 1,
   },
-  cyclePlanModalScroll: {
-    maxHeight: '100%',
-  },
+  cyclePlanModalScroll: {},
   amountInputContainer: {
     flexDirection: 'row',
     alignItems: 'center',
