@@ -144,6 +144,7 @@ export const transactionsRelations = relations(transactions, ({ one }) => ({
 export const insertTransactionSchema = createInsertSchema(transactions).omit({
   id: true,
   createdAt: true,
+  updatedAt: true,
 }).extend({
   amount: z.string().min(1, "Amount is required")
     .refine((val) => !isNaN(Number(val)) && Number(val) > 0, {

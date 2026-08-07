@@ -37,7 +37,7 @@ import {
   DEFAULT_CATEGORIES
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, and, gte, lte, lt, ne, desc, sql, ilike, or, inArray } from "drizzle-orm";
+import { eq, and, gte, lte, lt, ne, desc, sql, ilike, or, inArray, isNotNull } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 
 // A pending loan installment / insurance premium / scheduled payment occurrence that matched a
@@ -466,7 +466,8 @@ export class DatabaseStorage implements IStorage {
     const conditions = [
       eq(transactions.userId, userId),
       eq(transactions.type, type),
-      ilike(transactions.merchant, merchant.trim()),
+      sql`LOWER(TRIM(${transactions.merchant})) = ${merchant.trim().toLowerCase()}`,
+      isNotNull(transactions.categoryId),
     ];
     if (otherCategory) {
       conditions.push(ne(transactions.categoryId, otherCategory.id));
@@ -476,7 +477,7 @@ export class DatabaseStorage implements IStorage {
       .select({ categoryId: transactions.categoryId })
       .from(transactions)
       .where(and(...conditions))
-      .orderBy(desc(transactions.updatedAt))
+      .orderBy(desc(transactions.updatedAt), desc(transactions.id))
       .limit(1);
 
     return result?.categoryId ?? null;
