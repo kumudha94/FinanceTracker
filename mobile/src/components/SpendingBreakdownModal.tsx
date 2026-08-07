@@ -6,6 +6,7 @@ import Toast from 'react-native-toast-message';
 import { api } from '../lib/api';
 import { formatCurrency, getThemedColors } from '../lib/utils';
 import { useTheme } from '../contexts/ThemeContext';
+import type { LoanSpendingEntry } from '../lib/types';
 
 interface SpendingBreakdownModalProps {
   loanId: number;
@@ -22,6 +23,9 @@ export default function SpendingBreakdownModal({ loanId, visible, onClose }: Spe
   const [showAddForm, setShowAddForm] = useState(false);
   const [newEntryAmount, setNewEntryAmount] = useState('');
   const [newEntryReason, setNewEntryReason] = useState('');
+  const [editingEntryId, setEditingEntryId] = useState<number | null>(null);
+  const [editEntryAmount, setEditEntryAmount] = useState('');
+  const [editEntryReason, setEditEntryReason] = useState('');
 
   const { data: loan } = useQuery({
     queryKey: ['/api/loans', loanId],
@@ -53,6 +57,9 @@ export default function SpendingBreakdownModal({ loanId, visible, onClose }: Spe
       setShowAddForm(false);
       setNewEntryAmount('');
       setNewEntryReason('');
+      setEditingEntryId(null);
+      setEditEntryAmount('');
+      setEditEntryReason('');
     }
   }, [visible]);
 
@@ -92,9 +99,34 @@ export default function SpendingBreakdownModal({ loanId, visible, onClose }: Spe
     },
   });
 
+  const updateEntryMutation = useMutation({
+    mutationFn: (id: number) => api.updateLoanSpendingEntry(id, { amount: editEntryAmount, reason: editEntryReason.trim() || null }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['loan-spending-entries', loanId] });
+      setEditingEntryId(null);
+      setEditEntryAmount('');
+      setEditEntryReason('');
+      Toast.show({ type: 'success', text1: 'Entry updated', position: 'bottom' });
+    },
+    onError: (error: any) => {
+      Toast.show({ type: 'error', text1: 'Could not update entry', text2: error?.message || 'Try a smaller amount', position: 'bottom' });
+    },
+  });
+
   const allocated = (entries || []).reduce((sum, e) => sum + parseFloat(e.amount), 0);
   const received = loan?.receivedAmount ? parseFloat(loan.receivedAmount) : null;
   const remaining = received !== null ? received - allocated : null;
+
+  // The field auto-fills with a suggestion (see the sync effect above), so "Save" should only
+  // be actionable once the user has actually typed something different from that baseline —
+  // otherwise every open of the modal shows an enabled Save button with nothing to save.
+  const receivedAmountBaseline = loan?.receivedAmount ?? loan?.principalAmount;
+  const receivedAmountChanged = (() => {
+    if (receivedAmountBaseline === undefined) return true;
+    const current = parseFloat(receivedAmountInput);
+    if (isNaN(current)) return true;
+    return current !== parseFloat(receivedAmountBaseline);
+  })();
 
   const handleAddEntry = () => {
     const amountNum = parseFloat(newEntryAmount);
@@ -103,6 +135,44 @@ export default function SpendingBreakdownModal({ loanId, visible, onClose }: Spe
       return;
     }
     addEntryMutation.mutate();
+  };
+
+  const handleSaveReceivedAmount = () => {
+    const newReceived = parseFloat(receivedAmountInput);
+    const principal = parseFloat(loan?.principalAmount ?? '0');
+    if (!isNaN(newReceived) && newReceived > principal) {
+      Toast.show({ type: 'error', text1: 'Received amount cannot exceed loan amount', text2: `Loan amount is ${formatCurrency(principal)}`, position: 'bottom' });
+      return;
+    }
+    if (!isNaN(newReceived) && newReceived < allocated) {
+      Toast.show({ type: 'error', text1: 'Cannot lower below allocated amount', text2: `You've already allocated ${formatCurrency(allocated)}`, position: 'bottom' });
+      return;
+    }
+    saveReceivedAmountMutation.mutate(receivedAmountInput);
+  };
+
+  const handleStartEditEntry = (entry: LoanSpendingEntry) => {
+    setShowAddForm(false);
+    setEditingEntryId(entry.id);
+    setEditEntryAmount(entry.amount);
+    setEditEntryReason(entry.reason || '');
+  };
+
+  const handleCancelEditEntry = () => {
+    setEditingEntryId(null);
+    setEditEntryAmount('');
+    setEditEntryReason('');
+  };
+
+  const handleSaveEditEntry = () => {
+    const amountNum = parseFloat(editEntryAmount);
+    if (!editEntryAmount || isNaN(amountNum) || amountNum <= 0) {
+      Toast.show({ type: 'error', text1: 'Enter a valid amount', position: 'bottom' });
+      return;
+    }
+    if (editingEntryId !== null) {
+      updateEntryMutation.mutate(editingEntryId);
+    }
   };
 
   if (!loan) {
@@ -149,16 +219,9 @@ export default function SpendingBreakdownModal({ loanId, visible, onClose }: Spe
                   />
                 </View>
                 <TouchableOpacity
-                  style={[styles.saveButton, { backgroundColor: colors.primary }]}
-                  onPress={() => {
-                    const newReceived = parseFloat(receivedAmountInput);
-                    if (!isNaN(newReceived) && newReceived < allocated) {
-                      Toast.show({ type: 'error', text1: 'Cannot lower below allocated amount', text2: `You've already allocated ${formatCurrency(allocated)}`, position: 'bottom' });
-                      return;
-                    }
-                    saveReceivedAmountMutation.mutate(receivedAmountInput);
-                  }}
-                  disabled={saveReceivedAmountMutation.isPending}
+                  style={[styles.saveButton, { backgroundColor: colors.primary, opacity: !receivedAmountChanged ? 0.5 : 1 }]}
+                  onPress={handleSaveReceivedAmount}
+                  disabled={saveReceivedAmountMutation.isPending || !receivedAmountChanged}
                 >
                   {saveReceivedAmountMutation.isPending ? (
                     <ActivityIndicator size="small" color="#fff" />
@@ -167,6 +230,11 @@ export default function SpendingBreakdownModal({ loanId, visible, onClose }: Spe
                   )}
                 </TouchableOpacity>
               </View>
+              {received === null && (
+                <Text style={[styles.unsavedHint, { color: '#f59e0b' }]}>
+                  Not saved yet — this is just a suggestion based on the loan amount. Tap Save to confirm it before adding entries.
+                </Text>
+              )}
             </View>
 
             {received !== null && (
@@ -183,17 +251,60 @@ export default function SpendingBreakdownModal({ loanId, visible, onClose }: Spe
             {entriesLoading ? (
               <ActivityIndicator size="small" color={colors.primary} style={{ marginVertical: 16 }} />
             ) : entries && entries.length > 0 ? (
-              entries.map((entry) => (
-                <View key={entry.id} style={[styles.entryRow, { borderBottomColor: colors.border }]}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={[styles.entryAmount, { color: colors.text }]}>{formatCurrency(parseFloat(entry.amount))}</Text>
-                    {entry.reason && <Text style={[styles.entryReason, { color: colors.textMuted }]}>{entry.reason}</Text>}
+              entries.map((entry) =>
+                editingEntryId === entry.id ? (
+                  <View key={entry.id} style={[styles.addForm, { backgroundColor: colors.card, borderColor: colors.border }]}>
+                    <View style={[styles.amountInputContainer, { backgroundColor: colors.background, borderColor: colors.border, marginBottom: 8 }]}>
+                      <Text style={[styles.currencyPrefix, { color: colors.textMuted }]}>₹</Text>
+                      <TextInput
+                        style={[styles.amountInput, { color: colors.text }]}
+                        keyboardType="decimal-pad"
+                        value={editEntryAmount}
+                        onChangeText={setEditEntryAmount}
+                        placeholder="Amount"
+                        placeholderTextColor={colors.textMuted}
+                        autoFocus
+                      />
+                    </View>
+                    <TextInput
+                      style={[styles.reasonInput, { backgroundColor: colors.background, borderColor: colors.border, color: colors.text }]}
+                      value={editEntryReason}
+                      onChangeText={setEditEntryReason}
+                      placeholder="Reason (optional)"
+                      placeholderTextColor={colors.textMuted}
+                    />
+                    <View style={styles.addFormButtons}>
+                      <TouchableOpacity style={styles.cancelButton} onPress={handleCancelEditEntry}>
+                        <Text style={{ color: colors.textMuted }}>Cancel</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[styles.addButton, { backgroundColor: colors.primary }]}
+                        onPress={handleSaveEditEntry}
+                        disabled={updateEntryMutation.isPending}
+                      >
+                        {updateEntryMutation.isPending ? (
+                          <ActivityIndicator size="small" color="#fff" />
+                        ) : (
+                          <Text style={styles.saveButtonText}>Save</Text>
+                        )}
+                      </TouchableOpacity>
+                    </View>
                   </View>
-                  <TouchableOpacity onPress={() => deleteEntryMutation.mutate(entry.id)} disabled={deleteEntryMutation.isPending}>
-                    <Ionicons name="trash-outline" size={20} color="#ef4444" />
-                  </TouchableOpacity>
-                </View>
-              ))
+                ) : (
+                  <View key={entry.id} style={[styles.entryRow, { borderBottomColor: colors.border }]}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={[styles.entryAmount, { color: colors.text }]}>{formatCurrency(parseFloat(entry.amount))}</Text>
+                      {entry.reason && <Text style={[styles.entryReason, { color: colors.textMuted }]}>{entry.reason}</Text>}
+                    </View>
+                    <TouchableOpacity onPress={() => handleStartEditEntry(entry)} style={styles.entryActionButton}>
+                      <Ionicons name="pencil-outline" size={19} color={colors.textMuted} />
+                    </TouchableOpacity>
+                    <TouchableOpacity onPress={() => deleteEntryMutation.mutate(entry.id)} disabled={deleteEntryMutation.isPending} style={styles.entryActionButton}>
+                      <Ionicons name="trash-outline" size={20} color="#ef4444" />
+                    </TouchableOpacity>
+                  </View>
+                )
+              )
             ) : (
               <Text style={[styles.emptyText, { color: colors.textMuted }]}>No spending entries yet</Text>
             )}
@@ -239,12 +350,16 @@ export default function SpendingBreakdownModal({ loanId, visible, onClose }: Spe
             ) : (
               <TouchableOpacity
                 style={[styles.addEntryRow, { borderColor: colors.border }]}
-                onPress={() => setShowAddForm(true)}
-                disabled={received === null}
+                onPress={received === null ? handleSaveReceivedAmount : () => { setEditingEntryId(null); setShowAddForm(true); }}
+                disabled={saveReceivedAmountMutation.isPending}
               >
-                <Ionicons name="add-circle-outline" size={20} color={received === null ? colors.textMuted : colors.primary} />
+                {received === null && saveReceivedAmountMutation.isPending ? (
+                  <ActivityIndicator size="small" color={colors.primary} />
+                ) : (
+                  <Ionicons name="add-circle-outline" size={20} color={received === null ? colors.textMuted : colors.primary} />
+                )}
                 <Text style={[styles.addEntryText, { color: received === null ? colors.textMuted : colors.primary }]}>
-                  {received === null ? 'Save received amount first' : 'Add Entry'}
+                  {received === null ? 'Tap to save received amount first' : 'Add Entry'}
                 </Text>
               </TouchableOpacity>
             )}
@@ -327,6 +442,11 @@ const styles = StyleSheet.create({
     fontSize: 12,
     marginBottom: 12,
   },
+  unsavedHint: {
+    fontSize: 12,
+    marginTop: 6,
+    lineHeight: 16,
+  },
   divider: {
     height: 1,
     marginBottom: 8,
@@ -344,6 +464,10 @@ const styles = StyleSheet.create({
   entryReason: {
     fontSize: 12,
     marginTop: 2,
+  },
+  entryActionButton: {
+    padding: 6,
+    marginLeft: 6,
   },
   emptyText: {
     fontSize: 13,

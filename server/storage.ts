@@ -238,6 +238,7 @@ export interface IStorage {
   // Loan Spending Entries
   getLoanSpendingEntries(loanId: number): Promise<LoanSpendingEntry[]>;
   createLoanSpendingEntry(entry: InsertLoanSpendingEntry): Promise<LoanSpendingEntry>;
+  updateLoanSpendingEntry(id: number, data: { amount?: string; reason?: string | null }): Promise<LoanSpendingEntry | undefined>;
   deleteLoanSpendingEntry(id: number): Promise<boolean>;
 
   // Card Details
@@ -2580,6 +2581,14 @@ export class DatabaseStorage implements IStorage {
   async createLoanSpendingEntry(entry: InsertLoanSpendingEntry): Promise<LoanSpendingEntry> {
     const [newEntry] = await db.insert(loanSpendingEntries).values(entry).returning();
     return newEntry;
+  }
+
+  async updateLoanSpendingEntry(id: number, data: { amount?: string; reason?: string | null }): Promise<LoanSpendingEntry | undefined> {
+    const [updated] = await db.update(loanSpendingEntries)
+      .set(data)
+      .where(eq(loanSpendingEntries.id, id))
+      .returning();
+    return updated || undefined;
   }
 
   async deleteLoanSpendingEntry(id: number): Promise<boolean> {

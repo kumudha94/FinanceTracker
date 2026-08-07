@@ -538,6 +538,8 @@ export const api = {
     apiRequest<LoanSpendingEntry[]>(`/api/loans/${loanId}/spending-entries`),
   createLoanSpendingEntry: (loanId: number, data: InsertLoanSpendingEntry) =>
     apiRequest<LoanSpendingEntry>(`/api/loans/${loanId}/spending-entries`, { method: 'POST', body: JSON.stringify(data) }),
+  updateLoanSpendingEntry: (id: number, data: { amount?: string; reason?: string | null }) =>
+    apiRequest<LoanSpendingEntry>(`/api/spending-entries/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   deleteLoanSpendingEntry: (id: number) =>
     apiRequest<void>(`/api/spending-entries/${id}`, { method: 'DELETE' }),
   generateInstallments: (loanId: number) => 

@@ -4589,7 +4589,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.patch("/api/loans/:id", async (req, res) => {
     try {
-      const loan = await storage.updateLoan(parseInt(req.params.id), req.body);
+      const loanId = parseInt(req.params.id);
+
+      if (req.body.receivedAmount !== undefined && req.body.receivedAmount !== null) {
+        const existingLoan = await storage.getLoan(loanId);
+        if (!existingLoan) {
+          return res.status(404).json({ error: "Loan not found" });
+        }
+        const principal = parseFloat(req.body.principalAmount ?? existingLoan.principalAmount);
+        const received = parseFloat(req.body.receivedAmount);
+        if (!isNaN(received) && received > principal) {
+          return res.status(400).json({ error: "Received amount cannot exceed loan amount" });
+        }
+      }
+
+      const loan = await storage.updateLoan(loanId, req.body);
       if (loan) {
         res.json(loan);
       } else {
@@ -5090,6 +5104,51 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const entry = await storage.createLoanSpendingEntry({ loanId, amount, reason: reason || null });
       res.status(201).json(entry);
+    } catch (error: any) {
+      res.status(400).json({ error: error.message || "Invalid spending entry data" });
+    }
+  });
+
+  app.patch("/api/spending-entries/:id", authenticateToken, async (req, res) => {
+    try {
+      const userId = req.user!.userId;
+      const entryId = parseInt(req.params.id);
+      const { amount, reason } = req.body;
+
+      // Same no-direct-getter pattern as DELETE below, but we also need the owning loan
+      // (for receivedAmount) and its sibling entries (to re-validate the allocation total
+      // excluding this entry's old amount).
+      const allLoans = await storage.getAllLoans(userId);
+      let ownerLoan: (typeof allLoans)[number] | null = null;
+      let siblingEntries: Awaited<ReturnType<typeof storage.getLoanSpendingEntries>> = [];
+      for (const loan of allLoans) {
+        const entries = await storage.getLoanSpendingEntries(loan.id);
+        const match = entries.find(e => e.id === entryId);
+        if (match) {
+          ownerLoan = loan;
+          siblingEntries = entries.filter(e => e.id !== entryId);
+          break;
+        }
+      }
+      if (!ownerLoan) {
+        return res.status(404).json({ error: "Spending entry not found" });
+      }
+
+      if (amount !== undefined) {
+        const validationError = validateNewSpendingEntry(ownerLoan.receivedAmount, siblingEntries, parseFloat(amount));
+        if (validationError) {
+          return res.status(400).json({ error: validationError });
+        }
+      }
+
+      const updated = await storage.updateLoanSpendingEntry(entryId, {
+        ...(amount !== undefined ? { amount } : {}),
+        ...(reason !== undefined ? { reason: reason || null } : {}),
+      });
+      if (!updated) {
+        return res.status(404).json({ error: "Spending entry not found" });
+      }
+      res.json(updated);
     } catch (error: any) {
       res.status(400).json({ error: error.message || "Invalid spending entry data" });
     }
