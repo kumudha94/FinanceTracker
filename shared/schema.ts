@@ -131,6 +131,7 @@ export const transactions = pgTable("transactions", {
   savingsContributionId: integer("savings_contribution_id"), // Link to savings contribution if this is a contribution transaction
   paymentOccurrenceId: integer("payment_occurrence_id"), // Link to scheduled payment occurrence if this is a scheduled payment transaction
   createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
 export const transactionsRelations = relations(transactions, ({ one }) => ({

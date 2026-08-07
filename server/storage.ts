@@ -718,7 +718,7 @@ export class DatabaseStorage implements IStorage {
     }
 
     // Update the transaction
-    const updateData: any = { ...updates };
+    const updateData: any = { ...updates, updatedAt: new Date() };
     if (updates.transactionDate) {
       updateData.transactionDate = new Date(updates.transactionDate);
     }
@@ -757,7 +757,7 @@ export class DatabaseStorage implements IStorage {
   async bulkUpdateTransactionCategory(userId: number, transactionIds: number[], categoryId: number): Promise<number> {
     if (transactionIds.length === 0) return 0;
     const result = await db.update(transactions)
-      .set({ categoryId })
+      .set({ categoryId, updatedAt: new Date() })
       .where(and(
         eq(transactions.userId, userId),
         inArray(transactions.id, transactionIds)
