@@ -2172,8 +2172,8 @@ export default function DashboardScreen() {
         <View style={styles.cyclePlanModalOverlay}>
           <View style={[styles.cyclePlanModalContent, { backgroundColor: colors.card }]}>
             <View style={[styles.cyclePlanModalHeader, { borderBottomColor: colors.border }]}>
-              <View>
-                <Text style={[styles.modalTitle, { color: colors.text }]}>Plan This Cycle</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.cyclePlanModalTitle, { color: colors.text }]}>Plan This Cycle</Text>
                 <Text style={[styles.accordionSubtitle, { color: colors.textMuted }]}>{summary.monthLabel}</Text>
               </View>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 16 }}>
@@ -3289,6 +3289,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: 20,
     borderBottomWidth: 1,
+  },
+  cyclePlanModalTitle: {
+    fontSize: 16,
+    fontWeight: '700',
   },
   cyclePlanModalScroll: {},
   amountInputContainer: {
