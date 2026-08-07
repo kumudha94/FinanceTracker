@@ -4,7 +4,7 @@
 
 **Goal:** Before an SMS-created transaction falls back to AI category suggestion, check whether the user already has a prior transaction from the same merchant (same debit/credit type) with a real category, and reuse it.
 
-**Architecture:** A new `storage.getCategoryIdByMerchant(userId, merchant, type)` query, wrapped by a small `resolveCategoryForMerchant` orchestration helper in `server/routes.ts` (placed alongside the existing `matchAccountBySender` helper it structurally mirrors — normalize → query → return best candidate, with a safe fallback to `null` on any failure). Both SMS-processing call sites that currently go straight to AI suggestion (`finishWithTransaction` in the live auto-read path, `backfillQueuedSmsForMapping` in the rescan path) try this first and only call the existing `suggestCategory` AI chain if it returns nothing. A new `updatedAt` column on `transactions` (added for consistency with every other table in this schema, which already has one) breaks ties when a merchant has multiple prior categorized transactions.
+**Architecture:** A new `storage.getCategoryIdByMerchant(userId, merchant, type)` query, wrapped by a small `resolveTransactionCategoryId` orchestration helper in `server/routes.ts` (placed alongside the existing `matchAccountBySender` helper it structurally mirrors — normalize → query → return best candidate). This helper owns the full category-resolution decision for both SMS-processing call sites that currently go straight to AI suggestion (`finishWithTransaction` in the live auto-read path, `backfillQueuedSmsForMapping` in the rescan path): try the merchant-history match first, and only call the existing `suggestCategory` AI chain if it returns nothing — so the fallback logic lives in one place, not duplicated at each call site. A new `updatedAt` column on `transactions` (added for consistency with every other table in this schema, which already has one) breaks ties when a merchant has multiple prior categorized transactions.
 
 **Tech Stack:** Express + Drizzle ORM + PostgreSQL (backend only — no mobile changes in this plan).
 
@@ -271,7 +271,11 @@ git commit -m "feat: add storage.getCategoryIdByMerchant for merchant-history lo
 - Consumes: `storage.getCategoryIdByMerchant` (Task 2), the existing `suggestCategory(description: string): Promise<string>` and `storage.getCategoryByName(name: string): Promise<Category | undefined>` (both already imported/used in this file, unchanged), `ParsedSmsData.type: "debit" | "credit"` (already the parsed SMS type, from `server/smsParser.ts`, unchanged by this plan).
 - Produces: nothing consumed by a later task — this is the last task in the plan.
 
-- [ ] **Step 1: Add the `resolveCategoryForMerchant` helper**
+- [ ] **Step 1: Add the `resolveTransactionCategoryId` helper**
+
+This single helper owns the entire category-resolution decision — merchant-history
+match first, AI suggestion fallback second — so neither call site duplicates the
+fallback glue (`suggestCategory` + `getCategoryByName`) itself.
 
 Current code (`server/routes.ts`, the end of `matchAccountBySender` and the start of `suggestInstitutionName`, ~lines 3578-3589):
 ```ts
@@ -297,23 +301,28 @@ Replace with (inserts the new helper between the two existing functions):
     return candidates[0];
   }
 
-  // Reuses the user's own prior categorization of this merchant (same debit/credit type)
-  // instead of calling out to AI suggestion — cheaper and more likely correct than a
-  // generic guess for a merchant the user has already categorized themselves. Any failure
-  // here (including simply finding no match) falls through to the caller's existing
-  // suggestCategory(...) call unchanged; this must never block a transaction being created.
-  async function resolveCategoryForMerchant(
+  // Decides a transaction's category during SMS processing: first tries the user's own
+  // prior categorization of this exact merchant (same debit/credit type), then falls back
+  // to AI suggestion exactly as before this feature existed. A failure in the
+  // merchant-history lookup itself (e.g. a DB error) falls through to AI suggestion rather
+  // than blocking categorization — it must never throw out of this function.
+  async function resolveTransactionCategoryId(
     userId: number,
     merchant: string | undefined,
+    description: string | undefined,
     type: "debit" | "credit"
   ): Promise<number | null> {
-    if (!merchant) return null;
-    try {
-      return await storage.getCategoryIdByMerchant(userId, merchant, type);
-    } catch (error) {
-      console.error("Merchant-history category lookup failed, falling back to AI suggestion:", error);
-      return null;
+    if (merchant) {
+      try {
+        const merchantCategoryId = await storage.getCategoryIdByMerchant(userId, merchant, type);
+        if (merchantCategoryId) return merchantCategoryId;
+      } catch (error) {
+        console.error("Merchant-history category lookup failed, falling back to AI suggestion:", error);
+      }
     }
+    const categoryName = await suggestCategory(merchant || description || "");
+    const category = await storage.getCategoryByName(categoryName);
+    return category?.id ?? null;
   }
 
   // Best-effort display name for the "New Accounts Detected" review screen —
@@ -334,12 +343,7 @@ Current code (`server/routes.ts`, ~lines 3828-3830):
 Replace with:
 ```ts
     const finishWithTransaction = async (account: (typeof accounts)[number]): Promise<ParseSmsResult> => {
-      let categoryId = await resolveCategoryForMerchant(account.userId, parsedData.merchant, parsedData.type);
-      if (!categoryId) {
-        const categoryName = await suggestCategory(parsedData.merchant || parsedData.description || "");
-        const category = await storage.getCategoryByName(categoryName);
-        categoryId = category?.id ?? null;
-      }
+      const categoryId = await resolveTransactionCategoryId(account.userId, parsedData.merchant, parsedData.description, parsedData.type);
 
       const transactionData: any = {
 ```
@@ -354,7 +358,8 @@ Replace with:
       if (parsedData.availableBalance !== undefined) transactionData.availableBalance = parsedData.availableBalance.toString();
       if (categoryId) transactionData.categoryId = categoryId;
 ```
-(The local `category` variable from Step 2's replacement is now scoped inside the `if (!categoryId)` block and no longer exists at this point in the function — this second edit is required for the file to still compile, not optional.)
+(The local `category` variable no longer exists in this function after Step 2's first
+replacement — this second edit is required for the file to still compile, not optional.)
 
 - [ ] **Step 3: Wire it into `backfillQueuedSmsForMapping`**
 
@@ -383,12 +388,7 @@ Replace with:
       const parsedData = await parseSmsMessage(smsLog.message, smsLog.sender || undefined);
       if (!parsedData || !parsedData.amount) continue;
 
-      let categoryId = await resolveCategoryForMerchant(account.userId, parsedData.merchant, parsedData.type);
-      if (!categoryId) {
-        const categoryName = await suggestCategory(parsedData.merchant || parsedData.description || "");
-        const category = await storage.getCategoryByName(categoryName);
-        categoryId = category?.id ?? null;
-      }
+      const categoryId = await resolveTransactionCategoryId(account.userId, parsedData.merchant, parsedData.description, parsedData.type);
 
       const existingTransaction = parsedData.referenceNumber
 ```
@@ -411,7 +411,7 @@ Expected: no new `error TS` occurrences vs. baseline.
 
 - [ ] **Step 5: Verify by inspection**
 
-No live database available in this environment — verify by reading: confirm `resolveCategoryForMerchant` is defined once, before both call sites use it (function declarations are hoisted in this file's style, but place it textually before its first use anyway for readability, matching where `matchAccountBySender` already sits relative to its own call sites); confirm neither call site references the old `category` variable name anywhere after your edits (search each function body for `category?.id` — there should be zero remaining occurrences in `finishWithTransaction` and `backfillQueuedSmsForMapping`, only `categoryId` truthiness checks); confirm `parsedData.type` is passed as the `type` argument at both call sites (not hardcoded `"debit"`, not omitted); confirm the two untouched `suggestCategory` call sites (bank-statement import at ~line 738, standalone `/api/suggest-category` endpoint at ~line 3521) are unmodified — grep the full diff for `suggestCategory` and confirm exactly 2 call sites changed, not 4.
+No live database available in this environment — verify by reading: confirm `resolveTransactionCategoryId` is defined once, before both call sites use it (function declarations are hoisted in this file's style, but place it textually before its first use anyway for readability, matching where `matchAccountBySender` already sits relative to its own call sites); confirm neither call site references the old `category` variable name anywhere after your edits (search each function body for `category?.id` — there should be zero remaining occurrences in `finishWithTransaction` and `backfillQueuedSmsForMapping`, only `categoryId` truthiness checks, and neither function should have its own separate `suggestCategory`/`getCategoryByName` calls anymore — both now live only inside the shared helper); confirm `parsedData.type` and `parsedData.description` are both passed through at both call sites (not hardcoded, not omitted); confirm the two untouched `suggestCategory` call sites (bank-statement import at ~line 738, standalone `/api/suggest-category` endpoint at ~line 3521) are unmodified — grep the full diff for `suggestCategory` and confirm it now appears exactly once in the whole file's routes-registration scope (inside the new helper), with the two other pre-existing standalone call sites untouched.
 
 - [ ] **Step 6: Commit**
 
