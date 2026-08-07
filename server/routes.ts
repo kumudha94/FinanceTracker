@@ -3583,6 +3583,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
     return candidates[0];
   }
 
+  // Decides a transaction's category during SMS processing: first tries the user's own
+  // prior categorization of this exact merchant (same debit/credit type), then falls back
+  // to AI suggestion exactly as before this feature existed. A failure in the
+  // merchant-history lookup itself (e.g. a DB error) falls through to AI suggestion rather
+  // than blocking categorization — it must never throw out of this function.
+  async function resolveTransactionCategoryId(
+    userId: number,
+    merchant: string | undefined,
+    description: string | undefined,
+    type: "debit" | "credit"
+  ): Promise<number | null> {
+    if (merchant) {
+      try {
+        const merchantCategoryId = await storage.getCategoryIdByMerchant(userId, merchant, type);
+        if (merchantCategoryId) return merchantCategoryId;
+      } catch (error) {
+        console.error("Merchant-history category lookup failed, falling back to AI suggestion:", error);
+      }
+    }
+    const categoryName = await suggestCategory(merchant || description || "");
+    const category = await storage.getCategoryByName(categoryName);
+    return category?.id ?? null;
+  }
+
   // Best-effort display name for the "New Accounts Detected" review screen —
   // just a starting suggestion, the user edits/confirms it when mapping the institution.
   function suggestInstitutionName(message: string, institutionKey: string): string {
@@ -3826,8 +3850,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
 
     const finishWithTransaction = async (account: (typeof accounts)[number]): Promise<ParseSmsResult> => {
-      const categoryName = await suggestCategory(parsedData.merchant || parsedData.description || "");
-      const category = await storage.getCategoryByName(categoryName);
+      const categoryId = await resolveTransactionCategoryId(account.userId, parsedData.merchant, parsedData.description, parsedData.type);
 
       const transactionData: any = {
         amount: parsedData.amount!.toString(),
@@ -3842,7 +3865,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (parsedData.merchant) transactionData.merchant = parsedData.merchant;
       if (parsedData.referenceNumber) transactionData.referenceNumber = parsedData.referenceNumber;
       if (parsedData.availableBalance !== undefined) transactionData.availableBalance = parsedData.availableBalance.toString();
-      if (category?.id) transactionData.categoryId = category.id;
+      if (categoryId) transactionData.categoryId = categoryId;
 
       // Banks often send the same transaction from multiple sender IDs (or redeliver the
       // same SMS) — the reference number uniquely identifies the real transaction, so skip
@@ -4108,8 +4131,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const parsedData = await parseSmsMessage(smsLog.message, smsLog.sender || undefined);
       if (!parsedData || !parsedData.amount) continue;
 
-      const categoryName = await suggestCategory(parsedData.merchant || parsedData.description || "");
-      const category = await storage.getCategoryByName(categoryName);
+      const categoryId = await resolveTransactionCategoryId(account.userId, parsedData.merchant, parsedData.description, parsedData.type);
 
       const existingTransaction = parsedData.referenceNumber
         ? await storage.getTransactionByReferenceNumber(account.userId, parsedData.referenceNumber)
@@ -4133,7 +4155,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (parsedData.merchant) transactionData.merchant = parsedData.merchant;
       if (parsedData.referenceNumber) transactionData.referenceNumber = parsedData.referenceNumber;
       if (parsedData.availableBalance !== undefined) transactionData.availableBalance = parsedData.availableBalance.toString();
-      if (category?.id) transactionData.categoryId = category.id;
+      if (categoryId) transactionData.categoryId = categoryId;
 
       const transaction = await storage.createTransaction(transactionData);
       await storage.updateSmsLogTransaction(smsLog.id, transaction.id);
