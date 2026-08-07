@@ -103,6 +103,7 @@ export interface IStorage {
   getTransaction(id: number): Promise<TransactionWithRelations | undefined>;
   getTransactionByReferenceNumber(userId: number, referenceNumber: string): Promise<Transaction | undefined>;
   getTransactionByFallbackKey(userId: number, accountId: number, amount: string, type: string, date: Date): Promise<Transaction | undefined>;
+  getCategoryIdByMerchant(userId: number, merchant: string, type: string): Promise<number | null>;
   createTransaction(transaction: InsertTransaction): Promise<Transaction>;
   updateTransaction(id: number, transaction: Partial<InsertTransaction>): Promise<Transaction>;
   bulkUpdateTransactionCategory(userId: number, transactionIds: number[], categoryId: number): Promise<number>;
@@ -450,6 +451,35 @@ export class DatabaseStorage implements IStorage {
   async getCategoryByName(name: string): Promise<Category | undefined> {
     const [category] = await db.select().from(categories).where(eq(categories.name, name));
     return category || undefined;
+  }
+
+  // Looks up the category the user has already applied to their own prior transactions
+  // from this exact merchant (same debit/credit type), most-recently-touched first, so
+  // SMS auto-read can reuse a real category instead of calling out to AI suggestion. A
+  // transaction categorized as "Other" never counts as a match. ne(transactions.categoryId,
+  // otherCategoryId) already excludes rows with a NULL categoryId on its own — SQL's <>
+  // comparison against NULL evaluates to NULL, which WHERE treats as no-match — so no
+  // separate "IS NOT NULL" condition is needed.
+  async getCategoryIdByMerchant(userId: number, merchant: string, type: string): Promise<number | null> {
+    const otherCategory = await this.getCategoryByName("Other");
+
+    const conditions = [
+      eq(transactions.userId, userId),
+      eq(transactions.type, type),
+      ilike(transactions.merchant, merchant.trim()),
+    ];
+    if (otherCategory) {
+      conditions.push(ne(transactions.categoryId, otherCategory.id));
+    }
+
+    const [result] = await db
+      .select({ categoryId: transactions.categoryId })
+      .from(transactions)
+      .where(and(...conditions))
+      .orderBy(desc(transactions.updatedAt))
+      .limit(1);
+
+    return result?.categoryId ?? null;
   }
 
   async createCategory(category: InsertCategory): Promise<Category> {
