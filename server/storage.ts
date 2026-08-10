@@ -275,7 +275,7 @@ export interface IStorage {
   createInsurancePremium(premium: InsertInsurancePremium): Promise<InsurancePremium>;
   updateInsurancePremium(id: number, premium: Partial<InsertInsurancePremium>): Promise<InsurancePremium | undefined>;
   deleteInsurancePremium(id: number): Promise<boolean>;
-  generateInsurancePremiums(insuranceId: number): Promise<InsurancePremium[]>;
+  generateInsurancePremiums(insuranceId: number, options?: { wipeAll?: boolean }): Promise<InsurancePremium[]>;
   markPremiumPaid(id: number, paidAmount: string, accountId?: number, transactionId?: number): Promise<InsurancePremium | undefined>;
 
   // Loan BT Allocations
@@ -2976,16 +2976,21 @@ export class DatabaseStorage implements IStorage {
     return result.length > 0;
   }
 
-  async generateInsurancePremiums(insuranceId: number): Promise<InsurancePremium[]> {
+  async generateInsurancePremiums(insuranceId: number, options?: { wipeAll?: boolean }): Promise<InsurancePremium[]> {
     const insurance = await this.getInsurance(insuranceId);
     if (!insurance) return [];
 
-    // Delete existing pending premiums
+    // Normally only pending premiums are cleared before regenerating, so paid history
+    // survives a routine edit. wipeAll is set when the caller has already confirmed with
+    // the user that paid premiums tied to the old schedule should be discarded too (e.g.
+    // correcting a wrong start/end date entered at setup) — see PATCH /api/insurances/:id.
     await db.delete(insurancePremiums).where(
-      and(
-        eq(insurancePremiums.insuranceId, insuranceId),
-        eq(insurancePremiums.status, 'pending')
-      )
+      options?.wipeAll
+        ? eq(insurancePremiums.insuranceId, insuranceId)
+        : and(
+            eq(insurancePremiums.insuranceId, insuranceId),
+            eq(insurancePremiums.status, 'pending')
+          )
     );
 
     const premiumAmount = parseFloat(insurance.premiumAmount);

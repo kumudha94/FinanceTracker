@@ -212,6 +212,10 @@ async function apiRequest<T>(
             error.savingsGoalName = errorData.savingsGoalName;
             error.savingsContributionId = errorData.savingsContributionId;
           }
+          if (errorData.error === 'confirmation_required') {
+            error.confirmationRequired = true;
+            error.paidPremiumCount = errorData.paidPremiumCount;
+          }
           throw error;
         }
 
@@ -247,6 +251,10 @@ async function apiRequest<T>(
         error.isSavingsContribution = true;
         error.savingsGoalName = errorData.savingsGoalName;
         error.savingsContributionId = errorData.savingsContributionId;
+      }
+      if (errorData.error === 'confirmation_required') {
+        error.confirmationRequired = true;
+        error.paidPremiumCount = errorData.paidPremiumCount;
       }
       throw error;
     }
@@ -712,7 +720,7 @@ export const api = {
   getInsurance: (id: number) => apiRequest<Insurance>(`/api/insurances/${id}`),
   createInsurance: (data: InsertInsurance) => 
     apiRequest<Insurance>('/api/insurances', { method: 'POST', body: JSON.stringify(data) }),
-  updateInsurance: (id: number, data: Partial<InsertInsurance>) => 
+  updateInsurance: (id: number, data: Partial<InsertInsurance> & { confirmRegenerate?: boolean }) =>
     apiRequest<Insurance>(`/api/insurances/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   deleteInsurance: (id: number) => 
     apiRequest<void>(`/api/insurances/${id}`, { method: 'DELETE' }),

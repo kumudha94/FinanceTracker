@@ -5779,11 +5779,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // when enabled" check still runs on create (insertInsuranceSchema.parse above) and is
       // enforced client-side for this partial-update form too.
       const validatedData = insertInsuranceSchema.innerType().partial().parse(req.body);
-      const insurance = await storage.updateInsurance(parseInt(req.params.id), validatedData);
+      const insuranceId = parseInt(req.params.id);
+      const scheduleFieldsChanged = !!(req.body.premiumAmount || req.body.termsPerPeriod || req.body.premiumFrequency || req.body.startDate || req.body.endDate);
+
+      // Regenerating the premium schedule always clears pending premiums; if any premium
+      // is already paid/partially_paid/overdue, wiping it too needs the user's confirmation
+      // first — otherwise a routine edit could silently discard real payment history. The
+      // whole PATCH is rejected (nothing saved yet) until the client resends with
+      // confirmRegenerate: true, so the insurance record and its premiums never end up
+      // temporarily inconsistent with each other.
+      if (scheduleFieldsChanged && !req.body.confirmRegenerate) {
+        const existingPremiums = await storage.getInsurancePremiums(insuranceId);
+        const paidPremiumCount = existingPremiums.filter(p => p.status !== 'pending').length;
+        if (paidPremiumCount > 0) {
+          return res.status(409).json({
+            error: "confirmation_required",
+            message: `${paidPremiumCount} paid premium${paidPremiumCount === 1 ? '' : 's'} will be removed and the schedule regenerated from the new details. Continue?`,
+            paidPremiumCount,
+          });
+        }
+      }
+
+      const insurance = await storage.updateInsurance(insuranceId, validatedData);
       if (insurance) {
         // If premium-related fields changed, regenerate premiums
-        if (req.body.premiumAmount || req.body.termsPerPeriod || req.body.premiumFrequency || req.body.startDate || req.body.endDate) {
-          await storage.generateInsurancePremiums(insurance.id);
+        if (scheduleFieldsChanged) {
+          await storage.generateInsurancePremiums(insurance.id, { wipeAll: !!req.body.confirmRegenerate });
         }
         const fullInsurance = await storage.getInsurance(insurance.id);
         res.json(fullInsurance);

@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { View, Text, StyleSheet, TextInput, TouchableOpacity, Switch, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, TextInput, TouchableOpacity, Switch, ActivityIndicator, Alert } from 'react-native';
 import { KeyboardAwareScrollView } from 'react-native-keyboard-aware-scroll-view';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -118,6 +118,20 @@ export default function AddInsuranceScreen() {
     }
   }, [existingInsurance]);
 
+  // Life/term policies distinguish Policy Term (total coverage) from Premium Term (years
+  // paying) — End Date is derived from Start Date + Policy Term instead of being a separate
+  // manual entry, so there's only ever one date to reconcile instead of two.
+  const isTermBasedType = type === 'life' || type === 'term';
+
+  useEffect(() => {
+    if (!isTermBasedType || !policyTermYears) return;
+    const years = parseInt(policyTermYears);
+    if (isNaN(years) || years <= 0) return;
+    const computed = new Date(startDate);
+    computed.setFullYear(computed.getFullYear() + years);
+    setEndDate(computed);
+  }, [isTermBasedType, startDate, policyTermYears]);
+
   const createMutation = useMutation({
     mutationFn: (data: InsertInsurance) => api.createInsurance(data),
     onSuccess: () => {
@@ -141,7 +155,7 @@ export default function AddInsuranceScreen() {
   });
 
   const updateMutation = useMutation({
-    mutationFn: (data: Partial<InsertInsurance>) => api.updateInsurance(insuranceId, data),
+    mutationFn: (data: Partial<InsertInsurance> & { confirmRegenerate?: boolean }) => api.updateInsurance(insuranceId, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/insurances'] });
       Toast.show({
@@ -152,7 +166,18 @@ export default function AddInsuranceScreen() {
       });
       navigation.goBack();
     },
-    onError: (error: any) => {
+    onError: (error: any, variables) => {
+      if (error.confirmationRequired) {
+        Alert.alert(
+          'Regenerate Premium Schedule?',
+          error.message || `${error.paidPremiumCount} paid premium(s) will be removed and the schedule regenerated from the new details.`,
+          [
+            { text: 'Cancel', style: 'cancel' },
+            { text: 'Continue', style: 'destructive', onPress: () => updateMutation.mutate({ ...variables, confirmRegenerate: true }) },
+          ]
+        );
+        return;
+      }
       Toast.show({
         type: 'error',
         text1: 'Error',
@@ -452,14 +477,23 @@ export default function AddInsuranceScreen() {
 
           <View style={styles.inputGroup}>
             <Text style={[styles.label, { color: colors.textMuted }]}>End Date</Text>
-            <TouchableOpacity
-              style={[styles.dateButton, { backgroundColor: colors.card, borderColor: colors.border }]}
-              onPress={() => setShowEndPicker(true)}
-            >
-              <Ionicons name="calendar-outline" size={20} color={colors.textMuted} />
-              <Text style={[styles.dateText, { color: colors.text }]}>{formatDateDisplay(endDate)}</Text>
-            </TouchableOpacity>
-            {showEndPicker && (
+            {isTermBasedType ? (
+              <View style={[styles.dateButton, { backgroundColor: colors.card, borderColor: colors.border, opacity: 0.7 }]}>
+                <Ionicons name="calendar-outline" size={20} color={colors.textMuted} />
+                <Text style={[styles.dateText, { color: colors.text }]}>
+                  {policyTermYears ? formatDateDisplay(endDate) : 'Enter Policy Term above'}
+                </Text>
+              </View>
+            ) : (
+              <TouchableOpacity
+                style={[styles.dateButton, { backgroundColor: colors.card, borderColor: colors.border }]}
+                onPress={() => setShowEndPicker(true)}
+              >
+                <Ionicons name="calendar-outline" size={20} color={colors.textMuted} />
+                <Text style={[styles.dateText, { color: colors.text }]}>{formatDateDisplay(endDate)}</Text>
+              </TouchableOpacity>
+            )}
+            {!isTermBasedType && showEndPicker && (
               <DateTimePicker
                 value={endDate}
                 mode="date"
@@ -470,6 +504,11 @@ export default function AddInsuranceScreen() {
                 themeVariant={resolvedTheme === 'dark' ? 'dark' : 'light'}
                 textColor={colors.text}
               />
+            )}
+            {isTermBasedType && (
+              <Text style={[styles.sectionSubtitle, { color: colors.textMuted, marginTop: 6 }]}>
+                Auto-calculated from Start Date + Policy Term
+              </Text>
             )}
           </View>
         </View>
