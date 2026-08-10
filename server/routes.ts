@@ -3547,10 +3547,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
     pnb: "pnb",
   };
 
+  const ACCOUNT_CONTEXT_TYPES: Record<"bank" | "card", string[]> = {
+    bank: ["bank"],
+    card: ["credit_card", "debit_card"],
+  };
+
   function matchAccountBySender(
     accounts: Awaited<ReturnType<typeof storage.getAllAccounts>>,
     sender: string,
-    accountLastDigits?: string
+    accountLastDigits?: string,
+    accountContext?: "bank" | "card"
   ): (typeof accounts)[0] | undefined {
     const senderLower = sender.toLowerCase().replace(/[^a-z0-9]/g, "");
 
@@ -3580,7 +3586,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (exact) return exact;
     }
 
-    return candidates[0];
+    // Same bank, multiple accounts (e.g. a savings account and a credit card), and the
+    // last-4-digit field didn't disambiguate — narrow by account type using the SMS wording
+    // before ever guessing. Defaulting to candidates[0] here silently misattributes real
+    // transactions (a bank debit landing on the credit card account), corrupting balances.
+    if (accountContext) {
+      const wantedTypes = ACCOUNT_CONTEXT_TYPES[accountContext];
+      const byType = candidates.filter(acc => wantedTypes.includes(acc.type));
+      if (byType.length === 1) return byType[0];
+    }
+
+    // Still ambiguous — don't guess. Caller routes this through the same review queue used
+    // for unrecognized senders instead of picking an account at random.
+    return undefined;
   }
 
   // Decides a transaction's category during SMS processing: first tries the user's own
@@ -3898,7 +3916,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       return { success: true, transaction, parsed: parsedData };
     };
 
-    const matchedAccount = matchAccountBySender(accounts, sender || "", parsedData.accountLastDigits);
+    const matchedAccount = matchAccountBySender(accounts, sender || "", parsedData.accountLastDigits, parsedData.accountContext);
     if (matchedAccount) {
       return finishWithTransaction(matchedAccount);
     }
@@ -3981,7 +3999,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       date: parsedData.date,
     };
 
-    const matchedAccount = matchAccountBySender(accounts, sender || "", parsedData.accountLastDigits);
+    const matchedAccount = matchAccountBySender(accounts, sender || "", parsedData.accountLastDigits, parsedData.accountContext);
     if (!matchedAccount) {
       return { ...base, status: 'unmatched' };
     }

@@ -90,6 +90,34 @@ test("card ending format", () => {
   assert.equal(r!.accountLastDigits, "9012");
 });
 
+// ── Account context (bank vs card, for disambiguating same-bank accounts) ─
+console.log("\nAccount context:");
+
+test("A/C narration tags bank context", () => {
+  const r = parseSmsByRegex(
+    "Sent Rs.90.00\nFrom HDFC Bank A/C *7900\nTo SANTHOSH CHATS\nOn 06/08/26\nRef 127474541536\nNot You?\nCall 18002586161/SMS BLOCK UPI to 7308080808",
+    "HDFCBK"
+  );
+  assert(r !== null, "Parser returned null for this SMS");
+  assert.equal(r!.accountLastDigits, "7900");
+  assert.equal(r!.accountContext, "bank");
+});
+
+test("card narration tags card context even when a/c also appears", () => {
+  const r = parseSmsByRegex(
+    "Rs.500 spent on your HDFC Bank Credit Card a/c ending 1234 at AMAZON",
+    "HDFCBK"
+  );
+  assert(r !== null, "Parser returned null for this SMS");
+  assert.equal(r!.accountContext, "card");
+});
+
+test("no a/c or card keyword leaves context undefined", () => {
+  const r = parseSmsByRegex("Rs.500 debited towards XX1234 at SWIGGY", "HDFCBK");
+  assert(r !== null, "Parser returned null for this SMS");
+  assert.equal(r!.accountContext, undefined);
+});
+
 // ── Merchant extraction ────────────────────────────────────────────────────
 console.log("\nMerchant extraction:");
 

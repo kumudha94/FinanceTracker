@@ -75,6 +75,14 @@ npm run build:apk
 Download the APK from the link provided (takes 10-15 minutes to build).
 
 ### Production Build (AAB for Play Store)
+Below is proper
+```
+export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
+export PATH=$JAVA_HOME/bin:$PATH
+cd /home/kgd122/personal/FinanceTracker/mobile/android
+./gradlew bundleRelease
+```
+
 ```bash
 npm run build:aab
 # or: npx eas build -p android --profile production

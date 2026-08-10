@@ -6,6 +6,7 @@ export interface ParsedSmsData {
   referenceNumber?: string;
   date?: string;
   accountLastDigits?: string;
+  accountContext?: "bank" | "card";
   availableBalance?: number;
 }
 
@@ -91,6 +92,18 @@ function extractAccountLastDigits(msg: string): string | undefined {
     const match = msg.match(pattern);
     if (match) return match[1];
   }
+  return undefined;
+}
+
+// Disambiguates which of a bank's accounts an SMS belongs to when the last-4-digit match
+// alone is inconclusive (e.g. that field isn't set on one of the user's same-bank accounts —
+// it's optional). Card narrations mention "card" ("HDFC Bank Credit Card ending 1234", "card
+// XX1234 used for"); bank-account narrations use "a/c"/"account" ("From HDFC Bank A/C *7900").
+// Check "card" first since a credit card SMS can still say "a/c" without being a bank-account
+// transaction.
+function extractAccountContext(msg: string): "bank" | "card" | undefined {
+  if (/\bcard\b/i.test(msg)) return "card";
+  if (/\b(?:a\/c|acc(?:ount)?)\b/i.test(msg)) return "bank";
   return undefined;
 }
 
@@ -216,6 +229,7 @@ export function parseSmsByRegex(message: string, sender?: string): ParsedSmsData
   if (!amount) return null;
 
   const accountLastDigits = extractAccountLastDigits(message);
+  const accountContext = extractAccountContext(message);
   const referenceNumber = extractReferenceNumber(message);
   const merchant = extractMerchant(message);
   const date = extractDate(message);
@@ -225,7 +239,7 @@ export function parseSmsByRegex(message: string, sender?: string): ParsedSmsData
     ? `${type === "debit" ? "Payment to" : "Received from"} ${merchant}`
     : type === "debit" ? "Amount debited" : "Amount credited";
 
-  return { amount, type, merchant, description, referenceNumber, date, accountLastDigits, availableBalance };
+  return { amount, type, merchant, description, referenceNumber, date, accountLastDigits, accountContext, availableBalance };
 }
 
 // Due-reminder SMS ("has dues of Rs X", "minimum due", "total outstanding") are not transactions —
