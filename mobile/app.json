@@ -41,6 +41,7 @@
     "owner": "glorykumudha",
     "plugins": [
       "./plugins/withSmsReceiver.js",
+      "./plugins/withNotificationListener.js",
       [
         "expo-notifications",
         {
