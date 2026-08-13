@@ -926,6 +926,7 @@ export const smsLogs = pgTable("sms_logs", {
   sender: varchar("sender", { length: 50 }),
   message: text("message").notNull(),
   receivedAt: timestamp("received_at").notNull(),
+  source: varchar("source", { length: 20 }).notNull().default("sms"), // 'sms' or 'notification' — where this text was captured from
   isParsed: boolean("is_parsed").default(false),
   transactionId: integer("transaction_id").references(() => transactions.id),
   institutionMappingId: integer("institution_mapping_id").references(() => senderInstitutionMappings.id), // set when the sender didn't match a known account, for the review queue

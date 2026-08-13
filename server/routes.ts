@@ -3838,12 +3838,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
     messageText: string,
     sender: string | undefined,
     receivedAt: string | undefined,
-    accounts: Awaited<ReturnType<typeof storage.getAllAccounts>>
+    accounts: Awaited<ReturnType<typeof storage.getAllAccounts>>,
+    source?: string
   ): Promise<ParseSmsResult> {
     const smsLogData: any = {
       message: messageText,
       receivedAt: receivedAt || new Date().toISOString(),
       isParsed: false,
+      source: source === 'notification' ? 'notification' : 'sms',
     };
     // Every sms_logs row must carry its owning user, otherwise user-scoped queries
     // (e.g. the retention cleanup) can never match it. `accounts` comes from
@@ -4044,9 +4046,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/parse-sms", validateApiKey, async (req, res) => {
     try {
-      const { sender, message, receivedAt } = req.body;
+      const { sender, message, receivedAt, source } = req.body;
       const accounts = await storage.getAllAccounts();
-      const result = await processSingleSms(message, sender, receivedAt, accounts);
+      const result = await processSingleSms(message, sender, receivedAt, accounts, source);
       res.json(result);
     } catch (error: any) {
       console.error("SMS parsing error:", error.message);
