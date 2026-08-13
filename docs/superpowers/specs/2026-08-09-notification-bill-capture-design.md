@@ -57,18 +57,33 @@ structured exactly like `withSmsReceiver.js`:
 
 `mobile/plugins/native/NotificationListener.kt` — extends
 `NotificationListenerService`, overrides `onNotificationPosted(sbn:
-StatusBarNotification)`: reads `sbn.packageName`, resolves the app's display
-label via `PackageManager.getApplicationLabel(...)` (falls back to the raw
-package name if resolution fails — never block on this), reads
-`sbn.notification.extras` for `EXTRA_TITLE`/`EXTRA_TEXT`, concatenates
-title+text into one string (mirrors `SmsReceiver.kt` joining multi-part SMS
-bodies), and starts `NotificationHeadlessTaskService` with a bundle of
-`{ appLabel, appPackage, title, text, notificationKey, timestamp }`.
-`notificationKey` is `sbn.key` — Android's own stable identifier for that
-notification instance, needed for dedup (see below).
+StatusBarNotification)`. This callback must stay extremely lightweight —
+it runs on the listener service's main thread, and blocking here (e.g. a
+`PackageManager` lookup, which can be slow on a cache miss) risks ANR-class
+delays across every notification the device posts, not just this app's own.
+So `onNotificationPosted` does **only** cheap, in-memory extraction:
+`sbn.packageName`, `sbn.key` (for dedup, see below), `sbn.postTime`, and the
+raw `sbn.notification.extras` bundle — then immediately starts
+`NotificationHeadlessTaskService` with that bundle. No `PackageManager` call,
+no string concatenation, no filtering logic in this method.
+
+Extras read from the bundle: `EXTRA_TITLE`, then **`EXTRA_BIG_TEXT` in
+preference to `EXTRA_TEXT`** — `BigTextStyle` notifications (common for
+anything with real detail, which is exactly the shape of a bill reminder)
+truncate `EXTRA_TEXT` and put the full body in `EXTRA_BIG_TEXT`; reading only
+`EXTRA_TEXT` would silently lose the due-date/amount detail on those.
+Fall back to `EXTRA_TEXT` when `EXTRA_BIG_TEXT` is absent.
 
 `NotificationHeadlessTaskService.kt` — identical shape to
 `SmsHeadlessTaskService.kt`, launching JS task `"NotificationAutoParseTask"`.
+This is where the deferred work happens: resolving the app's display label
+via `PackageManager.getApplicationLabel(...)` (falls back to the raw package
+name if resolution fails — never block the task on this) and concatenating
+title+body into one string (mirrors `SmsReceiver.kt` joining multi-part SMS
+bodies) before handing `{ appLabel, appPackage, title, text, notificationKey,
+timestamp }` to the JS task. Moving label resolution here, off
+`onNotificationPosted`'s critical path, is the whole point of splitting it
+out this way.
 
 `mobile/src/tasks/notificationHeadlessTask.ts` — identical shape to
 `smsHeadlessTask.ts`, calling a new `processIncomingNotification(payload)` in
@@ -113,7 +128,15 @@ same "cheap pre-filter, must stay a superset of what the server actually
 acts on" comment convention as `looksFinancial`. Starting keyword set (not
 final — tunable based on real usage, same as SMS's own keyword list has
 grown over time per its comment history):
-`due|bill|recharge|expires|expiring|payment|outstanding|overdue|renew|premium`
+`due|bill|recharge|expires|expiring|outstanding|overdue|renew|premium`
+
+`payment` is deliberately **not** included as a bare keyword — it matches
+far too much non-reminder noise ("Your payment of ₹500 was successful",
+"payment method added", generic UPI confirmations), none of which are due
+reminders, and every match here creates a Bills Inbox entry downstream. The
+other keywords already cover the concept without it. If `payment` needs to
+be included later, it should require a due-signal companion word in the
+same match (e.g. `payment due`, `payment pending`), not stand alone.
 
 ## 4. Backend integration
 
@@ -146,15 +169,25 @@ status — implementation detail for the plan.
 ## 5. Deduplication
 
 Android re-posts/updates a notification as it changes (e.g. a persistent
-reminder ticking down "expires tomorrow" → "expires today"). Dedup key is
-`sbn.key` (Android's own stable per-notification identifier, unique per
-posting *instance* on that device — reused across updates to the *same*
-logical notification, so this is exactly the right key), stored the same
-way SMS auto-read tracks `processedKey` via `AsyncStorage` (`getProcessedIds`
-/ `markProcessed` / `wasAlreadyProcessed`, same `MAX_PROCESSED_IDS` cap) —
-`notificationAutoReader.ts` gets its own parallel storage key, not sharing
-the SMS feature's `AsyncStorage` key/list (different event stream, no reason
-to intermix and prematurely evict either's dedup history).
+reminder ticking down "expires tomorrow" → "expires today", or the amount
+changing). `sbn.key` is a deterministic `pkg|tag|id|userId` composite —
+Android reuses the *same* key across updates to the *same* logical
+notification, which is exactly what makes it dedup-worthy, but it's also
+why key-alone dedup is wrong here: an app updating a notification with
+materially different text (a new due date, a new amount) keeps the same
+key, so pure key-based dedup would silently swallow real updates the user
+would want reflected in Bills Inbox.
+
+Dedup key is therefore **`sbn.key` + a hash of the extracted title+body
+text**, not `sbn.key` alone. Same posting key with an unchanged content hash
+→ genuine repost, discard. Same posting key with a *changed* content hash →
+treat as new (the underlying reminder materially changed), reprocess.
+Stored the same way SMS auto-read tracks `processedKey` via `AsyncStorage`
+(`getProcessedIds` / `markProcessed` / `wasAlreadyProcessed`, same
+`MAX_PROCESSED_IDS` cap) — `notificationAutoReader.ts` gets its own parallel
+storage key, not sharing the SMS feature's `AsyncStorage` key/list (different
+event stream, no reason to intermix and prematurely evict either's dedup
+history).
 
 ## 6. Scoping & risk (documentation only, no code)
 
@@ -183,6 +216,22 @@ to intermix and prematurely evict either's dedup history).
   explicitly ongoing follow-up work, not a blocking requirement for the
   initial implementation.
 
+## Pre-implementation verification (gates Task 1 of the plan)
+
+Before writing any native code, trace the existing
+`/api/parse-sms` → `processSingleSms` → `processDueSms` → `sms_logs` chain
+with a concrete notification-shaped string (e.g. "New Bill: Airtel ₹979 due
+tomorrow" as `message`, `"Amazon"` as `sender`) rather than relying on the
+structural reasoning in this spec alone. Specifically confirm: (a)
+`parseSmsMessage` genuinely returns null/no-amount for this text (doesn't
+accidentally match a transaction pattern); (b) the credit-card-dues branch
+inside `processDueSms` (which matches on `cardLastFourDigits` extracted via
+regex from the message) doesn't misfire just because a bill amount happens
+to contain a 4-digit sequence; (c) `deriveInstitutionKey`'s fallback path
+produces a sane institution key for an app-label sender like `"Amazon"`
+end to end. If any of these don't hold as assumed, that's a plan-blocking
+finding to resolve before Task 1, not something to discover mid-implementation.
+
 ## Testing
 
 No automated test harness exists for this app (established convention).
@@ -192,8 +241,11 @@ available in the implementation environment): grant notification access,
 trigger a real bill-reminder-shaped notification (or use a test/dummy
 notification from another app), confirm it appears in Bills Inbox tagged
 "via notification"; confirm a non-matching notification (e.g. a WhatsApp
-message) never reaches the network (verify via a temporary log line, removed
-before merge, or via not seeing it in `sms_logs` at all); confirm toggling
-the in-app switch off stops processing without needing to revisit Android
-Settings; confirm the same logical notification updating twice doesn't
-create two Bills Inbox entries.
+message, or a "payment successful" style confirmation per the keyword
+change above) never reaches the network (verify via a temporary log line,
+removed before merge, or via not seeing it in `sms_logs` at all); confirm
+toggling the in-app switch off stops processing without needing to revisit
+Android Settings; confirm the same logical notification reposting with
+*unchanged* text doesn't create a second Bills Inbox entry, and that one
+reposting with *changed* text (different due date/amount) does create a
+second entry rather than being silently dropped.
