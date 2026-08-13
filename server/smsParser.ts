@@ -29,7 +29,12 @@ const CREDIT_KEYWORDS = [
 const DUE_KEYWORDS = [
   "dues of", "minimum due", "total due", "total outstanding",
   "outstanding amount", "amount due", "bill amount", "payment due",
-  "e-mandate", "will be deducted", "will be debited", "is due on"
+  "e-mandate", "will be deducted", "will be debited", "is due on",
+  // Casual due-date phrasing common in app push notifications (vs. bank/DLT SMS wording
+  // above) — added for notification-based capture, but applies to SMS too since nothing
+  // here is notification-specific.
+  "due tomorrow", "due today", "expires tomorrow", "expires today",
+  "expiring tomorrow", "expiring today"
 ];
 
 // "X will be deducted/debited on <future date>" (e-mandate / subscription pre-notifications)
