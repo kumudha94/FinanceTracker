@@ -45,6 +45,11 @@ export default function NotificationAutoReadScreen() {
 
     const granted = await isNotificationListenerEnabled();
     if (!granted) {
+      // Persist intent-to-enable before sending the user to Settings — refreshStatus always
+      // ANDs this with the live listenerGranted check, so this alone doesn't turn on
+      // processing. Without it, granting permission in Settings and returning wouldn't flip
+      // the switch on (autoReadOn would still be false), forcing a confusing second toggle.
+      await setNotificationAutoReadEnabled(true);
       Linking.sendIntent
         ? Linking.sendIntent('android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS')
         : Linking.openSettings();

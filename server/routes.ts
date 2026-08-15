@@ -3664,7 +3664,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     accounts: Awaited<ReturnType<typeof storage.getAllAccounts>>,
     smsLogData: any
   ): Promise<ParseSmsResult | null> {
-    const dueData = parseDueSms(messageText);
+    const dueData = parseDueSms(messageText, new Date(smsLogData.receivedAt));
     if (!dueData) return null;
 
     const fallbackOwnerAccount = accounts.find(acc => acc.isDefault) || accounts.find(acc => acc.isActive) || accounts[0];
@@ -4320,7 +4320,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const enriched = await Promise.all(mappings.map(async (mapping) => {
         const logs = await storage.getSmsLogsForBillMapping(mapping.id);
         const latest = logs[0];
-        const latestParsed = latest ? parseDueSms(latest.message) : null;
+        const latestParsed = latest ? parseDueSms(latest.message, new Date(latest.receivedAt)) : null;
         return {
           ...mapping,
           latestAmount: latestParsed?.amount ?? null,

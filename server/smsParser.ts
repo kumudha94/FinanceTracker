@@ -247,12 +247,27 @@ export function parseSmsByRegex(message: string, sender?: string): ParsedSmsData
   return { amount, type, merchant, description, referenceNumber, date, accountLastDigits, accountContext, availableBalance };
 }
 
+// Casual app-notification phrasing ("due tomorrow", "expires today") has no absolute date for
+// extractDate to find — resolve it relative to when the message was received. Scoped to
+// parseDueSms only (not the shared extractDate), since "tomorrow"/"today" wouldn't make sense
+// as a transaction date on the parseSmsByRegex path.
+function extractRelativeDueDate(msg: string, receivedAt: Date): string | undefined {
+  if (/\btomorrow\b/i.test(msg)) {
+    const d = new Date(receivedAt.getTime() + 24 * 60 * 60 * 1000);
+    return d.toISOString();
+  }
+  if (/\btoday\b/i.test(msg)) {
+    return receivedAt.toISOString();
+  }
+  return undefined;
+}
+
 // Due-reminder SMS ("has dues of Rs X", "minimum due", "total outstanding") are not transactions —
 // parseSmsByRegex already rejects them (no debit/credit keyword), so callers should try that first
 // and only fall back to this when it returns null. Extracts just enough to route the message:
 // an amount plus, when present, a due date and/or a card's last 4 digits — never a merchant/category,
 // since a due notice isn't a spend event.
-export function parseDueSms(message: string): ParsedDueSmsData | null {
+export function parseDueSms(message: string, receivedAt: Date = new Date()): ParsedDueSmsData | null {
   const lowerMsg = message.toLowerCase();
 
   // Most due-reminders carry a currency marker next to the amount, but loan/EMI due
@@ -270,7 +285,9 @@ export function parseDueSms(message: string): ParsedDueSmsData | null {
   const amount = extractAmount(message);
   if (!amount) return null;
 
-  const dueDate = extractDate(message);
+  // Absolute-date extraction is first priority; relative ("tomorrow"/"today") phrasing is only
+  // a fallback when no absolute date was found.
+  const dueDate = extractDate(message) ?? extractRelativeDueDate(message, receivedAt);
   const cardLastFourDigits = extractAccountLastDigits(message);
   const providerName = extractProviderName(message);
 

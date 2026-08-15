@@ -15,12 +15,9 @@ export interface RawNotificationPayload {
   appPackage: string;
   key: string;
   postTime: number;
-  extras?: {
-    'android.title'?: string;
-    'android.text'?: string;
-    'android.bigText'?: string;
-    [k: string]: unknown;
-  };
+  title?: string;
+  bigText?: string;
+  text?: string;
 }
 
 interface QueuedNotification {
@@ -65,13 +62,15 @@ function hashText(text: string): string {
 }
 
 function extractText(payload: RawNotificationPayload): { title: string; body: string } {
-  const extras = payload.extras || {};
-  const title = typeof extras['android.title'] === 'string' ? extras['android.title'] : '';
+  // Native side now sends flat title/bigText/text string fields (see NotificationListener.kt)
+  // rather than a nested extras bundle. Defensive typeof/fallback checks are kept even though
+  // the native side guarantees strings — cheap insurance costs nothing.
+  const title = typeof payload.title === 'string' ? payload.title : '';
   // Prefer bigText (BigTextStyle notifications truncate the plain text field) — see Global
   // Constraints in the plan this file was built from.
   const body =
-    typeof extras['android.bigText'] === 'string' ? extras['android.bigText'] :
-    typeof extras['android.text'] === 'string' ? extras['android.text'] : '';
+    typeof payload.bigText === 'string' && payload.bigText ? payload.bigText :
+    typeof payload.text === 'string' ? payload.text : '';
   return { title, body };
 }
 
@@ -162,7 +161,10 @@ export async function processIncomingNotification(payload: RawNotificationPayloa
   await drainFailedNotificationQueue();
 
   const receivedAt = new Date(payload.postTime).toISOString();
-  const sender = payload.appPackage;
+  // sms_logs.sender / bill_sender_mappings.institution_key are varchar(50); some real Android
+  // package names exceed that, which would otherwise 500 the insert and get retried forever
+  // by the offline queue (a permanent failure, not a transient one).
+  const sender = payload.appPackage.slice(0, 50);
 
   try {
     await postNotificationToBackend(sender, fullText, receivedAt);
