@@ -26,6 +26,13 @@ const items: HubItem[] = [
     color: '#16a34a',
   },
   {
+    icon: 'notifications-outline',
+    title: 'Notification Bill Detection',
+    subtitle: 'Catch bill reminders that only arrive as app notifications',
+    route: 'NotificationAutoRead',
+    color: '#16a34a',
+  },
+  {
     icon: 'scan-outline',
     title: 'Scan SMS',
     subtitle: 'Paste a bank SMS to add manually',

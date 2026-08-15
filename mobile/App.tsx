@@ -24,6 +24,7 @@ import AddBudgetScreen from './src/screens/AddBudgetScreen';
 import AddScheduledPaymentScreen from './src/screens/AddScheduledPaymentScreen';
 import ScanSMSScreen from './src/screens/ScanSMSScreen';
 import SmsAutoReadScreen from './src/screens/SmsAutoReadScreen';
+import NotificationAutoReadScreen from './src/screens/NotificationAutoReadScreen';
 import RescanPreviewScreen from './src/screens/RescanPreviewScreen';
 import SavingsGoalsScreen from './src/screens/SavingsGoalsScreen';
 import SalaryScreen from './src/screens/SalaryScreen';
@@ -103,6 +104,7 @@ export type MoreStackParamList = {
   Settings: undefined;
   ScanSMS: undefined;
   SmsAutoRead: undefined;
+  NotificationAutoRead: undefined;
   RescanPreview: { messages: { sender: string; message: string; receivedAt: string }[] };
   ImportStatement: undefined;
   InstitutionMappings: undefined;
@@ -210,6 +212,11 @@ function MoreStackNavigator() {
         name="SmsAutoRead"
         component={SmsAutoReadScreen}
         options={{ title: 'Auto-Read SMS' }}
+      />
+      <MoreStack.Screen
+        name="NotificationAutoRead"
+        component={NotificationAutoReadScreen}
+        options={{ title: 'Notification Bill Detection' }}
       />
       <MoreStack.Screen
         name="RescanPreview"
