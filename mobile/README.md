@@ -75,13 +75,20 @@ npm run build:apk
 Download the APK from the link provided (takes 10-15 minutes to build).
 
 ### Production Build (AAB for Play Store)
-Below is proper
+Below is proper for local build
 ```
 export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
 export PATH=$JAVA_HOME/bin:$PATH
 cd /home/kgd122/personal/FinanceTracker/mobile/android
 ./gradlew bundleRelease
 ```
+
+Below is proper for expo build prep
+```
+cd /home/kgd122/personal/FinanceTracker/mobile
+npx eas-cli build:version:set --platform android //  to set proper version, you need to mention +1 version above from the play store deployed version you can check verion from In Play Console, open Test and release → Latest releases and bundles (visible in your left sidebar)
+```
+then
 
 ```bash
 npm run build:aab
