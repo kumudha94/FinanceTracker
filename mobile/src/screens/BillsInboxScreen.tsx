@@ -132,6 +132,7 @@ export default function BillsInboxScreen() {
               <Text style={[styles.cardMeta, { color: colors.textMuted }]}>
                 {mapping.latestAmount != null ? formatCurrency(mapping.latestAmount) : 'Amount unknown'}
                 {mapping.latestDueDate ? ` · Due ${format(new Date(mapping.latestDueDate), 'd MMM')}` : ''}
+                {mapping.latestSource === 'notification' ? ' · via notification' : ''}
               </Text>
 
               <View style={styles.actionsRow}>

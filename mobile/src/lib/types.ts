@@ -49,6 +49,7 @@ export interface PendingBillMapping {
   latestDueDate: string | null;
   latestReceivedAt: string | null;
   latestMessage: string | null;
+  latestSource: 'sms' | 'notification';
 }
 
 export interface SmsPaymentMatchCandidate {

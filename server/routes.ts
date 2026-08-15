@@ -4327,6 +4327,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           latestDueDate: latestParsed?.dueDate ?? null,
           latestReceivedAt: latest?.receivedAt ?? null,
           latestMessage: latest?.message ?? null,
+          latestSource: latest?.source ?? 'sms',
         };
       }));
 
