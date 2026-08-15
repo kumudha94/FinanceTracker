@@ -69,20 +69,29 @@ function extractAmount(msg: string): number | null {
   return null;
 }
 
-function extractType(lowerMsg: string): "debit" | "credit" | null {
-  const isDebit = DEBIT_KEYWORDS.some(k => lowerMsg.includes(k));
-  const isCredit = CREDIT_KEYWORDS.some(k => lowerMsg.includes(k));
-  if (!isDebit && !isCredit) return null;
-  if (isDebit && isCredit) {
-    const debitIdx = Math.min(
-      ...DEBIT_KEYWORDS.map(k => lowerMsg.indexOf(k)).filter(i => i >= 0)
-    );
-    const creditIdx = Math.min(
-      ...CREDIT_KEYWORDS.map(k => lowerMsg.indexOf(k)).filter(i => i >= 0)
-    );
-    return debitIdx < creditIdx ? "debit" : "credit";
+// Plain substring matching (lowerMsg.includes(k)) false-triggers inside unrelated words —
+// "sent" inside "consent", "paid" inside "Prepaid" — misclassifying pending-consent and OTP
+// messages as completed transactions. Word-boundary matching closes that off while still
+// matching multi-word phrases like "used for" as a unit.
+function keywordIndex(lowerMsg: string, keywords: string[]): number {
+  let best = -1;
+  for (const k of keywords) {
+    const pattern = new RegExp(`\\b${k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i");
+    const match = lowerMsg.match(pattern);
+    if (match && match.index !== undefined && (best === -1 || match.index < best)) {
+      best = match.index;
+    }
   }
-  return isDebit ? "debit" : "credit";
+  return best;
+}
+
+function extractType(lowerMsg: string): "debit" | "credit" | null {
+  const debitIdx = keywordIndex(lowerMsg, DEBIT_KEYWORDS);
+  const creditIdx = keywordIndex(lowerMsg, CREDIT_KEYWORDS);
+  if (debitIdx === -1 && creditIdx === -1) return null;
+  if (debitIdx === -1) return "credit";
+  if (creditIdx === -1) return "debit";
+  return debitIdx < creditIdx ? "debit" : "credit";
 }
 
 function extractAccountLastDigits(msg: string): string | undefined {
