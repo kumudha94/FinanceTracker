@@ -110,6 +110,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Read-only existence check for Milo's "Connected Apps" flow (Milo asks "does an account
+  // with this email exist in FinanceTracker" before offering to connect). Never creates an
+  // account, unlike request-otp above.
+  app.get("/api/auth/exists", async (req, res) => {
+    try {
+      const email = typeof req.query.email === "string" ? req.query.email : undefined;
+      if (!email) {
+        return res.status(400).json({ error: "email is required" });
+      }
+      const user = await storage.getUserByEmail(email);
+      res.json({ exists: !!user });
+    } catch (error: any) {
+      console.error("Exists check error:", error);
+      res.status(500).json({ error: error.message || "Failed to check account" });
+    }
+  });
+
   app.post("/api/auth/verify-otp", async (req, res) => {
     try {
       const { email, otp } = req.body;
