@@ -28,13 +28,13 @@ import { suggestCategory, parseSmsMessage, parseStatementPDF, ExtractedTransacti
 import { deriveInstitutionKey, parseDueSms } from "./smsParser";
 import multer from "multer";
 // pdf-parse is imported dynamically at usage site to avoid pdfjs-dist crashing on startup
-import { getPaydayForMonth, getNextPaydays, getPastPaydays, getCurrentCycleDates, getNextCycleDates, getCyclePrimaryMonth, findOccurrenceInCycle, getSpannedMonths, filterOccurrencesInCycle } from "./salaryUtils";
+import { getPaydayForMonth, getNextPaydays, getPastPaydays, getCurrentCycleDates, getNextCycleDates, getCyclePrimaryMonth, findOccurrenceInCycle, getSpannedMonths, filterOccurrencesInCycle, getCreditCardBillingCycle } from "./salaryUtils";
 import { getWeekBounds, getPreviousWeekBounds } from "./weekUtils";
 import { validateNewSpendingEntry } from "./loanSpendingValidation";
 import { generateOTP, storeOTP, verifyOTP, sendOTP } from "./emailService";
 import { generateTokenPair, generateAccessToken } from "./jwtService";
 import { authenticateToken } from "./authMiddleware";
-import { validateApiKey } from "./apiKeyMiddleware";
+import { validateApiKey, validateMiloApiKey } from "./apiKeyMiddleware";
 import { verifyToken } from "./jwtService";
 import { PRIVACY_POLICY_HTML } from "./privacyPolicy";
 
@@ -124,6 +124,230 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error: any) {
       console.error("Exists check error:", error);
       res.status(500).json({ error: error.message || "Failed to check account" });
+    }
+  });
+
+  // Milo integration: this cycle's bills-due summary, broken out by category with real
+  // paid/pending status. Milo previously queried FinanceTracker's raw tables directly and
+  // re-derived "what's due this month" itself — it got both the date window wrong (plain
+  // calendar month instead of this account's real salary-cycle window) and the status
+  // filtering wrong (missed 'overdue' loan installments). This endpoint reuses the same
+  // cycle-resolution and frequency-matching rules /api/dashboard-summary uses, so Milo's
+  // numbers actually match what this app shows. Keyed by userId (Milo already knows this
+  // from its one-time OTP-verified Connected Apps link) rather than a live session — gated
+  // instead by a shared API key, same pattern as validateApiKey/TASKER_API_KEY.
+  //
+  // NOTE: the frequency-matching (isPaymentDueThisCycle) and per-category bill-building logic
+  // below is a deliberate copy of /api/dashboard-summary's local logic further down this file,
+  // not a shared import — extracting it would mean refactoring that already-shipped route,
+  // which is out of scope here. If dashboard-summary's rules change, update this too.
+  app.get("/api/integrations/milo/bills-summary", validateMiloApiKey, async (req, res) => {
+    try {
+      const userId = parseInt(req.query.userId as string, 10);
+      if (!userId || Number.isNaN(userId)) {
+        return res.status(400).json({ error: "userId is required" });
+      }
+
+      const now = new Date();
+      const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+      const salaryProfile = await storage.getSalaryProfile(userId);
+      let lastSalaryCycle: any = null;
+      if (salaryProfile) {
+        const recentCycles = await storage.getSalaryCycles(salaryProfile.id, 1);
+        if (recentCycles.length > 0) lastSalaryCycle = recentCycles[0];
+      }
+      const { cycleStart, cycleEnd, cycleLabel } = getCurrentCycleDates(salaryProfile, lastSalaryCycle, now);
+      const { month: currentMonth, year: currentYear } = getCyclePrimaryMonth(cycleStart, cycleEnd);
+      const resolveDueDate = (day: number) => new Date(currentYear, currentMonth - 1, day);
+      const toDateStr = (d: Date) => d.toISOString().slice(0, 10);
+
+      type BillItem = { name: string; amount: number; dueDate: string | null; isPaid: boolean; status: string };
+
+      const isPaymentDueThisCycle = (payment: any): boolean => {
+        const frequency = payment.frequency || "monthly";
+        const startMonth = payment.startMonth;
+        switch (frequency) {
+          case "monthly":
+            return true;
+          case "quarterly": {
+            if (startMonth) {
+              const quarterMonths = [startMonth];
+              for (let i = 1; i < 4; i++) quarterMonths.push(((startMonth - 1 + i * 3) % 12) + 1);
+              return quarterMonths.includes(currentMonth);
+            }
+            return [1, 4, 7, 10].includes(currentMonth);
+          }
+          case "half_yearly": {
+            if (startMonth) return currentMonth === startMonth || currentMonth === ((startMonth + 5) % 12) + 1;
+            return currentMonth === 1 || currentMonth === 7;
+          }
+          case "yearly":
+            return startMonth ? currentMonth === startMonth : currentMonth === 1;
+          case "custom": {
+            if (payment.customIntervalMonths && payment.customIntervalMonths > 0) {
+              const interval = payment.customIntervalMonths;
+              const createdAt = payment.createdAt instanceof Date ? payment.createdAt : new Date(payment.createdAt);
+              const refMonth = startMonth || createdAt.getMonth() + 1;
+              const refYear = createdAt.getFullYear();
+              const totalMonthsDiff = (currentYear - refYear) * 12 + (currentMonth - refMonth);
+              return totalMonthsDiff >= 0 && totalMonthsDiff % interval === 0;
+            }
+            return true;
+          }
+          case "one_time": {
+            if (startMonth && startMonth === currentMonth) {
+              const createdAt = payment.createdAt instanceof Date ? payment.createdAt : new Date(payment.createdAt);
+              return createdAt.getFullYear() === currentYear || !payment.createdAt;
+            }
+            return false;
+          }
+          default:
+            return true;
+        }
+      };
+
+      const allPayments = await storage.getAllScheduledPayments(userId);
+      const activePayments = allPayments.filter((p) => p.status === "active");
+      const duePaymentsThisCycle = activePayments.filter(isPaymentDueThisCycle);
+
+      const scheduledPaymentsBills: BillItem[] = [];
+      const manualCreditCardBills: BillItem[] = [];
+      await Promise.all(
+        duePaymentsThisCycle.map(async (p) => {
+          const occurrences = await storage.getPaymentOccurrences({ scheduledPaymentId: p.id });
+          const occurrence = findOccurrenceInCycle(occurrences, cycleStart, cycleEnd) ?? null;
+          const isPaid = occurrence?.status === "paid";
+          let amount = parseFloat(p.amount || "0");
+
+          if (amount === 0 && p.paymentType === "credit_card_bill" && p.creditCardAccountId) {
+            const creditCardAccount = await storage.getAccount(p.creditCardAccountId);
+            if (creditCardAccount?.billingDate) {
+              const { cycleStart: ccStart, cycleEnd: ccEnd } = getCreditCardBillingCycle(now, creditCardAccount.billingDate);
+              const cycleTransactions = await storage.getAllTransactions({
+                accountId: creditCardAccount.id,
+                startDate: ccStart,
+                endDate: ccEnd,
+              });
+              amount = cycleTransactions.filter((t) => t.type === "debit").reduce((sum, t) => sum + parseFloat(t.amount), 0);
+            }
+          }
+
+          const item: BillItem = {
+            name: p.name,
+            amount,
+            dueDate: p.dueDate ? toDateStr(resolveDueDate(p.dueDate)) : null,
+            isPaid,
+            status: isPaid ? "paid" : p.dueDate && resolveDueDate(p.dueDate) < startOfToday ? "overdue" : "pending",
+          };
+          (p.paymentType === "credit_card_bill" ? manualCreditCardBills : scheduledPaymentsBills).push(item);
+        }),
+      );
+
+      const creditCardAccounts = await storage.getAllAccounts(userId);
+      const creditCards = creditCardAccounts.filter((a) => a.type === "credit_card" && a.isActive);
+      const manualCCAccountIds = new Set(
+        activePayments.filter((p) => p.paymentType === "credit_card_bill").map((p) => p.creditCardAccountId).filter(Boolean),
+      );
+      const autoCreditCardBills: BillItem[] = (
+        await Promise.all(
+          creditCards
+            .filter((card) => !manualCCAccountIds.has(card.id) && card.billingDate)
+            .map(async (card) => {
+              const billingDay = card.billingDate!;
+              let prevCycleStart: Date;
+              let prevCycleEnd: Date;
+              if (now.getDate() >= billingDay) {
+                prevCycleStart = new Date(now.getFullYear(), now.getMonth() - 1, billingDay, 0, 0, 0);
+                prevCycleEnd = new Date(now.getFullYear(), now.getMonth(), billingDay - 1, 23, 59, 59);
+              } else {
+                prevCycleStart = new Date(now.getFullYear(), now.getMonth() - 2, billingDay, 0, 0, 0);
+                prevCycleEnd = new Date(now.getFullYear(), now.getMonth() - 1, billingDay - 1, 23, 59, 59);
+              }
+              const prevCycleTxns = await storage.getAllTransactions({
+                userId,
+                accountId: card.id,
+                startDate: prevCycleStart,
+                endDate: prevCycleEnd,
+              });
+              const billAmount = prevCycleTxns.filter((t) => t.type === "debit").reduce((sum, t) => sum + parseFloat(t.amount), 0);
+              if (billAmount <= 0) return null;
+              return {
+                name: `${card.name} Bill`,
+                amount: billAmount,
+                dueDate: toDateStr(resolveDueDate(Math.min(billingDay, 28))),
+                isPaid: false,
+                status: billingDay < now.getDate() ? "overdue" : billingDay === now.getDate() ? "pending" : "pending",
+              } as BillItem;
+            }),
+        )
+      ).filter((bill): bill is BillItem => bill !== null);
+      const creditCardBills: BillItem[] = [...manualCreditCardBills, ...autoCreditCardBills];
+
+      const loans = await storage.getAllLoans(userId);
+      const activeLoans = loans.filter((l) => l.status === "active");
+      const loanBills: BillItem[] = await Promise.all(
+        activeLoans.map(async (loan): Promise<BillItem> => {
+          const installments = await storage.getLoanInstallments(loan.id);
+          const currentInstallment = installments.find((inst) => {
+            const d = new Date(inst.dueDate);
+            return d.getMonth() + 1 === currentMonth && d.getFullYear() === currentYear;
+          });
+          const status =
+            currentInstallment?.status ||
+            (loan.emiDay && resolveDueDate(loan.emiDay) < startOfToday ? "overdue" : "pending");
+          return {
+            name: loan.name,
+            amount: currentInstallment ? parseFloat(currentInstallment.emiAmount) : parseFloat(loan.emiAmount || "0"),
+            dueDate: loan.emiDay ? toDateStr(resolveDueDate(loan.emiDay)) : null,
+            isPaid: status === "paid",
+            status,
+          };
+        }),
+      );
+
+      const allInsurances = await storage.getAllInsurances(userId);
+      const activeInsurances = allInsurances.filter((i) => i.status === "active" && !i.autoFunded);
+      const insuranceBills: BillItem[] = [];
+      for (const ins of activeInsurances) {
+        const premiums = (ins as any).premiums || [];
+        const currentPremium = premiums.find((p: any) => {
+          const d = new Date(p.dueDate);
+          return d.getMonth() + 1 === currentMonth && d.getFullYear() === currentYear;
+        });
+        if (currentPremium) {
+          const status = currentPremium.status || "pending";
+          insuranceBills.push({
+            name: ins.name,
+            amount: parseFloat(currentPremium.amount),
+            dueDate: toDateStr(new Date(currentPremium.dueDate)),
+            isPaid: status === "paid",
+            status,
+          });
+        }
+      }
+
+      const summarize = (items: BillItem[]) => ({
+        totalCount: items.length,
+        paidCount: items.filter((i) => i.isPaid).length,
+        pendingAmount: items.filter((i) => !i.isPaid && i.status !== "skipped").reduce((s, i) => s + i.amount, 0),
+        items,
+      });
+
+      res.json({
+        cycleLabel,
+        cycleStart: toDateStr(cycleStart),
+        cycleEnd: toDateStr(cycleEnd),
+        categories: {
+          scheduledPayments: summarize(scheduledPaymentsBills),
+          creditCardBills: summarize(creditCardBills),
+          loans: summarize(loanBills),
+          insurance: summarize(insuranceBills),
+        },
+      });
+    } catch (error: any) {
+      console.error("Milo bills-summary error:", error);
+      res.status(500).json({ error: error.message || "Failed to build bills summary" });
     }
   });
 
