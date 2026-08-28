@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
-import { View, Text, StyleSheet, ScrollView, TextInput, TouchableOpacity, ActivityIndicator, Modal } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TextInput, TouchableOpacity, ActivityIndicator, Modal, Switch } from 'react-native';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Ionicons } from '@expo/vector-icons';
 import Toast from 'react-native-toast-message';
@@ -17,6 +17,8 @@ interface SalaryProfile {
   monthCycleStartDay?: number | null;
   monthlyAmount: string | null;
   accountId: number | null;
+  autoMarkPaidEnabled?: boolean;
+  autoMarkKeyword?: string | null;
 }
 
 interface Account {
@@ -42,6 +44,7 @@ interface SalaryCycle {
   expectedAmount: string | null;
   actualAmount: string | null;
   transactionId: number | null;
+  affectAccountBalance?: boolean;
 }
 
 const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -68,9 +71,12 @@ export default function SalaryScreen() {
   const [editActualDate, setEditActualDate] = useState('');
   const [editActualAmount, setEditActualAmount] = useState('');
   const [markAsCredited, setMarkAsCredited] = useState(false);
+  const [affectAccountBalance, setAffectAccountBalance] = useState(true);
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [showNextPaydayDatePicker, setShowNextPaydayDatePicker] = useState(false);
   const [showAccountPicker, setShowAccountPicker] = useState(false);
+  const [autoMarkPaidEnabled, setAutoMarkPaidEnabled] = useState(false);
+  const [autoMarkKeyword, setAutoMarkKeyword] = useState('');
 
   const { data: profile, isLoading } = useQuery<SalaryProfile | null>({
     queryKey: ['/api/salary-profile'],
@@ -108,8 +114,8 @@ export default function SalaryScreen() {
   });
 
   const updateCycleMutation = useMutation({
-    mutationFn: async ({ id, actualPayDate, actualAmount, markAsCredited }: { id: number; actualPayDate: string; actualAmount: string; markAsCredited: boolean }) => {
-      return api.updateSalaryCycle(id, { actualPayDate, actualAmount, markAsCredited });
+    mutationFn: async ({ id, actualPayDate, actualAmount, markAsCredited, affectAccountBalance }: { id: number; actualPayDate: string; actualAmount: string; markAsCredited: boolean; affectAccountBalance: boolean }) => {
+      return api.updateSalaryCycle(id, { actualPayDate, actualAmount, markAsCredited, affectAccountBalance });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/salary-cycles'] });
@@ -131,6 +137,7 @@ export default function SalaryScreen() {
     setEditActualDate(cycle.actualPayDate || cycle.expectedPayDate);
     setEditActualAmount(cycle.actualAmount || cycle.expectedAmount || '');
     setMarkAsCredited(!!cycle.transactionId);
+    setAffectAccountBalance(cycle.affectAccountBalance ?? true);
     setShowDatePicker(false);
   };
 
@@ -141,6 +148,7 @@ export default function SalaryScreen() {
         actualPayDate: editActualDate,
         actualAmount: editActualAmount,
         markAsCredited: markAsCredited,
+        affectAccountBalance: affectAccountBalance,
       });
     }
   };
@@ -196,6 +204,8 @@ export default function SalaryScreen() {
       setMonthCycleStartDay(profile.monthCycleStartDay?.toString() || '1');
       setMonthlyAmount(profile.monthlyAmount || '');
       setAccountId(profile.accountId || null);
+      setAutoMarkPaidEnabled(profile.autoMarkPaidEnabled ?? false);
+      setAutoMarkKeyword(profile.autoMarkKeyword || '');
     }
   }, [profile]);
 
@@ -210,6 +220,8 @@ export default function SalaryScreen() {
         monthlyAmount: monthlyAmount || null,
         accountId: accountId || null,
         isActive: true,
+        autoMarkPaidEnabled,
+        autoMarkKeyword: autoMarkPaidEnabled ? autoMarkKeyword.trim() : null,
       };
 
       if (profile) {
@@ -444,9 +456,55 @@ export default function SalaryScreen() {
           </View>
         )}
 
+        <View style={styles.field}>
+          <Text style={[styles.label, { color: colors.textMuted }]}>Auto-Mark as Paid</Text>
+          <View style={[styles.toggleContainer, { backgroundColor: colors.card }]}>
+            <View style={styles.toggleRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.toggleLabel, { color: colors.text }]}>Auto-Mark as Paid</Text>
+                <Text style={[styles.toggleDescription, { color: colors.textMuted }]}>
+                  Mark this month's salary credited automatically when a matching credited SMS arrives
+                </Text>
+              </View>
+              <Switch
+                value={autoMarkPaidEnabled}
+                onValueChange={setAutoMarkPaidEnabled}
+                trackColor={{ false: colors.border, true: colors.primary }}
+                thumbColor="#fff"
+              />
+            </View>
+          </View>
+          {autoMarkPaidEnabled && (
+            <>
+              <TextInput
+                style={[styles.input, { backgroundColor: colors.card, color: colors.text, borderColor: colors.border, marginTop: 12 }]}
+                placeholder="SMS Keyword, e.g., SALARY, NEFT"
+                placeholderTextColor={colors.textMuted}
+                value={autoMarkKeyword}
+                onChangeText={setAutoMarkKeyword}
+                autoCapitalize="characters"
+              />
+              <Text style={[styles.toggleDescription, { color: colors.textMuted, marginTop: 4 }]}>
+                Only a credited SMS containing this text (case-insensitive) into your salary account will auto-match — the amount can vary month to month
+              </Text>
+            </>
+          )}
+        </View>
+
         <TouchableOpacity
           style={[styles.saveButton, { backgroundColor: colors.primary }]}
-          onPress={() => saveMutation.mutate()}
+          onPress={() => {
+            if (autoMarkPaidEnabled && !autoMarkKeyword.trim()) {
+              Toast.show({
+                type: 'error',
+                text1: 'Keyword Required',
+                text2: 'Enter an SMS keyword to enable auto-mark-as-paid',
+                position: 'bottom',
+              });
+              return;
+            }
+            saveMutation.mutate();
+          }}
           disabled={saveMutation.isPending}
         >
           {saveMutation.isPending ? (
@@ -699,13 +757,41 @@ export default function SalaryScreen() {
                 <View style={{ flex: 1 }}>
                   <Text style={[styles.checkboxLabel, { color: colors.text }]}>Mark as Credited</Text>
                   <Text style={[styles.checkboxHint, { color: colors.textMuted }]}>
-                    {markAsCredited 
-                      ? `₹${editActualAmount} will be added to your account` 
+                    {markAsCredited
+                      ? `₹${editActualAmount} will be added to your account`
                       : 'Check this to automatically create a transaction and update your account balance'
                     }
                   </Text>
                 </View>
               </TouchableOpacity>
+
+              {/* Affect Account Balance Checkbox */}
+              {markAsCredited && (
+                <TouchableOpacity
+                  style={styles.checkboxContainer}
+                  onPress={() => setAffectAccountBalance(!affectAccountBalance)}
+                  activeOpacity={0.7}
+                >
+                  <View style={[
+                    styles.checkbox,
+                    { borderColor: colors.border },
+                    affectAccountBalance && { backgroundColor: colors.primary, borderColor: colors.primary }
+                  ]}>
+                    {affectAccountBalance && (
+                      <Ionicons name="checkmark" size={16} color="#fff" />
+                    )}
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.checkboxLabel, { color: colors.text }]}>Affect Account Balance</Text>
+                    <Text style={[styles.checkboxHint, { color: colors.textMuted }]}>
+                      {affectAccountBalance
+                        ? 'This will add the amount to your account balance'
+                        : 'Off — use this if SMS auto-read already credited this salary, so the balance is not doubled'
+                      }
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+              )}
 
               <View style={styles.modalActions}>
                 <TouchableOpacity
@@ -1196,6 +1282,24 @@ const styles = StyleSheet.create({
   checkboxHint: {
     fontSize: 13,
     lineHeight: 18,
+  },
+  toggleContainer: {
+    borderRadius: 12,
+    padding: 16,
+    gap: 16,
+  },
+  toggleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  toggleLabel: {
+    fontSize: 14,
+    fontWeight: '500',
+    marginBottom: 2,
+  },
+  toggleDescription: {
+    fontSize: 12,
   },
   infoBox: {
     flexDirection: 'row',

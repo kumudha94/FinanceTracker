@@ -531,6 +531,8 @@ export const salaryProfiles = pgTable("salary_profiles", {
   monthCycleStartDay: integer("month_cycle_start_day"), // day of month (1-31) if monthCycleStartRule is 'fixed_day'
   monthlyAmount: decimal("monthly_amount", { precision: 12, scale: 2 }),
   isActive: boolean("is_active").default(true),
+  autoMarkPaidEnabled: boolean("auto_mark_paid_enabled").default(false), // when true, a matching credited SMS auto-marks the current salary cycle as credited, reusing that SMS's own transaction
+  autoMarkKeyword: varchar("auto_mark_keyword", { length: 100 }), // required substring (case-insensitive) that must appear in the SMS for auto-match; required whenever autoMarkPaidEnabled is true
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
@@ -552,7 +554,15 @@ export const insertSalaryProfileSchema = createInsertSchema(salaryProfiles).omit
   monthCycleStartDay: z.number().min(1).max(31).nullish(),
   monthlyAmount: z.string().nullish(),
   accountId: z.number().nullish(),
-});
+  autoMarkPaidEnabled: z.boolean().optional(),
+  autoMarkKeyword: z.union([z.string(), z.null()]).optional(),
+}).refine(
+  (data) => !data.autoMarkPaidEnabled || !!data.autoMarkKeyword?.trim(),
+  {
+    message: "A keyword is required to enable auto-mark-as-paid",
+    path: ["autoMarkKeyword"],
+  }
+);
 
 export type InsertSalaryProfile = z.infer<typeof insertSalaryProfileSchema>;
 export type SalaryProfile = typeof salaryProfiles.$inferSelect;
@@ -568,6 +578,7 @@ export const salaryCycles = pgTable("salary_cycles", {
   expectedAmount: decimal("expected_amount", { precision: 12, scale: 2 }),
   actualAmount: decimal("actual_amount", { precision: 12, scale: 2 }),
   transactionId: integer("transaction_id").references(() => transactions.id, { onDelete: 'set null' }),
+  affectAccountBalance: boolean("affect_account_balance").default(true), // whether marking this cycle credited should also move the account balance
   notes: text("notes"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });

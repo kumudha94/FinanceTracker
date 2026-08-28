@@ -400,6 +400,21 @@ export function filterOccurrencesInCycle<T extends { dueDate: Date }>(
   return occurrences.filter(o => o.dueDate >= cycleStart && o.dueDate <= cycleEnd);
 }
 
+// Decides whether a credited SMS should auto-mark this month's salary cycle as paid, reusing
+// that SMS's own transaction. Unlike the loan/insurance/scheduled-payment auto-mark candidates,
+// this deliberately has no amount-matching requirement — salary varies month to month (bonus,
+// deductions, tax changes) — so eligibility is just: enabled, a keyword is configured, the
+// credit landed in the salary profile's own account, and the keyword appears in the SMS text.
+export function shouldAutoMarkSalaryCredit(
+  profile: { autoMarkPaidEnabled: boolean | null; autoMarkKeyword: string | null; accountId: number | null } | null | undefined,
+  transactionAccountId: number | null,
+  messageText: string
+): boolean {
+  if (!profile || !profile.autoMarkPaidEnabled || !profile.autoMarkKeyword) return false;
+  if (!profile.accountId || profile.accountId !== transactionAccountId) return false;
+  return messageText.toLowerCase().includes(profile.autoMarkKeyword.toLowerCase());
+}
+
 /**
  * Calculate credit card billing cycle dates based on billing date
  * Billing cycle runs from billingDate of previous month to billingDate-1 of current month

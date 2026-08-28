@@ -28,7 +28,7 @@ import { suggestCategory, parseSmsMessage, parseStatementPDF, ExtractedTransacti
 import { deriveInstitutionKey, parseDueSms } from "./smsParser";
 import multer from "multer";
 // pdf-parse is imported dynamically at usage site to avoid pdfjs-dist crashing on startup
-import { getPaydayForMonth, getNextPaydays, getPastPaydays, getCurrentCycleDates, getNextCycleDates, getCyclePrimaryMonth, findOccurrenceInCycle, getSpannedMonths, filterOccurrencesInCycle, getCreditCardBillingCycle } from "./salaryUtils";
+import { getPaydayForMonth, getNextPaydays, getPastPaydays, getCurrentCycleDates, getNextCycleDates, getCyclePrimaryMonth, findOccurrenceInCycle, getSpannedMonths, filterOccurrencesInCycle, getCreditCardBillingCycle, shouldAutoMarkSalaryCredit } from "./salaryUtils";
 import { getWeekBounds, getPreviousWeekBounds } from "./weekUtils";
 import { validateNewSpendingEntry } from "./loanSpendingValidation";
 import { generateOTP, storeOTP, verifyOTP, sendOTP } from "./emailService";
@@ -2494,8 +2494,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.patch("/api/salary-cycles/:id", authenticateToken, async (req, res) => {
     try {
       const cycleId = parseInt(req.params.id);
-      const { markAsCredited, ...updateData } = req.body;
-      
+      const { markAsCredited, affectAccountBalance, ...updateData } = req.body;
+
       // Get current cycle to check existing state
       const currentCycle = await storage.getSalaryCycle(cycleId);
       if (!currentCycle) {
@@ -2515,6 +2515,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         res.status(404).json({ error: "Salary cycle not found" });
         return;
       }
+
+      let transactionChangedThisRequest = false;
 
       // Handle marking as credited/uncredited
       if (markAsCredited !== undefined) {
@@ -2547,15 +2549,47 @@ export async function registerRoutes(app: Express): Promise<Server> {
             description: `Salary - ${['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][currentCycle.month - 1]} ${currentCycle.year}`,
           });
 
-          // createTransaction already updates account balance automatically
-          
           // Update cycle with transaction ID
           updateData.transactionId = transaction.id;
+          transactionChangedThisRequest = true;
+
+          // createTransaction() above always credits the account. If this cycle isn't set to
+          // affect the balance (e.g. SMS auto-read already credited it), reverse that bump
+          // immediately — the transaction row still exists for record-keeping.
+          const effectiveAffectBalance = affectAccountBalance !== undefined
+            ? affectAccountBalance
+            : (currentCycle.affectAccountBalance ?? true);
+          if (!effectiveAffectBalance) {
+            await storage.updateAccountBalance(profile.accountId, updateData.actualAmount, 'subtract');
+          }
         } else if (!markAsCredited && currentCycle.transactionId) {
+          // deleteTransaction() below always reverses the balance change, assuming it was
+          // applied. If this cycle's toggle was off, that credit was already reversed at
+          // creation time above — compensate first so the net effect of unmarking is zero.
+          if (currentCycle.affectAccountBalance === false && currentCycle.actualAmount) {
+            await storage.updateAccountBalance(profile.accountId, currentCycle.actualAmount, 'add');
+          }
           // Delete transaction (this will automatically update account balance)
           await storage.deleteTransaction(currentCycle.transactionId);
           updateData.transactionId = null;
+          transactionChangedThisRequest = true;
         }
+      }
+
+      // Toggle-only change: flipping affectAccountBalance on a cycle that's already credited
+      // (and wasn't just created/deleted above) adjusts the balance without touching the transaction.
+      if (
+        !transactionChangedThisRequest &&
+        affectAccountBalance !== undefined &&
+        affectAccountBalance !== (currentCycle.affectAccountBalance ?? true) &&
+        currentCycle.transactionId &&
+        currentCycle.actualAmount
+      ) {
+        await storage.updateAccountBalance(profile.accountId, currentCycle.actualAmount, affectAccountBalance ? 'add' : 'subtract');
+      }
+
+      if (affectAccountBalance !== undefined) {
+        updateData.affectAccountBalance = affectAccountBalance;
       }
 
       // Update the cycle
@@ -4073,6 +4107,54 @@ export async function registerRoutes(app: Express): Promise<Server> {
     );
   }
 
+  // After a credited-SMS transaction is created, checks whether the salary profile has
+  // auto-mark-as-paid enabled and the SMS text contains its configured keyword. If so, links
+  // this same transaction to the current month's salary cycle (transactionId/actualAmount/
+  // actualPayDate) instead of creating a second one via the manual "mark as credited" flow —
+  // that credited SMS already moved the account balance once, this must not do it again.
+  // No amount-matching requirement (unlike loan/insurance/scheduled-payment auto-mark): salary
+  // amounts legitimately vary month to month (bonus, deductions, tax changes).
+  async function runSalaryAutoMark(
+    transaction: { id: number; amount: string; transactionDate: Date | string; accountId: number | null; userId: number },
+    messageText: string
+  ): Promise<void> {
+    const profile = await storage.getSalaryProfile(transaction.userId);
+    if (!profile || !shouldAutoMarkSalaryCredit(profile, transaction.accountId, messageText)) return;
+
+    const transactionDate = new Date(transaction.transactionDate);
+    const month = transactionDate.getMonth() + 1;
+    const year = transactionDate.getFullYear();
+
+    const existingCycles = await storage.getSalaryCycles(profile.id);
+    let cycle = existingCycles.find(c => c.month === month && c.year === year);
+
+    // Already linked to a transaction (manually marked, or an earlier SMS this month) — don't relink.
+    if (cycle?.transactionId) return;
+
+    if (!cycle) {
+      const expectedPayDate = getPaydayForMonth(
+        year,
+        month,
+        profile.paydayRule || 'last_working_day',
+        profile.fixedDay,
+        profile.weekdayPreference
+      );
+      cycle = await storage.createSalaryCycle({
+        salaryProfileId: profile.id,
+        month,
+        year,
+        expectedPayDate,
+        expectedAmount: profile.monthlyAmount || undefined,
+      } as any);
+    }
+
+    await storage.updateSalaryCycle(cycle.id, {
+      transactionId: transaction.id,
+      actualAmount: transaction.amount,
+      actualPayDate: transactionDate,
+    } as any);
+  }
+
   // Parses one SMS, matches it to an account, and creates the transaction — shared by the
   // single and batch parse-sms endpoints so the institution-mapping fallback only lives in one place.
   async function processSingleSms(
@@ -4154,6 +4236,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // e-mandate notice (already filtered out before parsedData.amount is set) never matches.
       if (transaction.type === 'debit') {
         await runAutoMarkMatching(transaction, messageText);
+      } else if (transaction.type === 'credit') {
+        await runSalaryAutoMark(transaction, messageText);
       }
 
       return { success: true, transaction, parsed: parsedData };

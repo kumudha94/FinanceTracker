@@ -442,6 +442,8 @@ export interface SalaryProfile {
   monthCycleStartDay: number | null;
   monthlyAmount: string | null;
   isActive: boolean;
+  autoMarkPaidEnabled: boolean;
+  autoMarkKeyword: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -456,6 +458,7 @@ export interface SalaryCycle {
   status: 'pending' | 'received' | 'delayed' | 'missed';
   notes: string | null;
   transactionId: number | null;
+  affectAccountBalance: boolean;
   createdAt: string;
 }
 
@@ -577,6 +580,8 @@ export interface InsertSalaryProfile {
   payDayRule?: 'exact' | 'before_weekend' | 'after_weekend' | 'last_working_day';
   accountId?: number | null;
   isActive?: boolean;
+  autoMarkPaidEnabled?: boolean;
+  autoMarkKeyword?: string | null;
 }
 
 export interface InsertLoan {
