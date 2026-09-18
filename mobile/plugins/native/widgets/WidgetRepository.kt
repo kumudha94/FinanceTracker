@@ -7,6 +7,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
+import org.json.JSONException
 import org.json.JSONObject
 import java.io.IOException
 
@@ -32,15 +33,19 @@ object WidgetRepository {
   suspend fun fetchTotalBalance(context: Context): WidgetDataResult<Double> {
     return when (val result = authenticatedGet(context, "$API_BASE_URL/api/accounts")) {
       is WidgetDataResult.Success -> {
-        val accounts = JSONArray(result.data)
-        var total = 0.0
-        for (i in 0 until accounts.length()) {
-          val account = accounts.getJSONObject(i)
-          if (account.optBoolean("isActive", true)) {
-            total += account.optString("balance", "0").toDoubleOrNull() ?: 0.0
+        try {
+          val accounts = JSONArray(result.data)
+          var total = 0.0
+          for (i in 0 until accounts.length()) {
+            val account = accounts.getJSONObject(i)
+            if (account.optBoolean("isActive", true)) {
+              total += account.optString("balance", "0").toDoubleOrNull() ?: 0.0
+            }
           }
+          WidgetDataResult.Success(total)
+        } catch (e: JSONException) {
+          WidgetDataResult.NetworkError
         }
-        WidgetDataResult.Success(total)
       }
       is WidgetDataResult.AuthFailure -> WidgetDataResult.AuthFailure
       is WidgetDataResult.NetworkError -> WidgetDataResult.NetworkError
@@ -50,21 +55,25 @@ object WidgetRepository {
   suspend fun fetchRecentTransactions(context: Context, limit: Int = 4): WidgetDataResult<List<TransactionSummary>> {
     return when (val result = authenticatedGet(context, "$API_BASE_URL/api/transactions?limit=$limit")) {
       is WidgetDataResult.Success -> {
-        val raw = JSONArray(result.data)
-        val transactions = mutableListOf<TransactionSummary>()
-        for (i in 0 until raw.length()) {
-          val tx = raw.getJSONObject(i)
-          transactions.add(
-            TransactionSummary(
-              id = tx.optInt("id", 0),
-              merchant = tx.optString("merchant").ifBlank { tx.optString("description", "Transaction") },
-              amount = tx.optString("amount", "0").toDoubleOrNull() ?: 0.0,
-              type = tx.optString("type", "debit"),
-              transactionDate = tx.optString("transactionDate", "")
+        try {
+          val raw = JSONArray(result.data)
+          val transactions = mutableListOf<TransactionSummary>()
+          for (i in 0 until raw.length()) {
+            val tx = raw.getJSONObject(i)
+            transactions.add(
+              TransactionSummary(
+                id = tx.optInt("id", 0),
+                merchant = tx.optString("merchant").ifBlank { tx.optString("description", "Transaction") },
+                amount = tx.optString("amount", "0").toDoubleOrNull() ?: 0.0,
+                type = tx.optString("type", "debit"),
+                transactionDate = tx.optString("transactionDate", "")
+              )
             )
-          )
+          }
+          WidgetDataResult.Success(transactions)
+        } catch (e: JSONException) {
+          WidgetDataResult.NetworkError
         }
-        WidgetDataResult.Success(transactions)
       }
       is WidgetDataResult.AuthFailure -> WidgetDataResult.AuthFailure
       is WidgetDataResult.NetworkError -> WidgetDataResult.NetworkError
@@ -75,12 +84,15 @@ object WidgetRepository {
     val accessToken = WidgetAuthPrefs.getAccessToken(context) ?: return WidgetDataResult.AuthFailure
 
     val first = executeGet(url, accessToken) ?: return WidgetDataResult.NetworkError
-    if (first.first == 401) {
+    if (first.first in 200..299) return WidgetDataResult.Success(first.second)
+    // The backend returns 403 for an expired/invalid token, and reserves 401 for a
+    // missing Authorization header entirely. Treat both as "needs a token refresh".
+    if (first.first == 401 || first.first == 403) {
       val refreshed = refreshAccessToken(context) ?: return WidgetDataResult.AuthFailure
       val second = executeGet(url, refreshed) ?: return WidgetDataResult.NetworkError
       return if (second.first in 200..299) WidgetDataResult.Success(second.second) else WidgetDataResult.AuthFailure
     }
-    return if (first.first in 200..299) WidgetDataResult.Success(first.second) else WidgetDataResult.NetworkError
+    return WidgetDataResult.NetworkError
   }
 
   private fun executeGet(url: String, accessToken: String): Pair<Int, String>? {
@@ -93,7 +105,7 @@ object WidgetRepository {
       client.newCall(request).execute().use { response ->
         Pair(response.code, response.body?.string() ?: "")
       }
-    } catch (e: IOException) {
+    } catch (e: Exception) {
       null
     }
   }
@@ -115,7 +127,7 @@ object WidgetRepository {
         WidgetAuthPrefs.setAccessToken(context, newAccessToken)
         newAccessToken
       }
-    } catch (e: IOException) {
+    } catch (e: Exception) {
       null
     }
   }

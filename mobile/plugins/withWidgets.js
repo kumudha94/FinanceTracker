@@ -54,7 +54,12 @@ function withWidgetsNativeFiles(config) {
       );
       fs.mkdirSync(javaDir, { recursive: true });
 
-      const apiBaseUrl = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:5000';
+      const apiBaseUrl = process.env.EXPO_PUBLIC_API_URL;
+      if (!apiBaseUrl) {
+        throw new Error(
+          'EXPO_PUBLIC_API_URL must be set to build the widgets (mobile/plugins/withWidgets.js)'
+        );
+      }
 
       const nativeSrcDir = path.join(__dirname, 'native', 'widgets');
       const kotlinFiles = ['WidgetRepository.kt', 'WidgetUpdateWorker.kt', 'BalanceWidget.kt', 'RecentTransactionsWidget.kt'];

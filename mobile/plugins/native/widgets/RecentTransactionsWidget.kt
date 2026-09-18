@@ -41,10 +41,11 @@ class RecentTransactionsWidget : GlanceAppWidget() {
 
       Column(modifier = GlanceModifier.fillMaxSize().padding(8.dp)) {
         when {
-          error == "auth" -> Text("Open app to sign in", modifier = GlanceModifier.clickable(actionStartActivity(openAppIntent)))
-          error == "network" || json == null -> Text("Unable to load transactions", modifier = GlanceModifier.clickable(actionStartActivity(openAppIntent)))
-          else -> {
-            val rows = parseTransactions(json)
+          // Cached data was successfully fetched at some point: always show it, even if
+          // the most recent refresh failed (error == "network"/"auth"), so a transient
+          // failure doesn't wipe a list the user can still see.
+          json != null -> {
+            val rows = runCatching { parseTransactions(json) }.getOrElse { emptyList() }
             if (rows.isEmpty()) {
               Text("No transactions yet", modifier = GlanceModifier.clickable(actionStartActivity(openAppIntent)))
             } else {
@@ -66,6 +67,8 @@ class RecentTransactionsWidget : GlanceAppWidget() {
               }
             }
           }
+          error == "auth" -> Text("Open app to sign in", modifier = GlanceModifier.clickable(actionStartActivity(openAppIntent)))
+          else -> Text("Unable to load transactions", modifier = GlanceModifier.clickable(actionStartActivity(openAppIntent)))
         }
       }
     }

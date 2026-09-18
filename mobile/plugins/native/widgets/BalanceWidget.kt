@@ -3,6 +3,7 @@ package __PACKAGE__.widgets
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.datastore.preferences.core.Preferences
@@ -18,8 +19,12 @@ import androidx.glance.layout.Column
 import androidx.glance.layout.fillMaxSize
 import androidx.glance.layout.padding
 import androidx.glance.state.PreferencesGlanceStateDefinition
+import androidx.glance.text.FontWeight
 import androidx.glance.text.Text
 import androidx.glance.text.TextStyle
+import androidx.glance.unit.ColorProvider
+
+private const val STALE_THRESHOLD_MINUTES = 120L
 
 class BalanceWidget : GlanceAppWidget() {
   override val stateDefinition = PreferencesGlanceStateDefinition
@@ -39,12 +44,30 @@ class BalanceWidget : GlanceAppWidget() {
           .clickable(actionStartActivity(openAppIntent))
       ) {
         when {
-          error == "auth" -> Text("Open app to sign in")
-          error == "network" || total == null -> Text("Unable to load balance")
-          else -> {
-            Text(formatBalance(total.toDoubleOrNull() ?: 0.0), style = TextStyle(fontSize = 22.sp))
-            Text(formatUpdatedAt(updatedAt), style = TextStyle(fontSize = 11.sp))
+          // A value was successfully fetched at some point: always show it, even if the
+          // most recent refresh failed (error == "network"/"auth"). A transient failure
+          // should surface as staleness on a value the user can still see, not wipe it.
+          total != null -> {
+            val isStale = (ageMinutesSince(updatedAt) ?: 0) >= STALE_THRESHOLD_MINUTES
+            if (isStale) {
+              // Past the staleness threshold, the "last updated" line becomes the
+              // dominant visual signal and the balance is deprioritized.
+              Text(
+                formatUpdatedAt(updatedAt),
+                style = TextStyle(
+                  fontSize = 15.sp,
+                  fontWeight = FontWeight.Bold,
+                  color = ColorProvider(Color(0xFFDC2626))
+                )
+              )
+              Text(formatBalance(total.toDoubleOrNull() ?: 0.0), style = TextStyle(fontSize = 14.sp))
+            } else {
+              Text(formatBalance(total.toDoubleOrNull() ?: 0.0), style = TextStyle(fontSize = 22.sp))
+              Text(formatUpdatedAt(updatedAt), style = TextStyle(fontSize = 11.sp))
+            }
           }
+          error == "auth" -> Text("Open app to sign in")
+          else -> Text("Unable to load balance")
         }
       }
     }
@@ -63,12 +86,16 @@ class BalanceWidgetReceiver : GlanceAppWidgetReceiver() {
 
 fun formatBalance(amount: Double): String = "₹" + String.format("%,.2f", amount)
 
+private fun ageMinutesSince(updatedAtMillis: Long?): Long? {
+  if (updatedAtMillis == null) return null
+  return (System.currentTimeMillis() - updatedAtMillis) / 60000
+}
+
 fun formatUpdatedAt(updatedAtMillis: Long?): String {
-  if (updatedAtMillis == null) return "Not yet updated"
-  val ageMinutes = (System.currentTimeMillis() - updatedAtMillis) / 60000
+  val ageMinutes = ageMinutesSince(updatedAtMillis) ?: return "Not yet updated"
   return when {
     ageMinutes < 1 -> "Updated just now"
-    ageMinutes < 120 -> "Updated ${ageMinutes}m ago"
+    ageMinutes < STALE_THRESHOLD_MINUTES -> "Updated ${ageMinutes}m ago"
     else -> "Last updated ${ageMinutes / 60}h ago"
   }
 }
