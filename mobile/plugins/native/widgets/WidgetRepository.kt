@@ -1,0 +1,122 @@
+package __PACKAGE__.widgets
+
+import __PACKAGE__.widgetbridge.WidgetAuthPrefs
+import android.content.Context
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONArray
+import org.json.JSONObject
+import java.io.IOException
+
+private const val API_BASE_URL = "__API_BASE_URL__"
+
+sealed class WidgetDataResult<out T> {
+  data class Success<T>(val data: T) : WidgetDataResult<T>()
+  object AuthFailure : WidgetDataResult<Nothing>()
+  object NetworkError : WidgetDataResult<Nothing>()
+}
+
+data class TransactionSummary(
+  val id: Int,
+  val merchant: String,
+  val amount: Double,
+  val type: String,
+  val transactionDate: String
+)
+
+object WidgetRepository {
+  private val client = OkHttpClient()
+
+  suspend fun fetchTotalBalance(context: Context): WidgetDataResult<Double> {
+    return when (val result = authenticatedGet(context, "$API_BASE_URL/api/accounts")) {
+      is WidgetDataResult.Success -> {
+        val accounts = JSONArray(result.data)
+        var total = 0.0
+        for (i in 0 until accounts.length()) {
+          val account = accounts.getJSONObject(i)
+          if (account.optBoolean("isActive", true)) {
+            total += account.optString("balance", "0").toDoubleOrNull() ?: 0.0
+          }
+        }
+        WidgetDataResult.Success(total)
+      }
+      is WidgetDataResult.AuthFailure -> WidgetDataResult.AuthFailure
+      is WidgetDataResult.NetworkError -> WidgetDataResult.NetworkError
+    }
+  }
+
+  suspend fun fetchRecentTransactions(context: Context, limit: Int = 4): WidgetDataResult<List<TransactionSummary>> {
+    return when (val result = authenticatedGet(context, "$API_BASE_URL/api/transactions?limit=$limit")) {
+      is WidgetDataResult.Success -> {
+        val raw = JSONArray(result.data)
+        val transactions = mutableListOf<TransactionSummary>()
+        for (i in 0 until raw.length()) {
+          val tx = raw.getJSONObject(i)
+          transactions.add(
+            TransactionSummary(
+              id = tx.optInt("id", 0),
+              merchant = tx.optString("merchant").ifBlank { tx.optString("description", "Transaction") },
+              amount = tx.optString("amount", "0").toDoubleOrNull() ?: 0.0,
+              type = tx.optString("type", "debit"),
+              transactionDate = tx.optString("transactionDate", "")
+            )
+          )
+        }
+        WidgetDataResult.Success(transactions)
+      }
+      is WidgetDataResult.AuthFailure -> WidgetDataResult.AuthFailure
+      is WidgetDataResult.NetworkError -> WidgetDataResult.NetworkError
+    }
+  }
+
+  private fun authenticatedGet(context: Context, url: String): WidgetDataResult<String> {
+    val accessToken = WidgetAuthPrefs.getAccessToken(context) ?: return WidgetDataResult.AuthFailure
+
+    val first = executeGet(url, accessToken) ?: return WidgetDataResult.NetworkError
+    if (first.first == 401) {
+      val refreshed = refreshAccessToken(context) ?: return WidgetDataResult.AuthFailure
+      val second = executeGet(url, refreshed) ?: return WidgetDataResult.NetworkError
+      return if (second.first in 200..299) WidgetDataResult.Success(second.second) else WidgetDataResult.AuthFailure
+    }
+    return if (first.first in 200..299) WidgetDataResult.Success(first.second) else WidgetDataResult.NetworkError
+  }
+
+  private fun executeGet(url: String, accessToken: String): Pair<Int, String>? {
+    return try {
+      val request = Request.Builder()
+        .url(url)
+        .header("Authorization", "Bearer $accessToken")
+        .get()
+        .build()
+      client.newCall(request).execute().use { response ->
+        Pair(response.code, response.body?.string() ?: "")
+      }
+    } catch (e: IOException) {
+      null
+    }
+  }
+
+  private fun refreshAccessToken(context: Context): String? {
+    val refreshToken = WidgetAuthPrefs.getRefreshToken(context) ?: return null
+    return try {
+      val body = JSONObject().put("refreshToken", refreshToken).toString()
+        .toRequestBody("application/json".toMediaTypeOrNull())
+      val request = Request.Builder()
+        .url("$API_BASE_URL/api/auth/refresh-token")
+        .post(body)
+        .build()
+      client.newCall(request).execute().use { response ->
+        if (!response.isSuccessful) return null
+        val responseBody = response.body?.string() ?: return null
+        val newAccessToken = JSONObject(responseBody).optString("accessToken", "")
+        if (newAccessToken.isBlank()) return null
+        WidgetAuthPrefs.setAccessToken(context, newAccessToken)
+        newAccessToken
+      }
+    } catch (e: IOException) {
+      null
+    }
+  }
+}
