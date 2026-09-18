@@ -73,7 +73,7 @@ export default function AddTransactionScreen() {
   // Load transaction data for edit mode
   React.useEffect(() => {
     if (isEditMode && transactions) {
-      const transaction = transactions.find((t: any) => t.id === transactionId);
+      const transaction = transactions.find((t: any) => t.id === Number(transactionId));
       if (transaction) {
         setType(transaction.type as 'debit' | 'credit' | 'transfer');
         setAmount(transaction.amount);

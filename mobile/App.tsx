@@ -379,7 +379,17 @@ function MainApp() {
   const { resolvedTheme } = useTheme();
   const { isLocked, isLoading, isAuthenticated, hasPassword } = useAuth();
   const colors = getThemedColors(resolvedTheme);
-  
+
+  const linking = {
+    prefixes: ['com.mytracker.finance://'],
+    config: {
+      screens: {
+        Main: '',
+        AddTransaction: 'transaction/:transactionId',
+      },
+    },
+  };
+
   const navigationTheme = resolvedTheme === 'dark' ? {
     ...DarkTheme,
     colors: {
@@ -449,7 +459,7 @@ function MainApp() {
 
   // Show main app if authenticated and unlocked
   return (
-    <NavigationContainer theme={navigationTheme}>
+    <NavigationContainer theme={navigationTheme} linking={linking}>
       <RootStack.Navigator
         screenOptions={{
           headerStyle: {
