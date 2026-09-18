@@ -1,0 +1,16 @@
+-- Merging decision tree log ---
+manifest
+ADDED from /home/kgd122/personal/FinanceTracker/mobile/modules/notification-listener-bridge/android/build/intermediates/tmp/ProcessLibraryManifest/release/tempAndroidManifest8519996715267967411.xml:2:13-83
+INJECTED from /home/kgd122/personal/FinanceTracker/mobile/modules/notification-listener-bridge/android/build/intermediates/tmp/ProcessLibraryManifest/release/tempAndroidManifest8519996715267967411.xml:2:13-83
+	package
+		INJECTED from /home/kgd122/personal/FinanceTracker/mobile/modules/notification-listener-bridge/android/build/intermediates/tmp/ProcessLibraryManifest/release/tempAndroidManifest8519996715267967411.xml
+	xmlns:android
+		ADDED from /home/kgd122/personal/FinanceTracker/mobile/modules/notification-listener-bridge/android/build/intermediates/tmp/ProcessLibraryManifest/release/tempAndroidManifest8519996715267967411.xml:2:23-81
+uses-sdk
+INJECTED from /home/kgd122/personal/FinanceTracker/mobile/modules/notification-listener-bridge/android/build/intermediates/tmp/ProcessLibraryManifest/release/tempAndroidManifest8519996715267967411.xml reason: use-sdk injection requested
+INJECTED from /home/kgd122/personal/FinanceTracker/mobile/modules/notification-listener-bridge/android/build/intermediates/tmp/ProcessLibraryManifest/release/tempAndroidManifest8519996715267967411.xml
+INJECTED from /home/kgd122/personal/FinanceTracker/mobile/modules/notification-listener-bridge/android/build/intermediates/tmp/ProcessLibraryManifest/release/tempAndroidManifest8519996715267967411.xml
+	android:targetSdkVersion
+		INJECTED from /home/kgd122/personal/FinanceTracker/mobile/modules/notification-listener-bridge/android/build/intermediates/tmp/ProcessLibraryManifest/release/tempAndroidManifest8519996715267967411.xml
+	android:minSdkVersion
+		INJECTED from /home/kgd122/personal/FinanceTracker/mobile/modules/notification-listener-bridge/android/build/intermediates/tmp/ProcessLibraryManifest/release/tempAndroidManifest8519996715267967411.xml

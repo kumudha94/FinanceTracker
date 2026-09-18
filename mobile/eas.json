@@ -14,7 +14,7 @@
         "buildType": "apk"
       },
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://financetracker-ckvf.onrender.com",
+        "EXPO_PUBLIC_API_URL": "https://financetracker-1007727544388.asia-south1.run.app",
         "EXPO_PUBLIC_TASKER_API_KEY": "FT-sms-2026-myTracker"
       }
     },
@@ -24,7 +24,7 @@
         "buildType": "app-bundle"
       },
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://financetracker-ckvf.onrender.com",
+        "EXPO_PUBLIC_API_URL": "https://financetracker-1007727544388.asia-south1.run.app",
         "EXPO_PUBLIC_TASKER_API_KEY": "FT-sms-2026-myTracker"
       }
     }
