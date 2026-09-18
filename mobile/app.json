@@ -42,6 +42,7 @@
     "plugins": [
       "./plugins/withSmsReceiver.js",
       "./plugins/withNotificationListener.js",
+      "./plugins/withWidgets.js",
       [
         "expo-notifications",
         {
