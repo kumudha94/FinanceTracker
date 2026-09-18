@@ -24,7 +24,7 @@
         "backgroundColor": "#16a34a"
       },
       "package": "com.mytracker.finance",
-      "versionCode": 20,
+      "versionCode": 21,
       "permissions": [
         "INTERNET",
         "READ_EXTERNAL_STORAGE",
