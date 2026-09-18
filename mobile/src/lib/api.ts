@@ -13,6 +13,7 @@ import type {
 } from './types';
 import NetInfo from '@react-native-community/netinfo';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { syncWidgetAuth, syncWidgetAccessToken, clearWidgetAuth } from '../../modules/widget-bridge';
 
 export const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:5000';
 console.log('API_BASE_URL', API_BASE_URL);
@@ -67,6 +68,7 @@ export async function storeTokens(accessToken: string, refreshToken: string): Pr
       [STORAGE_KEYS.ACCESS_TOKEN, accessToken],
       [STORAGE_KEYS.REFRESH_TOKEN, refreshToken],
     ]);
+    await syncWidgetAuth(accessToken, refreshToken);
   } catch (error) {
     console.error('Failed to store tokens:', error);
   }
@@ -78,6 +80,7 @@ export async function storeTokens(accessToken: string, refreshToken: string): Pr
 export async function storeToken(token: string): Promise<void> {
   try {
     await AsyncStorage.setItem(STORAGE_KEYS.ACCESS_TOKEN, token);
+    await syncWidgetAccessToken(token);
   } catch (error) {
     console.error('Failed to store token:', error);
   }
@@ -89,6 +92,7 @@ export async function storeToken(token: string): Promise<void> {
 export async function clearTokens(): Promise<void> {
   try {
     await AsyncStorage.multiRemove([STORAGE_KEYS.ACCESS_TOKEN, STORAGE_KEYS.REFRESH_TOKEN]);
+    await clearWidgetAuth();
   } catch (error) {
     console.error('Failed to clear tokens:', error);
   }
@@ -121,6 +125,7 @@ async function refreshAccessToken(): Promise<string | null> {
     const data = await response.json();
     if (data.accessToken) {
       await AsyncStorage.setItem(STORAGE_KEYS.ACCESS_TOKEN, data.accessToken);
+      await syncWidgetAccessToken(data.accessToken);
       return data.accessToken;
     }
 
