@@ -91,7 +91,7 @@ function withWidgetsAppBuildGradle(config) {
     if (!config.modResults.contents.includes('compose true')) {
       config.modResults.contents = config.modResults.contents.replace(
         /android\s*\{/,
-        `android {\n    buildFeatures {\n        compose true\n    }\n    composeOptions {\n        kotlinCompilerExtensionVersion "1.4.3"\n    }`
+        `android {\n    buildFeatures {\n        compose true\n    }\n    composeOptions {\n        kotlinCompilerExtensionVersion "1.4.0"\n    }`
       );
     }
 
