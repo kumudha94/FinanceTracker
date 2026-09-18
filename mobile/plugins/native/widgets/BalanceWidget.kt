@@ -44,8 +44,13 @@ class BalanceWidget : GlanceAppWidget() {
           .clickable(actionStartActivity(openAppIntent))
       ) {
         when {
-          // A value was successfully fetched at some point: always show it, even if the
-          // most recent refresh failed (error == "network"/"auth"). A transient failure
+          // An auth failure must always win, even over cached data: the refresh token is
+          // invalid (logged out / password changed elsewhere), so the cached balance can
+          // never be refreshed and showing it would be misleading. Only a transient
+          // "network" error should be allowed to fall behind the cached-data check below.
+          error == "auth" -> Text("Open app to sign in")
+          // A value was successfully fetched at some point: always show it if the most
+          // recent refresh failed with a transient "network" error. A transient failure
           // should surface as staleness on a value the user can still see, not wipe it.
           total != null -> {
             val isStale = (ageMinutesSince(updatedAt) ?: 0) >= STALE_THRESHOLD_MINUTES
@@ -66,7 +71,6 @@ class BalanceWidget : GlanceAppWidget() {
               Text(formatUpdatedAt(updatedAt), style = TextStyle(fontSize = 11.sp))
             }
           }
-          error == "auth" -> Text("Open app to sign in")
           else -> Text("Unable to load balance")
         }
       }

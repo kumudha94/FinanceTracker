@@ -41,9 +41,14 @@ class RecentTransactionsWidget : GlanceAppWidget() {
 
       Column(modifier = GlanceModifier.fillMaxSize().padding(8.dp)) {
         when {
-          // Cached data was successfully fetched at some point: always show it, even if
-          // the most recent refresh failed (error == "network"/"auth"), so a transient
-          // failure doesn't wipe a list the user can still see.
+          // An auth failure must always win, even over cached data: the refresh token is
+          // invalid (logged out / password changed elsewhere), so the cached list can
+          // never be refreshed and showing it would be misleading. Only a transient
+          // "network" error should be allowed to fall behind the cached-data check below.
+          error == "auth" -> Text("Open app to sign in", modifier = GlanceModifier.clickable(actionStartActivity(openAppIntent)))
+          // Cached data was successfully fetched at some point: always show it if the most
+          // recent refresh failed with a transient "network" error, so a transient failure
+          // doesn't wipe a list the user can still see.
           json != null -> {
             val rows = runCatching { parseTransactions(json) }.getOrElse { emptyList() }
             if (rows.isEmpty()) {
@@ -67,7 +72,6 @@ class RecentTransactionsWidget : GlanceAppWidget() {
               }
             }
           }
-          error == "auth" -> Text("Open app to sign in", modifier = GlanceModifier.clickable(actionStartActivity(openAppIntent)))
           else -> Text("Unable to load transactions", modifier = GlanceModifier.clickable(actionStartActivity(openAppIntent)))
         }
       }
