@@ -22,6 +22,7 @@ export default function TransactionsScreen() {
   const queryClient = useQueryClient();
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<'all' | 'credit' | 'debit' | 'transfer'>('all');
+  const [trackedOnly, setTrackedOnly] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<number | null>(null);
   const [selectedFromAccount, setSelectedFromAccount] = useState<number | null>(null);
   const [selectedToAccount, setSelectedToAccount] = useState<number | null>(null);
@@ -164,8 +165,9 @@ export default function TransactionsScreen() {
     const transactionDate = new Date(t.transactionDate);
     const matchesStartDate = !startDate || transactionDate >= startDate;
     const matchesEndDate = !endDate || transactionDate <= endDate;
-    
-    return matchesSearch && matchesFilter && matchesCategory && matchesFromAccount && matchesToAccount && matchesStartDate && matchesEndDate;
+    const matchesTracked = !trackedOnly || !!t.spendingTrackerEnabled;
+
+    return matchesSearch && matchesFilter && matchesCategory && matchesFromAccount && matchesToAccount && matchesStartDate && matchesEndDate && matchesTracked;
   }) || []).sort((a, b) => 
     new Date(b.transactionDate).getTime() - new Date(a.transactionDate).getTime()
   );
@@ -231,12 +233,23 @@ export default function TransactionsScreen() {
           </Text>
           <Text style={[styles.transactionDate, { color: colors.textMuted }]}>{formatDate(transaction.transactionDate)}</Text>
         </View>
-        <Text style={[
-          styles.transactionAmount,
-          { color: transaction.type === 'credit' ? colors.primary : colors.danger }
-        ]}>
-          {transaction.type === 'credit' ? '+' : '-'}{formatCurrency(transaction.amount)}
-        </Text>
+        <View style={styles.amountColumn}>
+          <Text style={[
+            styles.transactionAmount,
+            { color: transaction.type === 'credit' ? colors.primary : colors.danger }
+          ]}>
+            {transaction.type === 'credit' ? '+' : '-'}{formatCurrency(transaction.amount)}
+          </Text>
+          {transaction.spendingTrackerEnabled && (() => {
+            const left = parseFloat(transaction.amount) - parseFloat(transaction.spendingAllocated ?? '0');
+            return (
+              <View style={styles.trackedBadge}>
+                <Ionicons name="pie-chart-outline" size={12} color={colors.textMuted} />
+                <Text style={[styles.trackedBadgeText, { color: colors.textMuted }]}>{formatCurrency(left)} left</Text>
+              </View>
+            );
+          })()}
+        </View>
         {showActionButtons && (
           <View style={styles.webActions}>
             <TouchableOpacity 
@@ -414,6 +427,18 @@ export default function TransactionsScreen() {
                   <Ionicons name="close-circle" size={18} color={colors.textMuted} />
                 </TouchableOpacity>
               )}
+            </TouchableOpacity>
+          </View>
+
+          {/* Spending Tracked filter */}
+          <View style={styles.dateFilterContainer}>
+            <TouchableOpacity
+              style={[styles.dateFilterButton, { backgroundColor: trackedOnly ? colors.primary + '20' : colors.card, borderColor: trackedOnly ? colors.primary : colors.border }]}
+              onPress={() => setTrackedOnly(v => !v)}
+            >
+              <Ionicons name="pie-chart-outline" size={18} color={trackedOnly ? colors.primary : colors.textMuted} />
+              <Text style={[styles.dateFilterText, { color: trackedOnly ? colors.text : colors.textMuted }]}>Spending Tracked only</Text>
+              {trackedOnly && <Ionicons name="checkmark-circle" size={18} color={colors.primary} />}
             </TouchableOpacity>
           </View>
         </View>
@@ -900,6 +925,18 @@ const styles = StyleSheet.create({
   transactionAmount: {
     fontSize: 16,
     fontWeight: '700',
+  },
+  amountColumn: {
+    alignItems: 'flex-end',
+  },
+  trackedBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    marginTop: 2,
+  },
+  trackedBadgeText: {
+    fontSize: 11,
   },
   webActions: {
     flexDirection: 'row',
