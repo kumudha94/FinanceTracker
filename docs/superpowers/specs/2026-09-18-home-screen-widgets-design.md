@@ -89,3 +89,12 @@ On-device feedback: the phase 1 widgets were unstyled text drawn straight on the
 - **Merchant fallback fix:** `org.json`'s `optString` returns the string `"null"` for JSON null, so it never fell back to `description`. Now merchant → description → "Transaction".
 - **Shared styling (`WidgetUi.kt`):** rounded card, app palette from `mobile/src/lib/utils.ts`, day/night via Glance `ColorProvider(day, night)`. Staleness (>2h) now turns the header's "Last updated" red/bold.
 - **Widget picker:** receivers get `android:label` and the info XMLs a `android:description` string resource.
+
+## Phase 1.2 — Credit cards and Top spending widgets (2026-09-28)
+
+Mirrors the Dashboard's "Credit Cards" and "Top Spending" cards. Both widgets read one shared `GET /api/dashboard-summary` fetch (`KEY_SPENDING_*` prefs), so they always agree with the Dashboard:
+
+- **Credit cards (4x2):** per active card, spend in the current billing cycle vs `monthlySpendingLimit`, with a progress bar (amber ≥80%, red ≥100%); "no limit set" when there's no limit.
+- **Top spending (4x2):** top 5 debit categories for the current salary cycle, with category-coloured dot, amount, share %, bar, and "Spent this cycle" total.
+
+Verified on the Android emulator (Pixel, API 36) in light and dark mode against live data.

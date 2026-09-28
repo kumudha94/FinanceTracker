@@ -17,6 +17,20 @@ const RECEIVERS = [
     descriptionKey: 'recent_transactions_widget_description',
     description: 'Your latest 4 transactions',
   },
+  {
+    className: 'CreditCardsWidgetReceiver',
+    infoXml: 'credit_cards_widget_info',
+    label: 'Credit cards',
+    descriptionKey: 'credit_cards_widget_description',
+    description: 'Spend this billing cycle against each card limit',
+  },
+  {
+    className: 'TopSpendingWidgetReceiver',
+    infoXml: 'top_spending_widget_info',
+    label: 'Top spending',
+    descriptionKey: 'top_spending_widget_description',
+    description: 'Your top spending categories this cycle',
+  },
 ];
 
 function withWidgetsManifest(config) {
@@ -91,7 +105,14 @@ function withWidgetsNativeFiles(config) {
       }
 
       const nativeSrcDir = path.join(__dirname, 'native', 'widgets');
-      const kotlinFiles = ['WidgetUi.kt', 'WidgetRepository.kt', 'WidgetUpdateWorker.kt', 'BalanceWidget.kt', 'RecentTransactionsWidget.kt'];
+      const kotlinFiles = [
+        'WidgetUi.kt',
+        'WidgetRepository.kt',
+        'WidgetUpdateWorker.kt',
+        'BalanceWidget.kt',
+        'RecentTransactionsWidget.kt',
+        'SpendingWidgets.kt',
+      ];
       for (const fileName of kotlinFiles) {
         let source = fs.readFileSync(path.join(nativeSrcDir, fileName), 'utf8');
         source = source
@@ -104,7 +125,8 @@ function withWidgetsNativeFiles(config) {
       const resXmlDir = path.join(config.modRequest.platformProjectRoot, 'app', 'src', 'main', 'res', 'xml');
       fs.mkdirSync(resXmlDir, { recursive: true });
       const resSrcDir = path.join(nativeSrcDir, 'res-xml');
-      for (const fileName of ['balance_widget_info.xml', 'recent_transactions_widget_info.xml']) {
+      for (const { infoXml } of RECEIVERS) {
+        const fileName = `${infoXml}.xml`;
         fs.copyFileSync(path.join(resSrcDir, fileName), path.join(resXmlDir, fileName));
       }
 

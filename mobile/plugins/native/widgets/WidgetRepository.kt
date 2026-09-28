@@ -31,6 +31,13 @@ data class AccountBalance(val name: String, val balance: Double)
 
 data class BankBalanceSummary(val total: Double, val accounts: List<AccountBalance>)
 
+data class CategorySpend(val name: String, val total: Double, val color: String)
+
+data class CardSpend(val name: String, val bankName: String, val spent: Double, val limit: Double?, val percentage: Int)
+
+/** The Top Spending and Credit Cards blocks of the Dashboard, from /api/dashboard-summary. */
+data class DashboardSpending(val totalSpent: Double, val topCategories: List<CategorySpend>, val creditCards: List<CardSpend>)
+
 object WidgetRepository {
   private val client = OkHttpClient()
 
@@ -54,6 +61,41 @@ object WidgetRepository {
             if (balance != 0.0) rows.add(AccountBalance(optText(account, "name") ?: "Account", balance))
           }
           WidgetDataResult.Success(BankBalanceSummary(total, rows))
+        } catch (e: JSONException) {
+          WidgetDataResult.NetworkError
+        }
+      }
+      is WidgetDataResult.AuthFailure -> WidgetDataResult.AuthFailure
+      is WidgetDataResult.NetworkError -> WidgetDataResult.NetworkError
+    }
+  }
+
+  suspend fun fetchDashboardSpending(context: Context): WidgetDataResult<DashboardSpending> {
+    return when (val result = authenticatedGet(context, "$API_BASE_URL/api/dashboard-summary")) {
+      is WidgetDataResult.Success -> {
+        try {
+          val summary = JSONObject(result.data)
+          val categories = summary.optJSONArray("topCategories") ?: JSONArray()
+          val cards = summary.optJSONArray("creditCardSpending") ?: JSONArray()
+          WidgetDataResult.Success(
+            DashboardSpending(
+              totalSpent = summary.optDouble("totalSpent", 0.0),
+              topCategories = (0 until categories.length()).map { i ->
+                val c = categories.getJSONObject(i)
+                CategorySpend(optText(c, "name") ?: "Other", c.optDouble("total", 0.0), optText(c, "color") ?: "#9E9E9E")
+              },
+              creditCards = (0 until cards.length()).map { i ->
+                val c = cards.getJSONObject(i)
+                CardSpend(
+                  name = optText(c, "accountName") ?: "Card",
+                  bankName = optText(c, "bankName") ?: "",
+                  spent = c.optDouble("spent", 0.0),
+                  limit = if (c.isNull("limit")) null else c.optDouble("limit"),
+                  percentage = c.optInt("percentage", 0)
+                )
+              }
+            )
+          )
         } catch (e: JSONException) {
           WidgetDataResult.NetworkError
         }

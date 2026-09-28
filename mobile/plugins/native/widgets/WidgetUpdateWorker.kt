@@ -26,14 +26,20 @@ val KEY_TRANSACTIONS_JSON = stringPreferencesKey("transactions_json")
 val KEY_TRANSACTIONS_ERROR = stringPreferencesKey("transactions_error")
 val KEY_TRANSACTIONS_UPDATED_AT = stringPreferencesKey("transactions_updated_at")
 
+// Shared by CreditCardsWidget and TopSpendingWidget: both read the same dashboard-summary fetch.
+val KEY_SPENDING_JSON = stringPreferencesKey("spending_json")
+val KEY_SPENDING_UPDATED_AT = stringPreferencesKey("spending_updated_at")
+val KEY_SPENDING_ERROR = stringPreferencesKey("spending_error")
+
 class WidgetUpdateWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
   override suspend fun doWork(): Result {
     val balanceHadNetworkError = updateBalanceWidget(applicationContext)
     val transactionsHadNetworkError = updateRecentTransactionsWidget(applicationContext)
+    val spendingHadNetworkError = updateSpendingWidgets(applicationContext)
     // Retry with WorkManager's backoff on a transient network failure instead of waiting
     // for the next 30-minute cycle. AuthFailure isn't retried here - the user needs to
     // open the app to sign in again, retrying won't help.
-    return if (balanceHadNetworkError || transactionsHadNetworkError) Result.retry() else Result.success()
+    return if (balanceHadNetworkError || transactionsHadNetworkError || spendingHadNetworkError) Result.retry() else Result.success()
   }
 
   /** Returns true if this fetch failed with a [WidgetDataResult.NetworkError]. */
@@ -97,6 +103,46 @@ class WidgetUpdateWorker(context: Context, params: WorkerParameters) : Coroutine
     RecentTransactionsWidget().updateAll(context)
     return result is WidgetDataResult.NetworkError
   }
+}
+
+/** Returns true if this fetch failed with a [WidgetDataResult.NetworkError]. */
+private suspend fun updateSpendingWidgets(context: Context): Boolean {
+  val manager = GlanceAppWidgetManager(context)
+  val glanceIds = manager.getGlanceIds(CreditCardsWidget::class.java) + manager.getGlanceIds(TopSpendingWidget::class.java)
+  if (glanceIds.isEmpty()) return false
+
+  val result = WidgetRepository.fetchDashboardSpending(context)
+  for (glanceId in glanceIds) {
+    updateAppWidgetState(context, glanceId) { prefs ->
+      when (result) {
+        is WidgetDataResult.Success -> {
+          val categories = JSONArray()
+          result.data.topCategories.forEach {
+            categories.put(JSONObject().put("name", it.name).put("total", it.total).put("color", it.color))
+          }
+          val cards = JSONArray()
+          result.data.creditCards.forEach {
+            cards.put(
+              JSONObject().put("name", it.name).put("bankName", it.bankName).put("spent", it.spent)
+                .put("limit", it.limit ?: JSONObject.NULL).put("percentage", it.percentage)
+            )
+          }
+          prefs[KEY_SPENDING_JSON] = JSONObject()
+            .put("totalSpent", result.data.totalSpent)
+            .put("topCategories", categories)
+            .put("creditCards", cards)
+            .toString()
+          prefs[KEY_SPENDING_UPDATED_AT] = System.currentTimeMillis().toString()
+          prefs.remove(KEY_SPENDING_ERROR)
+        }
+        is WidgetDataResult.AuthFailure -> prefs[KEY_SPENDING_ERROR] = "auth"
+        is WidgetDataResult.NetworkError -> prefs[KEY_SPENDING_ERROR] = "network"
+      }
+    }
+  }
+  CreditCardsWidget().updateAll(context)
+  TopSpendingWidget().updateAll(context)
+  return result is WidgetDataResult.NetworkError
 }
 
 fun schedulePeriodicWidgetUpdates(context: Context) {
