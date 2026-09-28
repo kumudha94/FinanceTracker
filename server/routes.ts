@@ -31,6 +31,7 @@ import multer from "multer";
 import { getPaydayForMonth, getNextPaydays, getPastPaydays, getCurrentCycleDates, getNextCycleDates, getCyclePrimaryMonth, findOccurrenceInCycle, getSpannedMonths, filterOccurrencesInCycle, getCreditCardBillingCycle, shouldAutoMarkSalaryCredit } from "./salaryUtils";
 import { getWeekBounds, getPreviousWeekBounds } from "./weekUtils";
 import { validateNewSpendingEntry } from "./loanSpendingValidation";
+import { validateTrackerToggle, resolveTrackerFlag, validateEntryWrite, validateAmountChange } from "./transactionSpendingValidation";
 import { generateOTP, storeOTP, verifyOTP, sendOTP } from "./emailService";
 import { generateTokenPair, generateAccessToken } from "./jwtService";
 import { authenticateToken } from "./authMiddleware";
@@ -1113,6 +1114,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const validatedData = insertTransactionSchema.partial().parse(req.body);
+
+      // Spending tracker rules: income only; switching a tracked transaction away from income
+      // turns tracking off (entries kept); amount can't drop below the allocated breakdown.
+      const newType = validatedData.type ?? transaction.type;
+      const toggleError = validateTrackerToggle(newType, validatedData.spendingTrackerEnabled);
+      if (toggleError) {
+        return res.status(400).json({ error: toggleError });
+      }
+      const trackerFlag = resolveTrackerFlag(newType, validatedData.spendingTrackerEnabled, transaction.spendingTrackerEnabled);
+      if (trackerFlag !== undefined) {
+        validatedData.spendingTrackerEnabled = trackerFlag;
+      }
+      const stillTracked = validatedData.spendingTrackerEnabled ?? transaction.spendingTrackerEnabled;
+      if (validatedData.amount !== undefined && stillTracked) {
+        const entries = await storage.getTransactionSpendingEntries(transactionId);
+        const amountError = validateAmountChange(parseFloat(validatedData.amount), entries);
+        if (amountError) {
+          return res.status(400).json({ error: amountError });
+        }
+      }
+
       const updated = await storage.updateTransaction(transactionId, validatedData);
       res.json(updated);
     } catch (error: any) {
@@ -1172,6 +1194,110 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
     } catch (error) {
       res.status(500).json({ error: "Failed to delete transaction" });
+    }
+  });
+
+  // ========== Transaction Spending Entries ==========
+  // How a lump-sum income transaction was spent — mirrors the loan spending-entry routes.
+
+  const loadOwnedTransaction = async (userId: number, idParam: string) => {
+    const transaction = await storage.getTransaction(parseInt(idParam));
+    return transaction && transaction.userId === userId ? transaction : null;
+  };
+
+  app.get("/api/transactions/:id/spending-entries", authenticateToken, async (req, res) => {
+    try {
+      const transaction = await loadOwnedTransaction(req.user!.userId, req.params.id);
+      if (!transaction) {
+        return res.status(404).json({ error: "Transaction not found" });
+      }
+      const entries = await storage.getTransactionSpendingEntries(transaction.id);
+      res.json(entries);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch spending entries" });
+    }
+  });
+
+  app.post("/api/transactions/:id/spending-entries", authenticateToken, async (req, res) => {
+    try {
+      const transaction = await loadOwnedTransaction(req.user!.userId, req.params.id);
+      if (!transaction) {
+        return res.status(404).json({ error: "Transaction not found" });
+      }
+      const writeError = validateEntryWrite(transaction);
+      if (writeError) {
+        return res.status(400).json({ error: writeError });
+      }
+
+      const { amount, reason } = req.body;
+      const existingEntries = await storage.getTransactionSpendingEntries(transaction.id);
+      const validationError = validateNewSpendingEntry(transaction.amount, existingEntries, parseFloat(amount));
+      if (validationError) {
+        return res.status(400).json({ error: validationError });
+      }
+
+      const entry = await storage.createTransactionSpendingEntry({ transactionId: transaction.id, amount, reason: reason || null });
+      res.status(201).json(entry);
+    } catch (error: any) {
+      res.status(400).json({ error: error.message || "Invalid spending entry data" });
+    }
+  });
+
+  app.patch("/api/transactions/:id/spending-entries/:entryId", authenticateToken, async (req, res) => {
+    try {
+      const transaction = await loadOwnedTransaction(req.user!.userId, req.params.id);
+      if (!transaction) {
+        return res.status(404).json({ error: "Transaction not found" });
+      }
+      const writeError = validateEntryWrite(transaction);
+      if (writeError) {
+        return res.status(400).json({ error: writeError });
+      }
+
+      const entryId = parseInt(req.params.entryId);
+      const entries = await storage.getTransactionSpendingEntries(transaction.id);
+      if (!entries.some(e => e.id === entryId)) {
+        return res.status(404).json({ error: "Spending entry not found" });
+      }
+
+      const { amount, reason } = req.body;
+      if (amount !== undefined) {
+        // Re-validate against the other entries only, so this entry's old amount isn't double-counted.
+        const siblings = entries.filter(e => e.id !== entryId);
+        const validationError = validateNewSpendingEntry(transaction.amount, siblings, parseFloat(amount));
+        if (validationError) {
+          return res.status(400).json({ error: validationError });
+        }
+      }
+
+      const updated = await storage.updateTransactionSpendingEntry(entryId, {
+        ...(amount !== undefined ? { amount } : {}),
+        ...(reason !== undefined ? { reason: reason || null } : {}),
+      });
+      if (!updated) {
+        return res.status(404).json({ error: "Spending entry not found" });
+      }
+      res.json(updated);
+    } catch (error: any) {
+      res.status(400).json({ error: error.message || "Invalid spending entry data" });
+    }
+  });
+
+  app.delete("/api/transactions/:id/spending-entries/:entryId", authenticateToken, async (req, res) => {
+    try {
+      const transaction = await loadOwnedTransaction(req.user!.userId, req.params.id);
+      if (!transaction) {
+        return res.status(404).json({ error: "Transaction not found" });
+      }
+      const entryId = parseInt(req.params.entryId);
+      const entries = await storage.getTransactionSpendingEntries(transaction.id);
+      if (!entries.some(e => e.id === entryId)) {
+        return res.status(404).json({ error: "Spending entry not found" });
+      }
+      await storage.deleteTransactionSpendingEntry(entryId);
+      res.status(204).send();
+    } catch (error) {
+      res.status(500).json({ error: "Failed to delete spending entry" });
     }
   });
 
