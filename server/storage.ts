@@ -1,7 +1,7 @@
 import { 
   users, accounts, categories, transactions, budgets, scheduledPayments, smsLogs,
   paymentOccurrences, savingsGoals, savingsContributions, salaryProfiles, salaryCycles,
-  loans, loanComponents, loanInstallments, loanSpendingEntries, loanTerms, loanPayments, loanBtAllocations, cardDetails,
+  loans, loanComponents, loanInstallments, loanSpendingEntries, loanTerms, loanPayments, loanBtAllocations, cardDetails, transactionSpendingEntries,
   insurances, insurancePremiums, creditCardStatements, senderInstitutionMappings, billSenderMappings,
   forecastExclusions, smsPaymentMatchReviews, smsPaymentMatchCandidates, plannedIncomeEntries,
   type User, type InsertUser,
@@ -19,6 +19,7 @@ import {
   type LoanComponent, type InsertLoanComponent,
   type LoanInstallment, type InsertLoanInstallment,
   type LoanSpendingEntry, type InsertLoanSpendingEntry,
+  type TransactionSpendingEntry, type InsertTransactionSpendingEntry,
   type LoanTerm, type InsertLoanTerm,
   type LoanPayment, type InsertLoanPayment,
   type LoanBtAllocation, type InsertLoanBtAllocation,
@@ -241,6 +242,12 @@ export interface IStorage {
   createLoanSpendingEntry(entry: InsertLoanSpendingEntry): Promise<LoanSpendingEntry>;
   updateLoanSpendingEntry(id: number, data: { amount?: string; reason?: string | null }): Promise<LoanSpendingEntry | undefined>;
   deleteLoanSpendingEntry(id: number): Promise<boolean>;
+
+  // Transaction Spending Entries
+  getTransactionSpendingEntries(transactionId: number): Promise<TransactionSpendingEntry[]>;
+  createTransactionSpendingEntry(entry: InsertTransactionSpendingEntry): Promise<TransactionSpendingEntry>;
+  updateTransactionSpendingEntry(id: number, data: { amount?: string; reason?: string | null }): Promise<TransactionSpendingEntry | undefined>;
+  deleteTransactionSpendingEntry(id: number): Promise<boolean>;
 
   // Card Details
   getCardDetails(accountId: number): Promise<CardDetails | undefined>;
@@ -592,6 +599,7 @@ export class DatabaseStorage implements IStorage {
       isRecurring: transactions.isRecurring,
       savingsContributionId: transactions.savingsContributionId,
       paymentOccurrenceId: transactions.paymentOccurrenceId,
+      spendingTrackerEnabled: transactions.spendingTrackerEnabled,
       createdAt: transactions.createdAt,
       account: accounts,
       toAccount: toAccountAlias,
@@ -638,8 +646,25 @@ export class DatabaseStorage implements IStorage {
       query = query.limit(filters.limit);
     }
 
-    const results = await query;
-    return results as TransactionWithRelations[];
+    const results = await query as TransactionWithRelations[];
+
+    // One grouped query for all tracked rows (no N+1) so the list can show "₹X left".
+    const trackedIds = results.filter(r => r.spendingTrackerEnabled).map(r => r.id);
+    const allocatedById = new Map<number, string>();
+    if (trackedIds.length > 0) {
+      const rows = await db.select({
+        transactionId: transactionSpendingEntries.transactionId,
+        total: sql<string>`COALESCE(SUM(${transactionSpendingEntries.amount}), 0)`,
+      })
+        .from(transactionSpendingEntries)
+        .where(inArray(transactionSpendingEntries.transactionId, trackedIds))
+        .groupBy(transactionSpendingEntries.transactionId);
+      for (const row of rows) allocatedById.set(row.transactionId, String(row.total));
+    }
+    return results.map(r => ({
+      ...r,
+      spendingAllocated: r.spendingTrackerEnabled ? (allocatedById.get(r.id) ?? "0") : null,
+    }));
   }
 
   async getTransaction(id: number): Promise<TransactionWithRelations | undefined> {
@@ -661,6 +686,7 @@ export class DatabaseStorage implements IStorage {
       isRecurring: transactions.isRecurring,
       savingsContributionId: transactions.savingsContributionId,
       paymentOccurrenceId: transactions.paymentOccurrenceId,
+      spendingTrackerEnabled: transactions.spendingTrackerEnabled,
       createdAt: transactions.createdAt,
       account: accounts,
       toAccount: toAccountAlias,
@@ -2624,6 +2650,30 @@ export class DatabaseStorage implements IStorage {
 
   async deleteLoanSpendingEntry(id: number): Promise<boolean> {
     const result = await db.delete(loanSpendingEntries).where(eq(loanSpendingEntries.id, id)).returning();
+    return result.length > 0;
+  }
+
+  async getTransactionSpendingEntries(transactionId: number): Promise<TransactionSpendingEntry[]> {
+    return db.select().from(transactionSpendingEntries)
+      .where(eq(transactionSpendingEntries.transactionId, transactionId))
+      .orderBy(desc(transactionSpendingEntries.createdAt));
+  }
+
+  async createTransactionSpendingEntry(entry: InsertTransactionSpendingEntry): Promise<TransactionSpendingEntry> {
+    const [newEntry] = await db.insert(transactionSpendingEntries).values(entry).returning();
+    return newEntry;
+  }
+
+  async updateTransactionSpendingEntry(id: number, data: { amount?: string; reason?: string | null }): Promise<TransactionSpendingEntry | undefined> {
+    const [updated] = await db.update(transactionSpendingEntries)
+      .set(data)
+      .where(eq(transactionSpendingEntries.id, id))
+      .returning();
+    return updated || undefined;
+  }
+
+  async deleteTransactionSpendingEntry(id: number): Promise<boolean> {
+    const result = await db.delete(transactionSpendingEntries).where(eq(transactionSpendingEntries.id, id)).returning();
     return result.length > 0;
   }
 

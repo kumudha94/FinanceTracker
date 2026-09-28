@@ -130,6 +130,7 @@ export const transactions = pgTable("transactions", {
   isRecurring: boolean("is_recurring").default(false),
   savingsContributionId: integer("savings_contribution_id"), // Link to savings contribution if this is a contribution transaction
   paymentOccurrenceId: integer("payment_occurrence_id"), // Link to scheduled payment occurrence if this is a scheduled payment transaction
+  spendingTrackerEnabled: boolean("spending_tracker_enabled").notNull().default(false), // user tracks how this income was spent (transaction_spending_entries)
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
@@ -826,6 +827,32 @@ export const insertLoanSpendingEntrySchema = createInsertSchema(loanSpendingEntr
 export type InsertLoanSpendingEntry = z.infer<typeof insertLoanSpendingEntrySchema>;
 export type LoanSpendingEntry = typeof loanSpendingEntries.$inferSelect;
 
+// Transaction Spending Entries (how a lump-sum income transaction — PF advance, ITR refund — was
+// actually spent; pure record-keeping, no account-balance link). Cascade so every transaction
+// delete path (single delete, account delete) cleans these up.
+export const transactionSpendingEntries = pgTable("transaction_spending_entries", {
+  id: serial("id").primaryKey(),
+  transactionId: integer("transaction_id").references(() => transactions.id, { onDelete: "cascade" }).notNull(),
+  amount: decimal("amount", { precision: 14, scale: 2 }).notNull(),
+  reason: text("reason"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const transactionSpendingEntriesRelations = relations(transactionSpendingEntries, ({ one }) => ({
+  transaction: one(transactions, { fields: [transactionSpendingEntries.transactionId], references: [transactions.id] }),
+}));
+
+export const insertTransactionSpendingEntrySchema = createInsertSchema(transactionSpendingEntries).omit({
+  id: true,
+  createdAt: true,
+}).extend({
+  amount: z.string().min(1, "Amount is required"),
+  reason: z.string().optional(),
+});
+
+export type InsertTransactionSpendingEntry = z.infer<typeof insertTransactionSpendingEntrySchema>;
+export type TransactionSpendingEntry = typeof transactionSpendingEntries.$inferSelect;
+
 // Card Details (encrypted storage for debit/credit cards)
 export const cardDetails = pgTable("card_details", {
   id: serial("id").primaryKey(),
@@ -1252,6 +1279,7 @@ export type TransactionWithRelations = Transaction & {
   account?: Account | null;
   toAccount?: Account | null;
   category?: Category | null;
+  spendingAllocated?: string | null; // sum of spending entries when spendingTrackerEnabled, else null
 };
 
 // Extended loan type with relations
