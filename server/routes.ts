@@ -1126,8 +1126,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (trackerFlag !== undefined) {
         validatedData.spendingTrackerEnabled = trackerFlag;
       }
-      const stillTracked = validatedData.spendingTrackerEnabled ?? transaction.spendingTrackerEnabled;
-      if (validatedData.amount !== undefined && stillTracked) {
+      if (validatedData.amount !== undefined) {
         const entries = await storage.getTransactionSpendingEntries(transactionId);
         const amountError = validateAmountChange(parseFloat(validatedData.amount), entries);
         if (amountError) {
