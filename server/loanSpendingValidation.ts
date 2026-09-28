@@ -11,7 +11,7 @@ export function validateNewSpendingEntry(
   if (receivedAmount === null) {
     return "Set the received amount before adding entries";
   }
-  if (!(newAmount > 0)) {
+  if (toPaise(newAmount) <= 0) {
     return "Amount must be greater than 0";
   }
   const received = toPaise(parseFloat(receivedAmount));

@@ -278,7 +278,9 @@ export default function SpendingBreakdownModal({ source, visible, onClose }: Spe
                 {formatCurrency(allocated)} of {formatCurrency(received)} allocated
                 {remaining! >= 0
                   ? `, ${formatCurrency(remaining!)} unaccounted`
-                  : `, ${formatCurrency(Math.abs(remaining!))} over-allocated — lower this by adjusting entries or raising the received amount`}
+                  : isLoan
+                    ? `, ${formatCurrency(Math.abs(remaining!))} over-allocated — lower this by adjusting entries or raising the received amount`
+                    : `, ${formatCurrency(Math.abs(remaining!))} over-allocated — lower this by adjusting entries`}
               </Text>
             )}
 

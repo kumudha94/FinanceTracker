@@ -32,6 +32,11 @@ test("rejects negative amount", () => {
   assert.equal(result, "Amount must be greater than 0");
 });
 
+test("rejects an amount that rounds to zero paise", () => {
+  const result = validateNewSpendingEntry("100000", [], 0.004);
+  assert.equal(result, "Amount must be greater than 0");
+});
+
 test("accepts a valid entry with no existing entries", () => {
   const result = validateNewSpendingEntry("792000", [], 300000);
   assert.equal(result, null);

@@ -71,9 +71,12 @@ export default function AddTransactionScreen() {
     enabled: isEditMode,
   });
 
-  // Load transaction data for edit mode
+  // Load transaction data for edit mode. Hydrates once per transactionId so that a later
+  // refetch of the transactions list (e.g. from the tracker toggle or spending breakdown
+  // modal) doesn't clobber unsaved edits sitting in the form.
+  const hydratedTransactionIdRef = React.useRef<number | null>(null);
   React.useEffect(() => {
-    if (isEditMode && transactions) {
+    if (isEditMode && transactions && hydratedTransactionIdRef.current !== Number(transactionId)) {
       const transaction = transactions.find((t: any) => t.id === Number(transactionId));
       if (transaction) {
         setType(transaction.type as 'debit' | 'credit' | 'transfer');
@@ -85,6 +88,7 @@ export default function AddTransactionScreen() {
         setSelectedAccountId(transaction.accountId || null);
         setSelectedToAccountId(transaction.toAccountId || null);
         setTransactionDate(new Date(transaction.transactionDate));
+        hydratedTransactionIdRef.current = Number(transactionId);
       }
     }
   }, [isEditMode, transactions, transactionId]);
@@ -190,10 +194,12 @@ export default function AddTransactionScreen() {
   const savedTransaction = isEditMode ? transactions?.find(t => t.id === Number(transactionId)) : undefined;
 
   const trackerMutation = useMutation({
-    mutationFn: (enabled: boolean): Promise<any> => api.updateTransaction(Number(transactionId), { spendingTrackerEnabled: enabled }),
+    mutationFn: (enabled: boolean) => api.updateTransaction(Number(transactionId), { spendingTrackerEnabled: enabled }),
     onSuccess: (_, enabled) => {
-      queryClient.invalidateQueries({ queryKey: ['/api/transactions'] });
       Toast.show({ type: 'success', text1: enabled ? 'Spending tracking on' : 'Spending tracking off', position: 'bottom' });
+      // Stay pending until the refetch lands, so the Switch doesn't flicker back to the old
+      // value in the gap between isPending going false and the new data arriving.
+      return queryClient.invalidateQueries({ queryKey: ['/api/transactions'] });
     },
     onError: (error: any) => {
       Toast.show({ type: 'error', text1: 'Could not update spending tracking', text2: error?.message, position: 'bottom' });
