@@ -37,8 +37,8 @@ test("accepts a valid entry with no existing entries", () => {
   assert.equal(result, null);
 });
 
-test("rejects an entry that would push the total 0.0001 over the received amount", () => {
-  const result = validateNewSpendingEntry("792000", [{ amount: "792000" }], 0.0001);
+test("rejects an entry that would push the total 0.01 over the received amount", () => {
+  const result = validateNewSpendingEntry("792000", [{ amount: "792000" }], 0.01);
   assert.notEqual(result, null);
 });
 
@@ -58,6 +58,18 @@ test("rejects an entry that would exceed the received amount", () => {
   const existing = [{ amount: "700000" }];
   const result = validateNewSpendingEntry("792000", existing, 100000);
   assert.match(result!, /exceed/i);
+});
+
+test("accepts entries that exactly fill the total despite float rounding", () => {
+  const existing = [{ amount: "0.10" }];
+  const result = validateNewSpendingEntry("0.30", existing, 0.2);
+  assert.equal(result, null);
+});
+
+test("accepts an entry for exactly the remaining amount with paise", () => {
+  const existing = [{ amount: "1000.35" }, { amount: "2000.40" }];
+  const result = validateNewSpendingEntry("5000.00", existing, 1999.25);
+  assert.equal(result, null);
 });
 
 console.log(`\n${passed} passed, ${failed} failed\n`);
