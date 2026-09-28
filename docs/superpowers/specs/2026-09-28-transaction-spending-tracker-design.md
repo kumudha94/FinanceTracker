@@ -25,7 +25,7 @@ later and keep spending focused. This mirrors the existing loan **Spending Break
 - `transactions.spendingTrackerEnabled` — `boolean`, not null, default `false`.
 - New table `transaction_spending_entries`, mirroring `loan_spending_entries`:
   - `id` serial PK
-  - `transactionId` integer, FK → `transactions.id`, not null
+  - `transactionId` integer, FK → `transactions.id` with `onDelete: 'cascade'`, not null
   - `amount` decimal(14,2), not null
   - `reason` text, nullable
   - `createdAt` timestamp, not null, default now
@@ -45,8 +45,12 @@ Add to the `IStorage` interface and implementation, mirroring the loan methods:
 - `updateTransactionSpendingEntry(id, { amount?, reason? })`
 - `deleteTransactionSpendingEntry(id)`
 
-Transaction delete: delete the transaction's spending entries first (same pattern as loan delete
-at the `loanSpendingEntries` cleanup), so the FK never blocks deletion.
+Transaction delete: handled by the FK's `ON DELETE CASCADE`. Transactions are deleted from
+more than one place (single delete, and bulk delete inside account deletion), so a DB-level
+cascade covers every path without touching each one.
+
+`getTransaction` and `getAllTransactions` select an explicit column list — both must add
+`spendingTrackerEnabled` or the flag never reaches the client.
 
 Transaction list: `GET /api/transactions` results include `spendingAllocated: string | null` —
 sum of entry amounts for transactions with `spendingTrackerEnabled = true`, `null` otherwise.
@@ -72,6 +76,13 @@ transaction amount.
 **Toggle:** the existing transaction update route accepts `spendingTrackerEnabled`. Setting it
 `true` on a non-credit transaction returns 400. If a transaction's type is changed away from
 `credit`, the server forces `spendingTrackerEnabled = false`.
+
+**Amount edits:** lowering a tracked transaction's `amount` below its already-allocated total
+returns 400.
+
+**Money comparison:** allocation checks compare in integer paise, not floats, so e.g. entries
+of 0.10 + 0.20 exactly fill a 0.30 total. This fix is made in the shared
+`validateNewSpendingEntry`, so loans benefit too.
 
 **Toggling off** keeps existing entries (hidden in the UI); toggling back on restores them.
 
@@ -99,7 +110,9 @@ New API client methods in `mobile/src/lib/api.ts` and `TransactionSpendingEntry`
 ### Edit transaction — `mobile/src/screens/AddTransactionScreen.tsx`
 
 - Only in edit mode (existing transaction) and only when the type is `credit`: a
-  **"Track spending"** switch, saved with the transaction.
+  **"Track spending"** switch. It saves immediately on flip (its own PATCH with just
+  `spendingTrackerEnabled`), independent of the Update Transaction button, so the Spending
+  Breakdown button can appear right away without leaving the screen.
 - When the saved transaction has the tracker on, a **"Spending Breakdown"** button opens the
   shared modal.
 
