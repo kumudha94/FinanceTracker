@@ -27,22 +27,33 @@ data class TransactionSummary(
   val transactionDate: String
 )
 
+data class AccountBalance(val name: String, val balance: Double)
+
+data class BankBalanceSummary(val total: Double, val accounts: List<AccountBalance>)
+
 object WidgetRepository {
   private val client = OkHttpClient()
 
-  suspend fun fetchTotalBalance(context: Context): WidgetDataResult<Double> {
+  /**
+   * Bank accounts only: debit cards are cards on those same banks and credit card balances
+   * aren't money held, so neither belongs in the total. Zero-balance accounts are left out
+   * of the list (they add nothing to the total either).
+   */
+  suspend fun fetchBankBalances(context: Context): WidgetDataResult<BankBalanceSummary> {
     return when (val result = authenticatedGet(context, "$API_BASE_URL/api/accounts")) {
       is WidgetDataResult.Success -> {
         try {
           val accounts = JSONArray(result.data)
           var total = 0.0
+          val rows = mutableListOf<AccountBalance>()
           for (i in 0 until accounts.length()) {
             val account = accounts.getJSONObject(i)
-            if (account.optBoolean("isActive", true)) {
-              total += account.optString("balance", "0").toDoubleOrNull() ?: 0.0
-            }
+            if (account.optString("type") != "bank" || !account.optBoolean("isActive", true)) continue
+            val balance = account.optString("balance", "0").toDoubleOrNull() ?: 0.0
+            total += balance
+            if (balance != 0.0) rows.add(AccountBalance(optText(account, "name") ?: "Account", balance))
           }
-          WidgetDataResult.Success(total)
+          WidgetDataResult.Success(BankBalanceSummary(total, rows))
         } catch (e: JSONException) {
           WidgetDataResult.NetworkError
         }
@@ -63,7 +74,7 @@ object WidgetRepository {
             transactions.add(
               TransactionSummary(
                 id = tx.optInt("id", 0),
-                merchant = tx.optString("merchant").ifBlank { tx.optString("description", "Transaction") },
+                merchant = optText(tx, "merchant") ?: optText(tx, "description") ?: "Transaction",
                 amount = tx.optString("amount", "0").toDoubleOrNull() ?: 0.0,
                 type = tx.optString("type", "debit"),
                 transactionDate = tx.optString("transactionDate", "")
@@ -79,6 +90,10 @@ object WidgetRepository {
       is WidgetDataResult.NetworkError -> WidgetDataResult.NetworkError
     }
   }
+
+  /** org.json's optString turns a JSON null into the literal "null"; treat that as missing. */
+  private fun optText(obj: JSONObject, key: String): String? =
+    if (obj.isNull(key)) null else obj.optString(key).trim().ifEmpty { null }
 
   private fun authenticatedGet(context: Context, url: String): WidgetDataResult<String> {
     val accessToken = WidgetAuthPrefs.getAccessToken(context) ?: return WidgetDataResult.AuthFailure

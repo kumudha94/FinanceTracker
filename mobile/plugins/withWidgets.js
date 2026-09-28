@@ -1,10 +1,22 @@
-const { withAndroidManifest, withDangerousMod, withAppBuildGradle, AndroidConfig } = require('@expo/config-plugins');
+const { withAndroidManifest, withDangerousMod, withAppBuildGradle, withStringsXml, AndroidConfig } = require('@expo/config-plugins');
 const fs = require('fs');
 const path = require('path');
 
 const RECEIVERS = [
-  { className: 'BalanceWidgetReceiver', infoXml: 'balance_widget_info' },
-  { className: 'RecentTransactionsWidgetReceiver', infoXml: 'recent_transactions_widget_info' },
+  {
+    className: 'BalanceWidgetReceiver',
+    infoXml: 'balance_widget_info',
+    label: 'Bank balance',
+    descriptionKey: 'balance_widget_description',
+    description: 'Balance of each bank account, plus the total',
+  },
+  {
+    className: 'RecentTransactionsWidgetReceiver',
+    infoXml: 'recent_transactions_widget_info',
+    label: 'Recent transactions',
+    descriptionKey: 'recent_transactions_widget_description',
+    description: 'Your latest 4 transactions',
+  },
 ];
 
 function withWidgetsManifest(config) {
@@ -13,13 +25,17 @@ function withWidgetsManifest(config) {
 
     if (!application.receiver) application.receiver = [];
 
-    for (const { className, infoXml } of RECEIVERS) {
+    for (const { className, infoXml, label } of RECEIVERS) {
       const name = `.widgets.${className}`;
-      if (!application.receiver.some((r) => r.$['android:name'] === name)) {
+      const existing = application.receiver.find((r) => r.$['android:name'] === name);
+      // A non-clean prebuild keeps receivers added before the label existed, so update in place.
+      if (existing) existing.$['android:label'] = label;
+      if (!existing) {
         application.receiver.push({
           $: {
             'android:name': name,
             'android:exported': 'false',
+            'android:label': label,
           },
           'intent-filter': [
             {
@@ -38,6 +54,19 @@ function withWidgetsManifest(config) {
       }
     }
 
+    return config;
+  });
+}
+
+// Widget picker descriptions must be string resources (referenced from the widget info xml).
+function withWidgetsStrings(config) {
+  return withStringsXml(config, (config) => {
+    for (const { descriptionKey, description } of RECEIVERS) {
+      config.modResults = AndroidConfig.Strings.setStringItem(
+        [{ $: { name: descriptionKey }, _: description }],
+        config.modResults
+      );
+    }
     return config;
   });
 }
@@ -62,7 +91,7 @@ function withWidgetsNativeFiles(config) {
       }
 
       const nativeSrcDir = path.join(__dirname, 'native', 'widgets');
-      const kotlinFiles = ['WidgetRepository.kt', 'WidgetUpdateWorker.kt', 'BalanceWidget.kt', 'RecentTransactionsWidget.kt'];
+      const kotlinFiles = ['WidgetUi.kt', 'WidgetRepository.kt', 'WidgetUpdateWorker.kt', 'BalanceWidget.kt', 'RecentTransactionsWidget.kt'];
       for (const fileName of kotlinFiles) {
         let source = fs.readFileSync(path.join(nativeSrcDir, fileName), 'utf8');
         source = source
@@ -106,6 +135,7 @@ function withWidgetsAppBuildGradle(config) {
 
 module.exports = function withWidgets(config) {
   config = withWidgetsManifest(config);
+  config = withWidgetsStrings(config);
   config = withWidgetsNativeFiles(config);
   config = withWidgetsAppBuildGradle(config);
   return config;

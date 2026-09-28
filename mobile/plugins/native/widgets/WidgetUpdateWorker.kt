@@ -20,9 +20,11 @@ import java.util.concurrent.TimeUnit
 val KEY_BALANCE_TOTAL = stringPreferencesKey("balance_total")
 val KEY_BALANCE_UPDATED_AT = stringPreferencesKey("balance_updated_at")
 val KEY_BALANCE_ERROR = stringPreferencesKey("balance_error")
+val KEY_BALANCE_ACCOUNTS_JSON = stringPreferencesKey("balance_accounts_json")
 
 val KEY_TRANSACTIONS_JSON = stringPreferencesKey("transactions_json")
 val KEY_TRANSACTIONS_ERROR = stringPreferencesKey("transactions_error")
+val KEY_TRANSACTIONS_UPDATED_AT = stringPreferencesKey("transactions_updated_at")
 
 class WidgetUpdateWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
   override suspend fun doWork(): Result {
@@ -39,12 +41,17 @@ class WidgetUpdateWorker(context: Context, params: WorkerParameters) : Coroutine
     val glanceIds = GlanceAppWidgetManager(context).getGlanceIds(BalanceWidget::class.java)
     if (glanceIds.isEmpty()) return false
 
-    val result = WidgetRepository.fetchTotalBalance(context)
+    val result = WidgetRepository.fetchBankBalances(context)
     for (glanceId in glanceIds) {
       updateAppWidgetState(context, glanceId) { prefs ->
         when (result) {
           is WidgetDataResult.Success -> {
-            prefs[KEY_BALANCE_TOTAL] = result.data.toString()
+            val accountsJson = JSONArray()
+            result.data.accounts.forEach { account ->
+              accountsJson.put(JSONObject().put("name", account.name).put("balance", account.balance))
+            }
+            prefs[KEY_BALANCE_TOTAL] = result.data.total.toString()
+            prefs[KEY_BALANCE_ACCOUNTS_JSON] = accountsJson.toString()
             prefs[KEY_BALANCE_UPDATED_AT] = System.currentTimeMillis().toString()
             prefs.remove(KEY_BALANCE_ERROR)
           }
@@ -79,6 +86,7 @@ class WidgetUpdateWorker(context: Context, params: WorkerParameters) : Coroutine
               )
             }
             prefs[KEY_TRANSACTIONS_JSON] = json.toString()
+            prefs[KEY_TRANSACTIONS_UPDATED_AT] = System.currentTimeMillis().toString()
             prefs.remove(KEY_TRANSACTIONS_ERROR)
           }
           is WidgetDataResult.AuthFailure -> prefs[KEY_TRANSACTIONS_ERROR] = "auth"

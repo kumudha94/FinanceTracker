@@ -79,3 +79,13 @@ The following is **deferred to the user, on a real device**, same as prior nativ
 ## Phase 2+ (not built now, noted for future spec-writing)
 
 Once this infrastructure lands, adding Budget progress, Upcoming bills/EMIs, and Credit card usage widgets should each be a new `GlanceAppWidget` + `WidgetRepository` method + manifest entry via `withWidgets.js` — no new auth/refresh/deep-link plumbing needed. Each should still get its own short design pass for its specific data shape and empty/error states before implementation.
+
+## Phase 1.1 — Visual redesign (2026-09-28)
+
+On-device feedback: the phase 1 widgets were unstyled text drawn straight on the wallpaper, rows showed a literal `null` merchant, text clipped at the left edge, and the balance total was wrong.
+
+- **Balance widget → "Bank balance" (3x2):** lists each active `type = 'bank'` account with its balance, then a divider and the **Total**. Debit cards (cards on the same banks) and credit cards (outstanding, not money held) are excluded from both list and total — the old widget summed every active account (≈₹11.7L vs ≈₹1.29L real). Zero-balance bank accounts are hidden from the list. Negative balances render red.
+- **Recent transactions:** header with "Updated …", each row has a ↓/↑ badge (green credit / red debit), merchant (1 line, ellipsized), relative date ("Today · 2:15 PM" / "Yesterday" / "12 Sep"), right-aligned signed amount, dividers between rows.
+- **Merchant fallback fix:** `org.json`'s `optString` returns the string `"null"` for JSON null, so it never fell back to `description`. Now merchant → description → "Transaction".
+- **Shared styling (`WidgetUi.kt`):** rounded card, app palette from `mobile/src/lib/utils.ts`, day/night via Glance `ColorProvider(day, night)`. Staleness (>2h) now turns the header's "Last updated" red/bold.
+- **Widget picker:** receivers get `android:label` and the info XMLs a `android:description` string resource.
