@@ -1,11 +1,12 @@
 import { useState, useMemo } from 'react';
-import { View, Text, StyleSheet, TextInput, TouchableOpacity, ScrollView, ActivityIndicator, Modal, Platform, Alert } from 'react-native';
+import { View, Text, StyleSheet, TextInput, TouchableOpacity, ScrollView, ActivityIndicator, Modal, Platform, Alert, Switch } from 'react-native';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import Toast from 'react-native-toast-message';
 import { api } from '../lib/api';
+import SpendingBreakdownModal from '../components/SpendingBreakdownModal';
 import { getThemedColors, formatDate, formatCurrency } from '../lib/utils';
 import type { Category, Account, Transaction } from '../lib/types';
 import { RootStackParamList } from '../../App';
@@ -179,6 +180,23 @@ export default function AddTransactionScreen() {
         text2: 'Transaction has been updated successfully',
         position: 'bottom',
       });
+    },
+  });
+
+  const [spendingBreakdownVisible, setSpendingBreakdownVisible] = useState(false);
+
+  // Tracker state comes from the saved transaction, not the unsaved form, so an in-progress
+  // type change on screen can't toggle tracking on an expense.
+  const savedTransaction = isEditMode ? transactions?.find(t => t.id === Number(transactionId)) : undefined;
+
+  const trackerMutation = useMutation({
+    mutationFn: (enabled: boolean): Promise<any> => api.updateTransaction(Number(transactionId), { spendingTrackerEnabled: enabled }),
+    onSuccess: (_, enabled) => {
+      queryClient.invalidateQueries({ queryKey: ['/api/transactions'] });
+      Toast.show({ type: 'success', text1: enabled ? 'Spending tracking on' : 'Spending tracking off', position: 'bottom' });
+    },
+    onError: (error: any) => {
+      Toast.show({ type: 'error', text1: 'Could not update spending tracking', text2: error?.message, position: 'bottom' });
     },
   });
 
@@ -516,8 +534,38 @@ export default function AddTransactionScreen() {
         </View>
       )}
 
-      <TouchableOpacity 
-        style={[styles.submitButton, { backgroundColor: colors.primary }, isPending && styles.submitButtonDisabled]} 
+      {savedTransaction?.type === 'credit' && (
+        <View style={[styles.trackerCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+          <View style={styles.trackerRow}>
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.trackerLabel, { color: colors.text }]}>Track spending</Text>
+              <Text style={[styles.trackerDescription, { color: colors.textMuted }]}>
+                Record how this amount gets spent — e.g. PF advance, ITR refund
+              </Text>
+            </View>
+            <Switch
+              value={trackerMutation.isPending ? !!trackerMutation.variables : !!savedTransaction.spendingTrackerEnabled}
+              onValueChange={(v) => trackerMutation.mutate(v)}
+              disabled={trackerMutation.isPending}
+              trackColor={{ false: colors.border, true: colors.primary }}
+              thumbColor="#fff"
+            />
+          </View>
+          {savedTransaction.spendingTrackerEnabled && (
+            <TouchableOpacity
+              style={[styles.breakdownButton, { borderColor: colors.primary }]}
+              onPress={() => setSpendingBreakdownVisible(true)}
+            >
+              <Ionicons name="pie-chart-outline" size={18} color={colors.primary} />
+              <Text style={[styles.breakdownButtonText, { color: colors.primary }]}>Spending Breakdown</Text>
+              <Ionicons name="chevron-forward" size={18} color={colors.primary} />
+            </TouchableOpacity>
+          )}
+        </View>
+      )}
+
+      <TouchableOpacity
+        style={[styles.submitButton, { backgroundColor: colors.primary }, isPending && styles.submitButtonDisabled]}
         onPress={handleSubmit}
         disabled={isPending}
       >
@@ -693,6 +741,14 @@ export default function AddTransactionScreen() {
           </View>
         </View>
       </Modal>
+
+      {savedTransaction?.spendingTrackerEnabled && (
+        <SpendingBreakdownModal
+          source={{ kind: 'transaction', transactionId: savedTransaction.id, amount: savedTransaction.amount }}
+          visible={spendingBreakdownVisible}
+          onClose={() => setSpendingBreakdownVisible(false)}
+        />
+      )}
     </ScrollView>
   );
 }
@@ -947,5 +1003,39 @@ const styles = StyleSheet.create({
   matchModalButtonText: {
     fontSize: 16,
     fontWeight: '700',
+  },
+  trackerCard: {
+    borderRadius: 12,
+    borderWidth: 1,
+    padding: 16,
+    marginBottom: 20,
+  },
+  trackerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  trackerLabel: {
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  trackerDescription: {
+    fontSize: 12,
+    marginTop: 2,
+  },
+  breakdownButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+    borderWidth: 1,
+  },
+  breakdownButtonText: {
+    flex: 1,
+    fontSize: 14,
+    fontWeight: '600',
   },
 });
