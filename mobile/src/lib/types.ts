@@ -101,6 +101,8 @@ export interface Transaction {
   isRecurring: boolean;
   savingsContributionId?: number | null;
   paymentOccurrenceId?: number | null;
+  spendingTrackerEnabled?: boolean;
+  spendingAllocated?: string | null;
   createdAt: string;
   account?: Account | null;
   category?: Category | null;
@@ -345,6 +347,7 @@ export interface InsertTransaction {
   isRecurring?: boolean;
   savingsContributionId?: number;
   paymentOccurrenceId?: number;
+  spendingTrackerEnabled?: boolean;
 }
 
 export interface InsertBudget {
@@ -539,6 +542,14 @@ export interface LoanSpendingEntry {
 export interface InsertLoanSpendingEntry {
   amount: string;
   reason?: string | null;
+}
+
+export interface TransactionSpendingEntry {
+  id: number;
+  transactionId: number;
+  amount: string;
+  reason: string | null;
+  createdAt: string;
 }
 
 export interface CardDetails {

@@ -6,15 +6,28 @@ import Toast from 'react-native-toast-message';
 import { api } from '../lib/api';
 import { formatCurrency, getThemedColors } from '../lib/utils';
 import { useTheme } from '../contexts/ThemeContext';
-import type { LoanSpendingEntry } from '../lib/types';
+import type { LoanSpendingEntry, TransactionSpendingEntry, InsertLoanSpendingEntry } from '../lib/types';
+
+// A loan's breakdown is measured against its editable received amount; a transaction's against
+// its own (fixed) amount.
+export type SpendingSource =
+  | { kind: 'loan'; loanId: number }
+  | { kind: 'transaction'; transactionId: number; amount: string };
+
+type SpendingEntry = LoanSpendingEntry | TransactionSpendingEntry;
 
 interface SpendingBreakdownModalProps {
-  loanId: number;
+  source: SpendingSource;
   visible: boolean;
   onClose: () => void;
 }
 
-export default function SpendingBreakdownModal({ loanId, visible, onClose }: SpendingBreakdownModalProps) {
+export default function SpendingBreakdownModal({ source, visible, onClose }: SpendingBreakdownModalProps) {
+  const isLoan = source.kind === 'loan';
+  const loanId = source.kind === 'loan' ? source.loanId : null;
+  const transactionId = source.kind === 'transaction' ? source.transactionId : null;
+  const transactionAmount = source.kind === 'transaction' ? source.amount : null;
+  const entriesKey = isLoan ? ['loan-spending-entries', loanId] : ['transaction-spending-entries', transactionId];
   const { resolvedTheme } = useTheme();
   const colors = useMemo(() => getThemedColors(resolvedTheme), [resolvedTheme]);
   const queryClient = useQueryClient();
@@ -29,15 +42,21 @@ export default function SpendingBreakdownModal({ loanId, visible, onClose }: Spe
 
   const { data: loan } = useQuery({
     queryKey: ['/api/loans', loanId],
-    queryFn: () => api.getLoan(loanId),
+    queryFn: () => api.getLoan(loanId!),
+    enabled: visible && isLoan,
+  });
+
+  const { data: entries, isLoading: entriesLoading } = useQuery<SpendingEntry[]>({
+    queryKey: entriesKey,
+    queryFn: () => isLoan ? api.getLoanSpendingEntries(loanId!) : api.getTransactionSpendingEntries(transactionId!),
     enabled: visible,
   });
 
-  const { data: entries, isLoading: entriesLoading } = useQuery({
-    queryKey: ['loan-spending-entries', loanId],
-    queryFn: () => api.getLoanSpendingEntries(loanId),
-    enabled: visible,
-  });
+  // Entry changes also move the "₹X left" badge on the Transactions list.
+  const invalidateEntries = () => {
+    queryClient.invalidateQueries({ queryKey: entriesKey });
+    if (!isLoan) queryClient.invalidateQueries({ queryKey: ['/api/transactions'] });
+  };
 
   // Pre-fill the input with the loan's principal the first time it's opened for a loan that
   // has no receivedAmount saved yet — the stored value stays null until the user hits Save.
@@ -64,7 +83,7 @@ export default function SpendingBreakdownModal({ loanId, visible, onClose }: Spe
   }, [visible]);
 
   const saveReceivedAmountMutation = useMutation({
-    mutationFn: (amount: string) => api.updateLoan(loanId, { receivedAmount: amount }),
+    mutationFn: (amount: string) => api.updateLoan(loanId!, { receivedAmount: amount }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/loans', loanId] });
       queryClient.invalidateQueries({ queryKey: ['/api/loans'] });
@@ -76,9 +95,12 @@ export default function SpendingBreakdownModal({ loanId, visible, onClose }: Spe
   });
 
   const addEntryMutation = useMutation({
-    mutationFn: () => api.createLoanSpendingEntry(loanId, { amount: newEntryAmount, reason: newEntryReason.trim() || undefined }),
+    mutationFn: (): Promise<SpendingEntry> => {
+      const data: InsertLoanSpendingEntry = { amount: newEntryAmount, reason: newEntryReason.trim() || undefined };
+      return isLoan ? api.createLoanSpendingEntry(loanId!, data) : api.createTransactionSpendingEntry(transactionId!, data);
+    },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['loan-spending-entries', loanId] });
+      invalidateEntries();
       setNewEntryAmount('');
       setNewEntryReason('');
       setShowAddForm(false);
@@ -90,9 +112,9 @@ export default function SpendingBreakdownModal({ loanId, visible, onClose }: Spe
   });
 
   const deleteEntryMutation = useMutation({
-    mutationFn: (id: number) => api.deleteLoanSpendingEntry(id),
+    mutationFn: (id: number) => isLoan ? api.deleteLoanSpendingEntry(id) : api.deleteTransactionSpendingEntry(transactionId!, id),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['loan-spending-entries', loanId] });
+      invalidateEntries();
     },
     onError: () => {
       Toast.show({ type: 'error', text1: 'Failed to delete entry', position: 'bottom' });
@@ -100,9 +122,12 @@ export default function SpendingBreakdownModal({ loanId, visible, onClose }: Spe
   });
 
   const updateEntryMutation = useMutation({
-    mutationFn: (id: number) => api.updateLoanSpendingEntry(id, { amount: editEntryAmount, reason: editEntryReason.trim() || null }),
+    mutationFn: (id: number): Promise<SpendingEntry> => {
+      const data = { amount: editEntryAmount, reason: editEntryReason.trim() || null };
+      return isLoan ? api.updateLoanSpendingEntry(id, data) : api.updateTransactionSpendingEntry(transactionId!, id, data);
+    },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['loan-spending-entries', loanId] });
+      invalidateEntries();
       setEditingEntryId(null);
       setEditEntryAmount('');
       setEditEntryReason('');
@@ -114,7 +139,9 @@ export default function SpendingBreakdownModal({ loanId, visible, onClose }: Spe
   });
 
   const allocated = (entries || []).reduce((sum, e) => sum + parseFloat(e.amount), 0);
-  const received = loan?.receivedAmount ? parseFloat(loan.receivedAmount) : null;
+  const received = isLoan
+    ? (loan?.receivedAmount ? parseFloat(loan.receivedAmount) : null)
+    : parseFloat(transactionAmount!);
   const remaining = received !== null ? received - allocated : null;
 
   // The field auto-fills with a suggestion (see the sync effect above), so "Save" should only
@@ -151,7 +178,7 @@ export default function SpendingBreakdownModal({ loanId, visible, onClose }: Spe
     saveReceivedAmountMutation.mutate(receivedAmountInput);
   };
 
-  const handleStartEditEntry = (entry: LoanSpendingEntry) => {
+  const handleStartEditEntry = (entry: SpendingEntry) => {
     setShowAddForm(false);
     setEditingEntryId(entry.id);
     setEditEntryAmount(entry.amount);
@@ -175,7 +202,7 @@ export default function SpendingBreakdownModal({ loanId, visible, onClose }: Spe
     }
   };
 
-  if (!loan) {
+  if (isLoan && !loan) {
     return (
       <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
         <View style={styles.overlay}>
@@ -199,43 +226,52 @@ export default function SpendingBreakdownModal({ loanId, visible, onClose }: Spe
           </View>
 
           <ScrollView style={styles.body} showsVerticalScrollIndicator={false}>
-            <View style={styles.field}>
-              <Text style={[styles.label, { color: colors.textMuted }]}>Loan Amount</Text>
-              <Text style={[styles.readOnlyValue, { color: colors.text }]}>{formatCurrency(parseFloat(loan.principalAmount))}</Text>
-            </View>
-
-            <View style={styles.field}>
-              <Text style={[styles.label, { color: colors.textMuted }]}>Received Amount</Text>
-              <View style={styles.receivedRow}>
-                <View style={[styles.amountInputContainer, { backgroundColor: colors.card, borderColor: colors.border }]}>
-                  <Text style={[styles.currencyPrefix, { color: colors.textMuted }]}>₹</Text>
-                  <TextInput
-                    style={[styles.amountInput, { color: colors.text }]}
-                    keyboardType="decimal-pad"
-                    value={receivedAmountInput}
-                    onChangeText={setReceivedAmountInput}
-                    placeholder="0"
-                    placeholderTextColor={colors.textMuted}
-                  />
+            {isLoan && loan ? (
+              <>
+                <View style={styles.field}>
+                  <Text style={[styles.label, { color: colors.textMuted }]}>Loan Amount</Text>
+                  <Text style={[styles.readOnlyValue, { color: colors.text }]}>{formatCurrency(parseFloat(loan.principalAmount))}</Text>
                 </View>
-                <TouchableOpacity
-                  style={[styles.saveButton, { backgroundColor: colors.primary, opacity: !receivedAmountChanged ? 0.5 : 1 }]}
-                  onPress={handleSaveReceivedAmount}
-                  disabled={saveReceivedAmountMutation.isPending || !receivedAmountChanged}
-                >
-                  {saveReceivedAmountMutation.isPending ? (
-                    <ActivityIndicator size="small" color="#fff" />
-                  ) : (
-                    <Text style={styles.saveButtonText}>Save</Text>
+
+                <View style={styles.field}>
+                  <Text style={[styles.label, { color: colors.textMuted }]}>Received Amount</Text>
+                  <View style={styles.receivedRow}>
+                    <View style={[styles.amountInputContainer, { backgroundColor: colors.card, borderColor: colors.border }]}>
+                      <Text style={[styles.currencyPrefix, { color: colors.textMuted }]}>₹</Text>
+                      <TextInput
+                        style={[styles.amountInput, { color: colors.text }]}
+                        keyboardType="decimal-pad"
+                        value={receivedAmountInput}
+                        onChangeText={setReceivedAmountInput}
+                        placeholder="0"
+                        placeholderTextColor={colors.textMuted}
+                      />
+                    </View>
+                    <TouchableOpacity
+                      style={[styles.saveButton, { backgroundColor: colors.primary, opacity: !receivedAmountChanged ? 0.5 : 1 }]}
+                      onPress={handleSaveReceivedAmount}
+                      disabled={saveReceivedAmountMutation.isPending || !receivedAmountChanged}
+                    >
+                      {saveReceivedAmountMutation.isPending ? (
+                        <ActivityIndicator size="small" color="#fff" />
+                      ) : (
+                        <Text style={styles.saveButtonText}>Save</Text>
+                      )}
+                    </TouchableOpacity>
+                  </View>
+                  {received === null && (
+                    <Text style={[styles.unsavedHint, { color: '#f59e0b' }]}>
+                      Not saved yet — this is just a suggestion based on the loan amount. Tap Save to confirm it before adding entries.
+                    </Text>
                   )}
-                </TouchableOpacity>
+                </View>
+              </>
+            ) : (
+              <View style={styles.field}>
+                <Text style={[styles.label, { color: colors.textMuted }]}>Credited Amount</Text>
+                <Text style={[styles.readOnlyValue, { color: colors.text }]}>{formatCurrency(received!)}</Text>
               </View>
-              {received === null && (
-                <Text style={[styles.unsavedHint, { color: '#f59e0b' }]}>
-                  Not saved yet — this is just a suggestion based on the loan amount. Tap Save to confirm it before adding entries.
-                </Text>
-              )}
-            </View>
+            )}
 
             {received !== null && (
               <Text style={[styles.allocatedText, { color: remaining! < 0 ? '#ef4444' : colors.textMuted }]}>

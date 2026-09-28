@@ -5,7 +5,7 @@ import type {
   PlannedIncomeEntry, InsertPlannedIncomeEntry,
   SavingsGoal, SavingsContribution, InsertSavingsGoal, InsertSavingsContribution,
   SalaryProfile, SalaryCycle, InsertSalaryProfile,
-  Loan, LoanInstallment, InsertLoan, LoanBtAllocation, LoanSpendingEntry, InsertLoanSpendingEntry,
+  Loan, LoanInstallment, InsertLoan, LoanBtAllocation, LoanSpendingEntry, InsertLoanSpendingEntry, TransactionSpendingEntry,
   CardDetails, InsertCardDetails,
   LoanTerm, LoanPayment, InsertLoanTerm, InsertLoanPayment, LoanWithDetails,
   Insurance, InsurancePremium, InsertInsurance, InsertInsurancePremium,
@@ -353,7 +353,15 @@ export const api = {
     }),
   deleteTransaction: (id: number) =>
     apiRequest<void>(`/api/transactions/${id}`, { method: 'DELETE' }),
-  
+  getTransactionSpendingEntries: (transactionId: number) =>
+    apiRequest<TransactionSpendingEntry[]>(`/api/transactions/${transactionId}/spending-entries`),
+  createTransactionSpendingEntry: (transactionId: number, data: InsertLoanSpendingEntry) =>
+    apiRequest<TransactionSpendingEntry>(`/api/transactions/${transactionId}/spending-entries`, { method: 'POST', body: JSON.stringify(data) }),
+  updateTransactionSpendingEntry: (transactionId: number, id: number, data: { amount?: string; reason?: string | null }) =>
+    apiRequest<TransactionSpendingEntry>(`/api/transactions/${transactionId}/spending-entries/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  deleteTransactionSpendingEntry: (transactionId: number, id: number) =>
+    apiRequest<void>(`/api/transactions/${transactionId}/spending-entries/${id}`, { method: 'DELETE' }),
+
   getBudgets: (month: number, year: number) => 
     apiRequest<Budget[]>(`/api/budgets?month=${month}&year=${year}`),
   createBudget: (data: InsertBudget) => 

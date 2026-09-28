@@ -2395,7 +2395,7 @@ export default function LoanDetailsScreen() {
       </Modal>
 
       <SpendingBreakdownModal
-        loanId={loanId}
+        source={{ kind: 'loan', loanId }}
         visible={spendingBreakdownVisible}
         onClose={() => setSpendingBreakdownVisible(false)}
       />
