@@ -93,8 +93,9 @@ class BalanceWidget : GlanceAppWidget() {
             }
           }
           else -> {
+            // No data yet: the first fetch is still running unless it already failed.
             WidgetHeader("Bank balance", null)
-            WidgetMessage("Unable to load balance")
+            WidgetMessage(if (error == null) "Loading…" else "Unable to load balance")
           }
         }
       }

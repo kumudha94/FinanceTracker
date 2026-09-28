@@ -26,7 +26,6 @@ import androidx.glance.unit.ColorProvider
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
-import java.util.TimeZone
 
 // Mirrors the app palette in mobile/src/lib/utils.ts (COLORS) so the widgets follow the
 // device's light/dark mode the same way the app does.
@@ -35,10 +34,11 @@ object WidgetColors {
   val text = ColorProvider(day = Color(0xFF0A0A0A), night = Color(0xFFFAFAFA))
   val textMuted = ColorProvider(day = Color(0xFF71717A), night = Color(0xFFA1A1AA))
   val divider = ColorProvider(day = Color(0xFFE4E4E7), night = Color(0xFF27272A))
-  val primary = ColorProvider(Color(0xFF16A34A))
-  val danger = ColorProvider(Color(0xFFDC2626))
-  val creditBadge = ColorProvider(day = Color(0xFFDCFCE7), night = Color(0xFF14532D))
-  val debitBadge = ColorProvider(day = Color(0xFFFEE2E2), night = Color(0xFF7F1D1D))
+  // Lighter shades at night: the day greens/reds are too dim on the dark card and badges.
+  val primary = ColorProvider(day = Color(0xFF16A34A), night = Color(0xFF4ADE80))
+  val danger = ColorProvider(day = Color(0xFFDC2626), night = Color(0xFFF87171))
+  val creditBadge = ColorProvider(day = Color(0xFFDCFCE7), night = Color(0xFF16301F))
+  val debitBadge = ColorProvider(day = Color(0xFFFEE2E2), night = Color(0xFF3A1A1A))
 }
 
 /** Rounded themed card that every widget draws its content inside. */
@@ -49,7 +49,7 @@ fun WidgetCard(modifier: GlanceModifier = GlanceModifier, content: @Composable C
       .fillMaxSize()
       .cornerRadius(20.dp)
       .background(WidgetColors.card)
-      .padding(horizontal = 16.dp, vertical = 12.dp),
+      .padding(horizontal = 16.dp, vertical = 10.dp),
     content = content
   )
 }
@@ -105,21 +105,19 @@ fun formatRupees(amount: Double): String {
   return if (amount < 0) "-$formatted" else formatted
 }
 
-private val isoParsers = listOf("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", "yyyy-MM-dd'T'HH:mm:ss'Z'").map {
-  SimpleDateFormat(it, Locale.US).apply { timeZone = TimeZone.getTimeZone("UTC") }
-}
-
-/** "Today · 2:15 PM", "Yesterday", or "12 Sep" from the API's ISO timestamp; "" if unparseable. */
+/**
+ * "Today", "Yesterday", or "12 Sep". transactionDate is a calendar date stored as midnight UTC,
+ * so only its yyyy-MM-dd part is meaningful — converting it to local time would invent a fake
+ * "5:30 AM" (IST) or shift it to the previous day (west of UTC). Returns "" if unparseable.
+ */
 fun formatRelativeDate(iso: String): String {
-  val date = isoParsers.firstNotNullOfOrNull { runCatching { it.parse(iso) }.getOrNull() } ?: return ""
-  val then = Calendar.getInstance().apply { time = date }
-  val today = Calendar.getInstance()
-  val yesterday = Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, -1) }
-  fun Calendar.sameDay(other: Calendar) =
-    get(Calendar.YEAR) == other.get(Calendar.YEAR) && get(Calendar.DAY_OF_YEAR) == other.get(Calendar.DAY_OF_YEAR)
-  return when {
-    then.sameDay(today) -> "Today · " + SimpleDateFormat("h:mm a", Locale.US).format(date)
-    then.sameDay(yesterday) -> "Yesterday"
+  val dayFormat = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+  val date = runCatching { dayFormat.parse(iso.take(10)) }.getOrNull() ?: return ""
+  val today = dayFormat.format(Calendar.getInstance().time)
+  val yesterday = dayFormat.format(Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, -1) }.time)
+  return when (iso.take(10)) {
+    today -> "Today"
+    yesterday -> "Yesterday"
     else -> SimpleDateFormat("d MMM", Locale.US).format(date)
   }
 }

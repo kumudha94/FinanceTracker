@@ -89,9 +89,10 @@ class RecentTransactionsWidget : GlanceAppWidget() {
             }
           }
           else -> {
+            // No data yet: the first fetch is still running unless it already failed.
             WidgetHeader("Recent transactions", null)
             Box(modifier = GlanceModifier.clickable(actionStartActivity(openAppIntent))) {
-              WidgetMessage("Unable to load transactions")
+              WidgetMessage(if (error == null) "Loading…" else "Unable to load transactions")
             }
           }
         }
@@ -107,14 +108,14 @@ private fun TransactionRow(row: WidgetTransactionRow) {
   Row(
     modifier = GlanceModifier
       .fillMaxWidth()
-      .padding(vertical = 6.dp)
+      .padding(vertical = 3.dp)
       .clickable(actionStartActivity(rowIntent)),
     verticalAlignment = Alignment.CenterVertically
   ) {
     Box(
       modifier = GlanceModifier
-        .size(28.dp)
-        .cornerRadius(14.dp)
+        .size(26.dp)
+        .cornerRadius(13.dp)
         .background(if (isCredit) WidgetColors.creditBadge else WidgetColors.debitBadge),
       contentAlignment = Alignment.Center
     ) {
