@@ -221,6 +221,14 @@ export function deriveInstitutionKey(sender: string): string {
   return (match ? match[1] : sender.trim()).toUpperCase();
 }
 
+// Due reminders routinely end with "Ignore if paid" / "Please ignore if already paid" — a
+// conditional disclaimer, not a completed payment. Left in, its "paid" matches DEBIT_KEYWORDS
+// and the reminder's minimum-due amount was recorded as a real debit, and parseDueSms (only
+// tried when this parser returns null) never saw it.
+function stripConditionalPaidClauses(lowerMsg: string): string {
+  return lowerMsg.replace(/\bif\s+(?:already\s+)?(?:been\s+)?paid\b/g, " ");
+}
+
 export function parseSmsByRegex(message: string, sender?: string): ParsedSmsData | null {
   const lowerMsg = message.toLowerCase();
 
@@ -236,7 +244,7 @@ export function parseSmsByRegex(message: string, sender?: string): ParsedSmsData
     return null;
   }
 
-  const type = extractType(lowerMsg);
+  const type = extractType(stripConditionalPaidClauses(lowerMsg));
   if (!type) return null;
 
   const amount = extractAmount(message);

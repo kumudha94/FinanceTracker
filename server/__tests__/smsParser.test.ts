@@ -343,6 +343,24 @@ Maintain Balance
   assert.equal(r!.dueDate, "2026-07-31T00:00:00.000Z");
 });
 
+test("card due reminder ending 'Ignore if paid' is not a debit, and routes to the due parser", () => {
+  const msg = "Payment of Credit Card X2613 is due on 02/10/26. Min due Rs.4244.94. Total Due Rs.8790.35. Pay before last date to avoid charges. Ignore if paid-YES BANK";
+  assert.equal(parseSmsByRegex(msg, "YESBNK"), null);
+  const due = parseDueSms(msg);
+  assert(due !== null);
+  assert.equal(due!.cardLastFourDigits, "2613");
+});
+
+test("'please ignore if already paid' boilerplate doesn't turn a reminder into a debit", () => {
+  assert.equal(parseSmsByRegex("Your card XX1234 bill of Rs.2,500 is due on 05/10/26. Please ignore if already paid.", "HDFCBK"), null);
+});
+
+test("a real 'paid' debit still parses", () => {
+  const r = parseSmsByRegex("Rs.250.00 paid to SWIGGY from A/c XX1234 on 28/09/26", "HDFCBK");
+  assert(r !== null);
+  assert.equal(r!.type, "debit");
+});
+
 // ── Summary ────────────────────────────────────────────────────────────────
 console.log(`\n=== Results: ${passed} passed, ${failed} failed ===\n`);
 if (failed > 0) process.exit(1);
