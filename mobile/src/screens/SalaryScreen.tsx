@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { View, Text, StyleSheet, ScrollView, TextInput, TouchableOpacity, ActivityIndicator, Modal, Switch } from 'react-native';
+import { KeyboardAwareScrollView } from 'react-native-keyboard-aware-scroll-view';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Ionicons } from '@expo/vector-icons';
 import Toast from 'react-native-toast-message';
@@ -269,7 +270,14 @@ export default function SalaryScreen() {
   }
 
   return (
-    <ScrollView style={[styles.container, { backgroundColor: colors.background }]} showsVerticalScrollIndicator={false}>
+    <KeyboardAwareScrollView
+      style={[styles.container, { backgroundColor: colors.background }]}
+      showsVerticalScrollIndicator={false}
+      enableOnAndroid
+      enableAutomaticScroll
+      extraScrollHeight={80}
+      keyboardShouldPersistTaps="handled"
+    >
       {/* Salary Summary Card */}
       <View style={[styles.summaryCard, { backgroundColor: colors.primary }]}>
         <View style={styles.summaryContent}>
@@ -482,7 +490,7 @@ export default function SalaryScreen() {
                 placeholderTextColor={colors.textMuted}
                 value={autoMarkKeyword}
                 onChangeText={setAutoMarkKeyword}
-                autoCapitalize="characters"
+                autoCapitalize="none"
               />
               <Text style={[styles.toggleDescription, { color: colors.textMuted, marginTop: 4 }]}>
                 Only a credited SMS containing this text (case-insensitive) into your salary account will auto-match — the amount can vary month to month
@@ -1019,7 +1027,7 @@ export default function SalaryScreen() {
       </Modal>
 
       <View style={{ height: 40 }} />
-    </ScrollView>
+    </KeyboardAwareScrollView>
   );
 }
 

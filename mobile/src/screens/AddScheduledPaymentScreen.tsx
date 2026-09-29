@@ -1,5 +1,6 @@
 import { useState, useMemo } from 'react';
 import { View, Text, StyleSheet, TextInput, TouchableOpacity, ScrollView, Alert, ActivityIndicator, Switch, Platform } from 'react-native';
+import { KeyboardAwareScrollView } from 'react-native-keyboard-aware-scroll-view';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
@@ -332,7 +333,14 @@ export default function AddScheduledPaymentScreen() {
   }, [paymentType, creditCardAccountId, creditCardAccounts, isEditMode]);
 
   return (
-    <ScrollView style={[styles.container, { backgroundColor: colors.background }]} showsVerticalScrollIndicator={false}>
+    <KeyboardAwareScrollView
+      style={[styles.container, { backgroundColor: colors.background }]}
+      showsVerticalScrollIndicator={false}
+      enableOnAndroid
+      enableAutomaticScroll
+      extraScrollHeight={80}
+      keyboardShouldPersistTaps="handled"
+    >
       <View style={styles.field}>
         <Text style={[styles.label, { color: colors.textMuted }]}>Payment Type</Text>
         <View style={styles.paymentTypeRow}>
@@ -894,7 +902,7 @@ export default function AddScheduledPaymentScreen() {
               placeholderTextColor={colors.textMuted}
               value={autoMarkKeyword}
               onChangeText={setAutoMarkKeyword}
-              autoCapitalize="characters"
+              autoCapitalize="none"
             />
             <Text style={[styles.toggleDescription, { color: colors.textMuted, marginTop: 4 }]}>
               Only SMS containing this text (case-insensitive) and the exact cycle amount, near the due date, will auto-match
@@ -916,7 +924,7 @@ export default function AddScheduledPaymentScreen() {
       </TouchableOpacity>
 
       <View style={{ height: 40 }} />
-    </ScrollView>
+    </KeyboardAwareScrollView>
   );
 }
 

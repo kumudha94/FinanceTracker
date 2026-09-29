@@ -252,7 +252,7 @@ export default function AddInsuranceScreen() {
       style={[styles.container, { backgroundColor: colors.background }]}
       enableOnAndroid
       enableAutomaticScroll
-      extraScrollHeight={20}
+      extraScrollHeight={80}
       keyboardShouldPersistTaps="handled"
     >
       <View style={styles.form}>
@@ -655,7 +655,7 @@ export default function AddInsuranceScreen() {
                     placeholderTextColor={colors.textMuted}
                     value={autoMarkKeyword}
                     onChangeText={setAutoMarkKeyword}
-                    autoCapitalize="characters"
+                    autoCapitalize="none"
                   />
                   <Text style={[styles.toggleHint, { color: colors.textMuted, marginTop: 4 }]}>
                     Only SMS containing this text (case-insensitive) and the exact premium amount, near the due date, will auto-match

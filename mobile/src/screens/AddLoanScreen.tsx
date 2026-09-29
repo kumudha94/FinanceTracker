@@ -347,7 +347,7 @@ export default function AddLoanScreen() {
           showsVerticalScrollIndicator={false}
           enableOnAndroid
           enableAutomaticScroll
-          extraScrollHeight={20}
+          extraScrollHeight={80}
           keyboardShouldPersistTaps="handled"
         >
       <View style={styles.form}>
@@ -799,7 +799,7 @@ export default function AddLoanScreen() {
                   placeholderTextColor={colors.textMuted}
                   value={autoMarkKeyword}
                   onChangeText={setAutoMarkKeyword}
-                  autoCapitalize="characters"
+                  autoCapitalize="none"
                 />
                 <Text style={[styles.helperText, { color: colors.textMuted, marginTop: 4 }]}>
                   Only SMS containing this text (case-insensitive) and the exact EMI amount, near the due date, will auto-match
