@@ -625,12 +625,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(403).json({ error: "Invalid refresh token" });
       }
 
-      // Generate new access token
-      const newAccessToken = generateAccessToken(payload.userId, payload.email);
-      
-      res.json({ 
+      // Issue a fresh pair so the refresh token slides forward with use — otherwise an
+      // actively used app is still forced to re-login exactly 7 days after sign-in.
+      // Older app builds only read accessToken and keep working with their current token.
+      const { accessToken, refreshToken: newRefreshToken } = generateTokenPair(payload.userId, payload.email);
+
+      res.json({
         success: true,
-        accessToken: newAccessToken
+        accessToken,
+        refreshToken: newRefreshToken,
       });
     } catch (error: any) {
       console.error("Refresh token error:", error);

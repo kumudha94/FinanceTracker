@@ -35,6 +35,18 @@ export function setAuthenticationFailedCallback(callback: () => void) {
   onAuthenticationFailed = callback;
 }
 
+// Mirroring tokens to the home-screen widget is best-effort. It writes to Android
+// EncryptedSharedPreferences, which can throw (Keystore/keyset errors, especially under
+// concurrent writes) — and a throw here used to surface as a failed login refresh and
+// sign the user out even though the server had just issued a valid token.
+async function syncWidgetSafely(sync: () => Promise<void>): Promise<void> {
+  try {
+    await sync();
+  } catch (error) {
+    console.warn('Widget token sync failed (ignored):', error);
+  }
+}
+
 /**
  * Get stored access token
  */
@@ -68,9 +80,21 @@ export async function storeTokens(accessToken: string, refreshToken: string): Pr
       [STORAGE_KEYS.ACCESS_TOKEN, accessToken],
       [STORAGE_KEYS.REFRESH_TOKEN, refreshToken],
     ]);
-    await syncWidgetAuth(accessToken, refreshToken);
+    await syncWidgetSafely(() => syncWidgetAuth(accessToken, refreshToken));
   } catch (error) {
     console.error('Failed to store tokens:', error);
+  }
+}
+
+/**
+ * Re-mirror the stored tokens to the home-screen widget. Called on app start so a widget
+ * store that was reset (unreadable after a backup restore, etc.) is repopulated without
+ * waiting for the next login or token refresh.
+ */
+export async function syncStoredTokensToWidget(): Promise<void> {
+  const [accessToken, refreshToken] = await Promise.all([getAccessToken(), getRefreshToken()]);
+  if (accessToken && refreshToken) {
+    await syncWidgetSafely(() => syncWidgetAuth(accessToken, refreshToken));
   }
 }
 
@@ -80,7 +104,7 @@ export async function storeTokens(accessToken: string, refreshToken: string): Pr
 export async function storeToken(token: string): Promise<void> {
   try {
     await AsyncStorage.setItem(STORAGE_KEYS.ACCESS_TOKEN, token);
-    await syncWidgetAccessToken(token);
+    await syncWidgetSafely(() => syncWidgetAccessToken(token));
   } catch (error) {
     console.error('Failed to store token:', error);
   }
@@ -92,51 +116,71 @@ export async function storeToken(token: string): Promise<void> {
 export async function clearTokens(): Promise<void> {
   try {
     await AsyncStorage.multiRemove([STORAGE_KEYS.ACCESS_TOKEN, STORAGE_KEYS.REFRESH_TOKEN]);
-    await clearWidgetAuth();
+    await syncWidgetSafely(clearWidgetAuth);
   } catch (error) {
     console.error('Failed to clear tokens:', error);
   }
 }
 
 /**
- * Refresh access token using refresh token
+ * Refresh access token using refresh token.
+ *
+ * Returns the new access token, 'rejected' when the server says the refresh token is
+ * no longer valid (the only case that should sign the user out), or 'unavailable' for
+ * transient failures (no network, server cold start/5xx) where tokens must be kept.
  */
-async function refreshAccessToken(): Promise<string | null> {
-  try {
-    const refreshToken = await getRefreshToken();
-    if (!refreshToken) {
-      // No refresh token available, clear tokens and return null
-      await clearTokens();
-      return null;
-    }
+type RefreshResult = string | 'rejected' | 'unavailable';
 
-    const response = await fetch(`${API_BASE_URL}/api/auth/refresh-token`, {
+// Reopening the app fires ~8 queries at once, all with the same expired access token.
+// Share one in-flight refresh between them instead of racing 8 refresh calls.
+let refreshInFlight: Promise<RefreshResult> | null = null;
+
+function refreshAccessToken(): Promise<RefreshResult> {
+  if (!refreshInFlight) {
+    refreshInFlight = doRefreshAccessToken().finally(() => {
+      refreshInFlight = null;
+    });
+  }
+  return refreshInFlight;
+}
+
+async function doRefreshAccessToken(): Promise<RefreshResult> {
+  const refreshToken = await getRefreshToken();
+  if (!refreshToken) return 'rejected';
+
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE_URL}/api/auth/refresh-token`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ refreshToken }),
     });
-
-    if (!response.ok) {
-      // Refresh failed, clear tokens
-      await clearTokens();
-      return null;
-    }
-
-    const data = await response.json();
-    if (data.accessToken) {
-      await AsyncStorage.setItem(STORAGE_KEYS.ACCESS_TOKEN, data.accessToken);
-      await syncWidgetAccessToken(data.accessToken);
-      return data.accessToken;
-    }
-
-    // No access token in response, clear tokens
-    await clearTokens();
-    return null;
   } catch (error) {
-    console.error('Failed to refresh token:', error);
-    await clearTokens();
-    return null;
+    console.warn('Token refresh request failed (network):', error);
+    return 'unavailable';
   }
+
+  if (response.status === 400 || response.status === 401 || response.status === 403) {
+    return 'rejected';
+  }
+  if (!response.ok) return 'unavailable';
+
+  let data: { accessToken?: string; refreshToken?: string };
+  try {
+    data = await response.json();
+  } catch {
+    return 'unavailable';
+  }
+  if (!data.accessToken) return 'unavailable';
+
+  if (data.refreshToken) {
+    // Sliding session: each refresh extends the refresh token, so regular use never
+    // hits a hard re-login.
+    await storeTokens(data.accessToken, data.refreshToken);
+  } else {
+    await storeToken(data.accessToken);
+  }
+  return data.accessToken;
 }
 
 async function apiRequest<T>(
@@ -193,8 +237,13 @@ async function apiRequest<T>(
 
     // If 401 or 403, try refreshing the token and retry once
     if ((response.status === 401 || response.status === 403) && token) {
-      const newToken = await refreshAccessToken();
-      if (newToken) {
+      const refreshResult = await refreshAccessToken();
+      if (refreshResult === 'unavailable') {
+        // Keep the user signed in — the refresh can be retried on the next request.
+        throw new Error('Could not reach the server. Please try again.');
+      }
+      if (refreshResult !== 'rejected') {
+        const newToken = refreshResult;
         // Retry request with new token
         headers['Authorization'] = `Bearer ${newToken}`;
         const retryResponse = await fetch(url, {

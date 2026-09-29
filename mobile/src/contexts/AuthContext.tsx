@@ -1,7 +1,7 @@
 import { createContext, useContext, useState, useEffect, ReactNode, useRef, useCallback } from 'react';
 import { AppState, AppStateStatus } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { api, storeTokens, clearTokens, setAuthenticationFailedCallback } from '../lib/api';
+import { api, storeTokens, clearTokens, setAuthenticationFailedCallback, syncStoredTokensToWidget } from '../lib/api';
 import type { User } from '../lib/types';
 
 interface AuthContextType {
@@ -106,6 +106,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       
       if (storedUser) {
         const userData = JSON.parse(storedUser);
+        syncStoredTokensToWidget();
         setUser(userData);
         setIsAuthenticated(true);
         const userHasPin = userData.hasPin;
