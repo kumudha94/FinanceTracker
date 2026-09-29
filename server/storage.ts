@@ -40,6 +40,7 @@ import {
 import { db } from "./db";
 import { eq, and, gte, lte, lt, ne, desc, sql, ilike, or, inArray, isNotNull } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
+import { getRegenerationSchedule } from "./loanUtils";
 
 // A pending loan installment / insurance premium / scheduled payment occurrence that matched a
 // debited SMS on amount + keyword + due-date window, found by findAutoMarkCandidates. itemId is
@@ -2519,10 +2520,17 @@ export class DatabaseStorage implements IStorage {
     
     // Determine the base date for calculation
     let baseDate: Date;
+    let regenerationStartIndex: number | null = null;
     if (useCurrentDate) {
-      // For regeneration, always start from current month
-      baseDate = new Date();
-      // console.log('Using current date as base:', baseDate.toISOString());
+      // For regeneration, continue right after the last paid installment (or from the
+      // current month if nothing is paid) so an unpaid past-due month isn't dropped
+      const lastPaidDueDate = paidInstallments.reduce<Date | null>((latest, inst) => {
+        const due = new Date(inst.dueDate);
+        return !latest || due > latest ? due : latest;
+      }, null);
+      const schedule = getRegenerationSchedule(lastPaidDueDate);
+      baseDate = schedule.baseDate;
+      regenerationStartIndex = schedule.startIndex;
     } else {
       // For initial generation, use existing logic
       const isExistingLoan = loan.isExistingLoan ?? false;
@@ -2551,7 +2559,7 @@ export class DatabaseStorage implements IStorage {
     const today = new Date();
     const currentDayOfMonth = today.getDate();
     const shouldIncludeCurrentMonth = currentDayOfMonth <= emiDay;
-    const startIndex = shouldIncludeCurrentMonth ? 0 : 1;
+    const startIndex = regenerationStartIndex ?? (shouldIncludeCurrentMonth ? 0 : 1);
     
     // console.log('Current day:', currentDayOfMonth, 'EMI day:', emiDay, 
     //             'Should include current month:', shouldIncludeCurrentMonth, 

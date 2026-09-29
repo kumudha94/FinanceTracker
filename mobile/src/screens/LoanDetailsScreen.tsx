@@ -641,13 +641,12 @@ export default function LoanDetailsScreen() {
   const partPaymentPreview = calculatePartPaymentPreview();
 
   const getUpcomingInstallments = () => {
-    // Compare calendar dates, not exact timestamps — an installment due dates at
-    // midnight today, so a plain `>= new Date()` check drops out of "upcoming" the
-    // moment any time passes after midnight on its due day.
-    const startOfToday = new Date();
-    startOfToday.setHours(0, 0, 0, 0);
+    // Past-due pending installments stay in the list (rendered with past-due styling)
+    // so an EMI whose due date has passed can still be marked paid — filtering them
+    // out made an unpaid month vanish from the app entirely.
     return installments
-      .filter(i => i.status === 'pending' && new Date(i.dueDate) >= startOfToday)
+      .filter(i => i.status === 'pending')
+      .sort((a, b) => new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime())
       .slice(0, 6);
   };
 
