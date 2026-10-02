@@ -31,15 +31,21 @@ val KEY_SPENDING_JSON = stringPreferencesKey("spending_json")
 val KEY_SPENDING_UPDATED_AT = stringPreferencesKey("spending_updated_at")
 val KEY_SPENDING_ERROR = stringPreferencesKey("spending_error")
 
+val KEY_ALLOWANCE_JSON = stringPreferencesKey("allowance_json")
+val KEY_ALLOWANCE_UPDATED_AT = stringPreferencesKey("allowance_updated_at")
+val KEY_ALLOWANCE_ERROR = stringPreferencesKey("allowance_error")
+
 class WidgetUpdateWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
   override suspend fun doWork(): Result {
     val balanceHadNetworkError = updateBalanceWidget(applicationContext)
     val transactionsHadNetworkError = updateRecentTransactionsWidget(applicationContext)
     val spendingHadNetworkError = updateSpendingWidgets(applicationContext)
+    val allowanceHadNetworkError = updateAllowanceWidget(applicationContext)
     // Retry with WorkManager's backoff on a transient network failure instead of waiting
     // for the next 30-minute cycle. AuthFailure isn't retried here - the user needs to
     // open the app to sign in again, retrying won't help.
-    return if (balanceHadNetworkError || transactionsHadNetworkError || spendingHadNetworkError) Result.retry() else Result.success()
+    val anyNetworkError = balanceHadNetworkError || transactionsHadNetworkError || spendingHadNetworkError || allowanceHadNetworkError
+    return if (anyNetworkError) Result.retry() else Result.success()
   }
 
   /** Returns true if this fetch failed with a [WidgetDataResult.NetworkError]. */
@@ -142,6 +148,36 @@ private suspend fun updateSpendingWidgets(context: Context): Boolean {
   }
   CreditCardsWidget().updateAll(context)
   TopSpendingWidget().updateAll(context)
+  return result is WidgetDataResult.NetworkError
+}
+
+/** Returns true if this fetch failed with a [WidgetDataResult.NetworkError]. */
+private suspend fun updateAllowanceWidget(context: Context): Boolean {
+  val glanceIds = GlanceAppWidgetManager(context).getGlanceIds(SpendingAllowanceWidget::class.java)
+  if (glanceIds.isEmpty()) return false
+
+  val result = WidgetRepository.fetchSpendingAllowance(context)
+  for (glanceId in glanceIds) {
+    updateAppWidgetState(context, glanceId) { prefs ->
+      when (result) {
+        is WidgetDataResult.Success -> {
+          val a = result.data
+          prefs[KEY_ALLOWANCE_JSON] = JSONObject()
+            .put("configured", a.configured)
+            .put("today", JSONObject().put("limit", a.todayLimit).put("spent", a.todaySpent).put("left", a.todayLeft))
+            .put("week", JSONObject().put("left", a.weekLeft))
+            .put("cycleLeft", a.cycleLeft)
+            .put("cycle", JSONObject().put("daysLeft", a.daysLeft))
+            .toString()
+          prefs[KEY_ALLOWANCE_UPDATED_AT] = System.currentTimeMillis().toString()
+          prefs.remove(KEY_ALLOWANCE_ERROR)
+        }
+        is WidgetDataResult.AuthFailure -> prefs[KEY_ALLOWANCE_ERROR] = "auth"
+        is WidgetDataResult.NetworkError -> prefs[KEY_ALLOWANCE_ERROR] = "network"
+      }
+    }
+  }
+  SpendingAllowanceWidget().updateAll(context)
   return result is WidgetDataResult.NetworkError
 }
 

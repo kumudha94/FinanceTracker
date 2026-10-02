@@ -1,6 +1,6 @@
 import type {
   Account, Category, Transaction, Budget, ScheduledPayment,
-  User, DashboardData, DashboardSummary, WeeklySummary, NextMonthForecast, ForecastItemType, InsertAccount, InsertTransaction,
+  User, DashboardData, DashboardSummary, WeeklySummary, NextMonthForecast, SpendingAllowance, AllowanceSettings, ForecastItemType, InsertAccount, InsertTransaction,
   InsertBudget, InsertScheduledPayment, PaymentOccurrence, PaymentOccurrencesCycleResponse,
   PlannedIncomeEntry, InsertPlannedIncomeEntry,
   SavingsGoal, SavingsContribution, InsertSavingsGoal, InsertSavingsContribution,
@@ -332,6 +332,12 @@ export const api = {
   getDashboardSummary: () => apiRequest<DashboardSummary>('/api/dashboard-summary'),
   getWeeklySummary: () => apiRequest<WeeklySummary>('/api/dashboard/weekly-summary'),
   getNextMonthForecast: () => apiRequest<NextMonthForecast>('/api/next-month-forecast'),
+  getSpendingAllowance: () => apiRequest<SpendingAllowance>('/api/spending-allowance'),
+  updateSpendingAllowanceSettings: (data: Partial<AllowanceSettings>) =>
+    apiRequest<AllowanceSettings>('/api/spending-allowance/settings', {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    }),
   toggleForecastExclusion: (itemType: ForecastItemType, itemId: number | string) =>
     apiRequest<{ excluded: boolean }>('/api/forecast-exclusions/toggle', {
       method: 'POST',

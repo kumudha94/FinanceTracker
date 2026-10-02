@@ -22,13 +22,20 @@ import {
   insertCardDetailsSchema,
   insertInsuranceSchema,
   insertInsurancePremiumSchema,
-  insertPlannedIncomeEntrySchema
+  insertPlannedIncomeEntrySchema,
+  type SalaryProfile,
 } from "@shared/schema";
 import { suggestCategory, parseSmsMessage, parseStatementPDF, ExtractedTransaction } from "./openai";
 import { deriveInstitutionKey, parseDueSms } from "./smsParser";
 import multer from "multer";
 // pdf-parse is imported dynamically at usage site to avoid pdfjs-dist crashing on startup
 import { getPaydayForMonth, getNextPaydays, getPastPaydays, getCurrentCycleDates, getNextCycleDates, getCyclePrimaryMonth, findOccurrenceInCycle, getSpannedMonths, filterOccurrencesInCycle, getCreditCardBillingCycle, shouldAutoMarkSalaryCredit } from "./salaryUtils";
+import { buildCycleCommitments, type CycleCommitmentGroups } from "./cycleCommitments";
+import {
+  selectCountedDebits, resolveSalaryIncome, computeSpendingAllowance, computeWalletIncome,
+  type AllowanceTxn, type CommitmentItem, type CommitmentType,
+} from "./spendingAllowance";
+import { z } from "zod";
 import { selectSmsOwnerAccounts, resolveSmsTransactionDate } from "./smsProcessingUtils";
 import { getWeekBounds, getPreviousWeekBounds } from "./weekUtils";
 import { validateNewSpendingEntry } from "./loanSpendingValidation";
@@ -3326,13 +3333,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { month: nextMonth, year: nextYear } = getCyclePrimaryMonth(nextCycle.cycleStart, nextCycle.cycleEnd);
       const monthLabel = nextCycle.cycleLabel;
 
-      // Items the user has opted out of this specific cycle's Income/Outflow/Balance totals —
-      // still shown in the list (so it's obvious they exist and can be re-included), just not
-      // counted toward the sums.
-      const exclusions = await storage.getForecastExclusions(userId, nextCycle.cycleStart);
-      const excludedKeys = new Set(exclusions.map(e => `${e.itemType}:${e.itemId}`));
-      const isExcluded = (itemType: string, itemId: string | number) => excludedKeys.has(`${itemType}:${itemId}`);
-
       const salaryItems: any[] = [];
       let totalIncome = 0;
 
@@ -3366,247 +3366,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
         totalIncome += amount;
       }
 
-      const plannedIncomeEntriesForCycle = (await storage.getPlannedIncomeEntries(userId, nextMonth, nextYear))
-        .filter(e => e.status === 'planned');
-      const plannedIncomeItems: any[] = [];
-      let totalPlannedIncome = 0;
-      for (const entry of plannedIncomeEntriesForCycle) {
-        const amount = parseFloat(entry.amount);
-        const excluded = isExcluded('planned_income', entry.id);
-        plannedIncomeItems.push({
-          id: entry.id,
-          name: entry.name,
-          amount,
-          dueDate: null,
-          excluded,
-        });
-        if (!excluded) totalPlannedIncome += amount;
-      }
+      const groups = await buildCycleCommitments(userId, {
+        cycleStart: nextCycle.cycleStart,
+        cycleEnd: nextCycle.cycleEnd,
+        now,
+        mode: 'next',
+      });
+      const sumIncluded = (items: any[]) => items.filter(i => !i.excluded).reduce((sum, i) => sum + i.amount, 0);
+      const plannedIncomeItems = groups.plannedIncome;
+      const scheduledPaymentItems = groups.scheduledPayments;
+      const loanItems = groups.loans;
+      const insuranceItems = groups.insurance;
+      const creditCardBillItems = groups.creditCardBills;
+      const savingsItems = groups.savings;
+      const totalPlannedIncome = sumIncluded(plannedIncomeItems);
       totalIncome += totalPlannedIncome;
-
-      const allPayments = await storage.getAllScheduledPayments(userId);
-      const activePayments = allPayments.filter(p => p.status === 'active');
-
-      const isPaymentDueNextMonth = (payment: any): boolean => {
-        const frequency = payment.frequency || 'monthly';
-        const startMonth = payment.startMonth;
-
-        switch (frequency) {
-          case 'monthly': return true;
-          case 'quarterly': {
-            if (startMonth) {
-              const quarterMonths = [startMonth];
-              for (let i = 1; i < 4; i++) {
-                quarterMonths.push(((startMonth - 1 + i * 3) % 12) + 1);
-              }
-              return quarterMonths.includes(nextMonth);
-            }
-            return [1, 4, 7, 10].includes(nextMonth);
-          }
-          case 'half_yearly': {
-            if (startMonth) {
-              return nextMonth === startMonth || nextMonth === ((startMonth + 5) % 12) + 1;
-            }
-            return nextMonth === 1 || nextMonth === 7;
-          }
-          case 'yearly':
-            return startMonth ? nextMonth === startMonth : nextMonth === 1;
-          case 'custom': {
-            if (payment.customIntervalMonths && payment.customIntervalMonths > 0) {
-              const interval = payment.customIntervalMonths;
-              const refMonth = startMonth || ((payment.createdAt instanceof Date ? payment.createdAt : new Date(payment.createdAt)).getMonth() + 1);
-              const refYear = (payment.createdAt instanceof Date ? payment.createdAt : new Date(payment.createdAt)).getFullYear();
-              const totalMonthsDiff = (nextYear - refYear) * 12 + (nextMonth - refMonth);
-              return totalMonthsDiff >= 0 && totalMonthsDiff % interval === 0;
-            }
-            return true;
-          }
-          case 'one_time': {
-            if (startMonth) {
-              const created = payment.createdAt instanceof Date ? payment.createdAt : new Date(payment.createdAt);
-              const targetYear = startMonth >= created.getMonth() + 1
-                ? created.getFullYear()
-                : created.getFullYear() + 1;
-              return nextMonth === startMonth && nextYear === targetYear;
-            }
-            return false;
-          }
-          default: return true;
-        }
-      };
-
-      const scheduledPaymentItems: any[] = [];
-      let totalScheduled = 0;
-      for (const p of activePayments) {
-        if (p.paymentType === 'credit_card_bill') continue;
-        if (!isPaymentDueNextMonth(p)) continue;
-        const amount = parseFloat(p.amount || '0');
-        const freq = p.frequency || 'monthly';
-        const freqLabel = freq === 'monthly' ? 'Monthly' : freq === 'quarterly' ? 'Quarterly' : freq === 'half_yearly' ? 'Half Yearly' : freq === 'yearly' ? 'Yearly' : freq === 'custom' ? 'Custom' : '';
-        const excluded = isExcluded('scheduled_payment', p.id);
-        scheduledPaymentItems.push({
-          id: p.id,
-          name: p.name,
-          amount,
-          dueDate: p.dueDate,
-          subLabel: freqLabel,
-          excluded,
-        });
-        if (!excluded) totalScheduled += amount;
-      }
-
-      const loans = await storage.getAllLoans(userId);
-      const activeLoans = loans.filter(l => l.status === 'active');
-      const loanItems = await Promise.all(activeLoans.map(async (loan) => {
-        const installments = await storage.getLoanInstallments(loan.id);
-        const nextInstallment = installments.find(inst => {
-          const d = new Date(inst.dueDate);
-          return d.getMonth() + 1 === nextMonth && d.getFullYear() === nextYear;
-        });
-        const amount = nextInstallment ? parseFloat(nextInstallment.emiAmount) : parseFloat(loan.emiAmount || '0');
-        const typeLabel = loan.type === 'home_loan' ? 'Home Loan' : loan.type === 'personal_loan' ? 'Personal Loan' : loan.type === 'credit_card_loan' ? 'CC Loan' : loan.type === 'item_emi' ? 'Item EMI' : 'Loan';
-        const excluded = isExcluded('loan', loan.id);
-        return {
-          id: loan.id,
-          name: loan.name,
-          amount,
-          dueDate: loan.emiDay,
-          subLabel: `${typeLabel}${loan.lenderName ? ` · ${loan.lenderName}` : ''}`,
-          excluded,
-        };
-      }));
-      const totalLoans = loanItems.filter(item => !item.excluded).reduce((sum, item) => sum + item.amount, 0);
-
-      const allInsurances = await storage.getAllInsurances(userId);
-      // Auto-funded policies (e.g. a market/sub policy funded by a main policy's benefit) are
-      // never something the user pays directly — exclude them from due/forecast projections
-      // entirely; their premium history is only meaningful on the policy's own details view.
-      const activeInsurances = allInsurances.filter(i => i.status === 'active' && !i.autoFunded);
-      const insuranceItems: any[] = [];
-      let totalInsurance = 0;
-      for (const ins of activeInsurances) {
-        const premiums = ins.premiums || [];
-        const nextPremium = premiums.find((p: any) => {
-          const d = new Date(p.dueDate);
-          return d.getMonth() + 1 === nextMonth && d.getFullYear() === nextYear && p.status !== 'paid';
-        });
-        if (nextPremium) {
-          const amount = parseFloat(nextPremium.amount);
-          const typeLabel = ins.type === 'health' ? 'Health' : ins.type === 'life' ? 'Life' : ins.type === 'vehicle' ? 'Vehicle' : ins.type === 'home' ? 'Home' : ins.type === 'term' ? 'Term' : 'Insurance';
-          const excluded = isExcluded('insurance', ins.id);
-          insuranceItems.push({
-            id: ins.id,
-            name: ins.name,
-            amount,
-            dueDate: new Date(nextPremium.dueDate).getDate(),
-            subLabel: `${typeLabel}${ins.providerName ? ` · ${ins.providerName}` : ''}`,
-            excluded,
-          });
-          if (!excluded) totalInsurance += amount;
-        }
-      }
-
-      const activeSavingsGoals = (await storage.getAllSavingsGoals(userId)).filter(
-        (g) => g.status === 'active' && parseFloat(g.monthlyExpectedAmount || '0') > 0
-      );
-      const savingsItems: any[] = activeSavingsGoals.map((g) => ({
-        id: g.id,
-        name: g.name,
-        amount: parseFloat(g.monthlyExpectedAmount || '0'),
-        dueDate: null,
-        subLabel: 'Savings Goal',
-        excluded: isExcluded('savings_goal', g.id),
-      }));
-      const totalSavings = savingsItems.filter(item => !item.excluded).reduce((sum, item) => sum + item.amount, 0);
-
-      const allAccounts = await storage.getAllAccounts(userId);
-      const ccCards = allAccounts.filter(a => a.type === 'credit_card' && a.isActive && a.billingDate);
-      const manualCCIds = new Set(
-        activePayments.filter(p => p.paymentType === 'credit_card_bill').map(p => p.creditCardAccountId).filter(Boolean)
-      );
-
-      // Auto-detected credit card bills (spend-based) — one transaction-history query per card,
-      // run concurrently instead of awaited in sequence.
-      const autoCcItems = (await Promise.all(
-        ccCards.filter(card => !manualCCIds.has(card.id)).map(async (card) => {
-          const billingDay = card.billingDate!;
-          const currentDay = now.getDate();
-          let curCycleStart: Date;
-          let curCycleEnd: Date;
-          if (currentDay >= billingDay) {
-            curCycleStart = new Date(now.getFullYear(), now.getMonth(), billingDay, 0, 0, 0);
-            curCycleEnd = new Date(now.getFullYear(), now.getMonth() + 1, billingDay - 1, 23, 59, 59);
-          } else {
-            curCycleStart = new Date(now.getFullYear(), now.getMonth() - 1, billingDay, 0, 0, 0);
-            curCycleEnd = new Date(now.getFullYear(), now.getMonth(), billingDay - 1, 23, 59, 59);
-          }
-          const curCycleTxns = await storage.getAllTransactions({
-            userId,
-            accountId: card.id,
-            startDate: curCycleStart,
-            endDate: new Date(),
-          });
-          const spentSoFar = curCycleTxns
-            .filter(t => t.type === 'debit')
-            .reduce((sum, t) => sum + parseFloat(t.amount), 0);
-          if (spentSoFar <= 0) return null;
-          const creditLimit = card.creditLimit ? parseFloat(card.creditLimit) : null;
-          const itemId = `cc-auto-${card.id}`;
-          return {
-            id: itemId,
-            name: `${card.name} Bill`,
-            amount: spentSoFar,
-            dueDate: billingDay,
-            subLabel: `Spent so far this cycle`,
-            creditLimit,
-            excluded: isExcluded('credit_card_bill', itemId),
-          };
-        })
-      )).filter((item): item is NonNullable<typeof item> => item !== null);
-
-      // Manually-configured credit card bill payments — same concurrency treatment.
-      const manualCcItems = await Promise.all(
-        activePayments
-          .filter(p => p.paymentType === 'credit_card_bill' && isPaymentDueNextMonth(p) && manualCCIds.has(p.creditCardAccountId))
-          .map(async (p) => {
-            let amount = parseFloat(p.amount || '0');
-
-            // If amount is 0 (auto-calculate), fetch the actual billing cycle amount
-            if (amount === 0 && p.creditCardAccountId) {
-              const creditCardAccount = await storage.getAccount(p.creditCardAccountId);
-              if (creditCardAccount && creditCardAccount.billingDate) {
-                const { getCreditCardBillingCycle } = await import('./salaryUtils');
-                const { cycleStart, cycleEnd } = getCreditCardBillingCycle(now, creditCardAccount.billingDate);
-                const cycleTransactions = await storage.getAllTransactions({
-                  accountId: creditCardAccount.id,
-                  startDate: cycleStart,
-                  endDate: cycleEnd,
-                });
-                amount = cycleTransactions
-                  .filter(t => t.type === 'debit')
-                  .reduce((sum, t) => sum + parseFloat(t.amount), 0);
-              }
-            }
-
-            let creditLimit: number | null = null;
-            const linkedCard = allAccounts.find(a => a.id === p.creditCardAccountId);
-            if (linkedCard && linkedCard.creditLimit) {
-              creditLimit = parseFloat(linkedCard.creditLimit);
-            }
-            return {
-              id: p.id,
-              name: p.name,
-              amount,
-              dueDate: p.dueDate,
-              subLabel: 'Monthly',
-              creditLimit,
-              excluded: isExcluded('credit_card_bill', p.id),
-            };
-          })
-      );
-
-      const creditCardBillItems: any[] = [...autoCcItems, ...manualCcItems];
-      const totalCreditCardBills = creditCardBillItems.filter(item => !item.excluded).reduce((sum, item) => sum + item.amount, 0);
+      const totalScheduled = sumIncluded(scheduledPaymentItems);
+      const totalLoans = sumIncluded(loanItems);
+      const totalInsurance = sumIncluded(insuranceItems);
+      const totalCreditCardBills = sumIncluded(creditCardBillItems);
+      const totalSavings = sumIncluded(savingsItems);
 
       const totalOutflow = totalScheduled + totalLoans + totalInsurance + totalCreditCardBills + totalSavings;
 
@@ -3668,6 +3447,137 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error: any) {
       console.error("Error toggling forecast exclusion:", error.message);
       res.status(500).json({ error: error.message || "Failed to toggle forecast exclusion" });
+    }
+  });
+
+  const DEFAULT_NEVER_COUNT_CATEGORIES = ["Repayment", "EMI", "Investment", "Transfer"];
+
+  // Allowance settings live on the salary profile. A null category list means "never set":
+  // seed it once with the default categories (those that exist) and store it, so the user sees
+  // and can change the starting list. An empty array means the user cleared it.
+  async function resolveAllowanceSettings(profile: SalaryProfile) {
+    let neverCountCategoryIds = profile.allowanceExcludedCategoryIds;
+    if (neverCountCategoryIds == null) {
+      const all = await storage.getAllCategories();
+      neverCountCategoryIds = all.filter(c => DEFAULT_NEVER_COUNT_CATEGORIES.includes(c.name)).map(c => c.id);
+      await storage.updateSalaryProfile(profile.id, { allowanceExcludedCategoryIds: neverCountCategoryIds });
+    }
+    return { holdBackSavings: profile.allowanceHoldBackSavings, neverCountCategoryIds };
+  }
+
+  const COMMITMENT_GROUP_TYPES: Array<[keyof Omit<CycleCommitmentGroups, 'plannedIncome'>, CommitmentType]> = [
+    ['scheduledPayments', 'scheduled_payment'],
+    ['loans', 'loan'],
+    ['insurance', 'insurance'],
+    ['creditCardBills', 'credit_card_bill'],
+    ['savings', 'savings_goal'],
+  ];
+
+  app.get("/api/spending-allowance", authenticateToken, async (req, res) => {
+    try {
+      const userId = req.user!.userId;
+      const now = new Date();
+      const profile = await storage.getSalaryProfile(userId);
+      if (!profile || !profile.isActive || !profile.monthlyAmount) {
+        return res.json({ configured: false });
+      }
+      const lastSalaryCycle = (await storage.getSalaryCycles(profile.id, 1))[0] ?? null;
+      const { cycleStart, cycleEnd } = getCurrentCycleDates(profile, lastSalaryCycle, now);
+      const settings = await resolveAllowanceSettings(profile);
+
+      const groups = await buildCycleCommitments(userId, { cycleStart, cycleEnd, now, mode: 'current' });
+      const commitments: CommitmentItem[] = COMMITMENT_GROUP_TYPES
+        .filter(([, itemType]) => settings.holdBackSavings || itemType !== 'savings_goal')
+        .flatMap(([group, itemType]) => groups[group]
+          .filter((i: any) => !i.excluded && i.amount > 0)
+          .map((i: any) => ({ itemType, id: i.id, name: i.name, amount: i.amount, subLabel: i.subLabel ?? '' })));
+
+      // A day before the cycle too, so a transfer's other half just before payday still pairs.
+      const rows = await storage.getAllTransactions({ userId, startDate: new Date(cycleStart.getTime() - 24 * 60 * 60 * 1000), endDate: now });
+      const txns: AllowanceTxn[] = rows.map(t => ({
+        id: t.id,
+        type: t.type,
+        amount: parseFloat(t.amount),
+        transactionDate: new Date(t.transactionDate),
+        accountId: t.accountId,
+        accountType: t.account?.type ?? null,
+        accountName: t.account?.name ?? null,
+        categoryId: t.categoryId,
+        categoryName: t.category?.name ?? null,
+        merchant: t.merchant || t.description || null,
+        excludedFromAllowance: !!t.excludedFromAllowance,
+        paymentOccurrenceId: t.paymentOccurrenceId,
+        savingsContributionId: t.savingsContributionId,
+      }));
+
+      const cycleDebitIds = txns.filter(t => t.type === 'debit' && t.transactionDate >= cycleStart).map(t => t.id);
+      const linkedPaymentTxnIds = await storage.getPaymentLinkedTransactionIds(cycleDebitIds);
+      const { counted, excluded } = selectCountedDebits(txns, cycleStart, {
+        linkedPaymentTxnIds,
+        neverCountCategoryIds: new Set(settings.neverCountCategoryIds),
+        cardBillItems: commitments.filter(c => c.itemType === 'credit_card_bill'),
+        holdBackSavings: settings.holdBackSavings,
+      });
+
+      const salary = resolveSalaryIncome(profile.monthlyAmount, lastSalaryCycle, cycleStart, cycleEnd);
+      // Wallet credits, less the wallet half of bank -> wallet top-ups (already in the salary).
+      const walletIncome = computeWalletIncome(txns, excluded, cycleStart);
+
+      const a = computeSpendingAllowance({ now, cycleEnd, salaryIncome: salary.amount, walletIncome, commitments, counted });
+      const row = (t: AllowanceTxn) => ({
+        id: t.id, date: t.transactionDate.toISOString(), merchant: t.merchant, amount: t.amount,
+        accountName: t.accountName, categoryName: t.categoryName,
+      });
+      const newestFirst = (x: { date: string }, y: { date: string }) => y.date.localeCompare(x.date);
+
+      res.json({
+        configured: true,
+        cycle: { start: cycleStart.toISOString(), end: cycleEnd.toISOString(), daysLeft: a.daysLeft },
+        today: { limit: a.dailyLimit, spent: a.spentToday, left: a.todayLeft },
+        week: { left: a.weekLeft },
+        cycleLeft: a.cycleLeft,
+        income: { salary: salary.amount, salaryIsActual: salary.isActual, wallet: walletIncome },
+        heldBack: { total: a.heldBack, items: commitments },
+        spent: { total: Math.round((a.spentToday + a.spentBeforeToday) * 100) / 100, counted: counted.map(row).sort(newestFirst) },
+        excluded: excluded.map(e => ({ ...row(e.txn), reason: e.reason })).sort(newestFirst),
+        settings,
+      });
+    } catch (error) {
+      console.error("Error computing spending allowance:", error);
+      res.status(500).json({ error: "Failed to compute spending allowance" });
+    }
+  });
+
+  const allowanceSettingsSchema = z.object({
+    holdBackSavings: z.boolean().optional(),
+    neverCountCategoryIds: z.array(z.number().int()).optional(),
+  });
+
+  app.patch("/api/spending-allowance/settings", authenticateToken, async (req, res) => {
+    try {
+      const userId = req.user!.userId;
+      const parsed = allowanceSettingsSchema.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0]?.message ?? "Invalid settings" });
+      const profile = await storage.getSalaryProfile(userId);
+      if (!profile) return res.status(404).json({ error: "Set up a salary profile first" });
+
+      const { holdBackSavings, neverCountCategoryIds } = parsed.data;
+      if (neverCountCategoryIds) {
+        const known = new Set((await storage.getAllCategories()).map(c => c.id));
+        const unknown = neverCountCategoryIds.filter(id => !known.has(id));
+        if (unknown.length > 0) return res.status(400).json({ error: `Unknown category id(s): ${unknown.join(', ')}` });
+      }
+      const updated = await storage.updateSalaryProfile(profile.id, {
+        ...(holdBackSavings !== undefined && { allowanceHoldBackSavings: holdBackSavings }),
+        ...(neverCountCategoryIds !== undefined && { allowanceExcludedCategoryIds: neverCountCategoryIds }),
+      });
+      res.json({
+        holdBackSavings: updated!.allowanceHoldBackSavings,
+        neverCountCategoryIds: updated!.allowanceExcludedCategoryIds ?? [],
+      });
+    } catch (error: any) {
+      console.error("Error updating allowance settings:", error.message);
+      res.status(500).json({ error: "Failed to update allowance settings" });
     }
   });
 

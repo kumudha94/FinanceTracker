@@ -31,6 +31,13 @@ const RECEIVERS = [
     descriptionKey: 'top_spending_widget_description',
     description: 'Your top spending categories this cycle',
   },
+  {
+    className: 'SpendingAllowanceWidgetReceiver',
+    infoXml: 'spending_allowance_widget_info',
+    label: 'Safe to spend',
+    descriptionKey: 'spending_allowance_widget_description',
+    description: 'How much you can spend today, this week and until payday',
+  },
 ];
 
 function withWidgetsManifest(config) {
@@ -66,6 +73,13 @@ function withWidgetsManifest(config) {
           ],
         });
       }
+    }
+
+    // Not a widget: lets the widget-bridge module trigger an immediate refresh with an explicit
+    // broadcast. Not exported, so only this app can send it.
+    const refreshName = '.widgets.WidgetRefreshReceiver';
+    if (!application.receiver.some((r) => r.$['android:name'] === refreshName)) {
+      application.receiver.push({ $: { 'android:name': refreshName, 'android:exported': 'false' } });
     }
 
     return config;
@@ -112,6 +126,7 @@ function withWidgetsNativeFiles(config) {
         'BalanceWidget.kt',
         'RecentTransactionsWidget.kt',
         'SpendingWidgets.kt',
+        'SpendingAllowanceWidget.kt',
       ];
       for (const fileName of kotlinFiles) {
         let source = fs.readFileSync(path.join(nativeSrcDir, fileName), 'utf8');

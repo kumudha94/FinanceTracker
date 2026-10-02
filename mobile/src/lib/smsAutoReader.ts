@@ -4,6 +4,7 @@ import * as Notifications from 'expo-notifications';
 import NetInfo from '@react-native-community/netinfo';
 import { API_BASE_URL, TASKER_API_KEY } from './api';
 import { buildSmsNotification, SmsNotificationResult } from './smsNotificationContent';
+import { refreshWidgets } from '../../modules/widget-bridge';
 
 const STORAGE_KEYS = {
   AUTO_READ_ENABLED: '@finance_tracker_sms_auto_read_enabled',
@@ -71,10 +72,10 @@ export async function hasSmsPermission(): Promise<boolean> {
 // Cheap on-device pre-filter so we don't ship every OTP/promo SMS to the server for parsing.
 // Must stay a superset of the debit/credit keywords server/smsParser.ts actually parses on
 // (currently: debited, deducted, withdrawn, spent, used for, paid, purchase, charged, sent,
-// credited, received, deposited, refunded, added, reversed) — anything missing here is silently
+// credited, received, deposited, refunded, added, reversed, loaded) — anything missing here is silently
 // dropped before the server ever sees it, which is worse than one extra discarded network call.
 function looksFinancial(body: string): boolean {
-  return /debited|deducted|withdrawn|spent|used for|paid|purchase|charged|sent|credited|received|deposited|refunded|added|reversed/i.test(body);
+  return /debited|deducted|withdrawn|spent|used for|paid|purchase|charged|sent|credited|received|deposited|refunded|added|reversed|loaded/i.test(body);
 }
 
 async function getProcessedIds(): Promise<string[]> {
@@ -129,6 +130,15 @@ async function postSmsToBackend(sender: string, message: string, receivedAt: str
 async function notifyTransactionAdded(result: ParseSmsResult): Promise<void> {
   const content = buildSmsNotification(result);
   if (!content) return;
+
+  // Refresh widgets first so a notification failure can't skip it. Best-effort: widgets also
+  // refresh every 30 minutes, so a failure here is harmless. The try/catch covers a synchronous
+  // throw (e.g. a stale native module), which must never reach the SMS path.
+  try {
+    refreshWidgets().catch(() => {});
+  } catch {
+    // ignore
+  }
 
   // data.url is what App.tsx's linking config opens when the notification is tapped.
   await Notifications.scheduleNotificationAsync({ content, trigger: null });

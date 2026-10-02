@@ -47,6 +47,7 @@ import CategoriesScreen from './src/screens/CategoriesScreen';
 import AddCategoryScreen from './src/screens/AddCategoryScreen';
 import ImportStatementScreen from './src/screens/ImportStatementScreen';
 import InstitutionMappingsScreen from './src/screens/InstitutionMappingsScreen';
+import SpendingAllowanceScreen from './src/screens/SpendingAllowanceScreen';
 import BillsInboxScreen from './src/screens/BillsInboxScreen';
 import SmsStatementsHubScreen from './src/screens/SmsStatementsHubScreen';
 import NeedsReviewHubScreen from './src/screens/NeedsReviewHubScreen';
@@ -123,6 +124,7 @@ export type RootStackParamList = {
   PinSetup: undefined;
   Main: undefined;
   AddTransaction: { accountId?: number; transactionId?: number } | undefined;
+  SpendingAllowance: undefined;
   AddAccount: { accountId?: number } | undefined;
   ExpenseDetails: undefined;
   CreditCardDetails: undefined;
@@ -402,6 +404,7 @@ function MainApp() {
         Main: '',
         AddTransaction: { path: 'transaction/:transactionId', parse: { transactionId: Number } },
         InstitutionMappings: 'institution-mappings',
+        SpendingAllowance: 'spending-allowance',
       },
     },
     // Tapping an SMS auto-read notification opens the link in its data.url, same as a widget tap.
@@ -559,6 +562,15 @@ function MainApp() {
           component={InstitutionMappingsScreen}
           options={{
             title: 'New Accounts Detected',
+            headerStyle: { backgroundColor: colors.primary },
+            headerTintColor: '#fff',
+          }}
+        />
+        <RootStack.Screen
+          name="SpendingAllowance"
+          component={SpendingAllowanceScreen}
+          options={{
+            title: 'Safe to spend',
             headerStyle: { backgroundColor: colors.primary },
             headerTintColor: '#fff',
           }}

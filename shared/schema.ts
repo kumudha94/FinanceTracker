@@ -131,6 +131,7 @@ export const transactions = pgTable("transactions", {
   savingsContributionId: integer("savings_contribution_id"), // Link to savings contribution if this is a contribution transaction
   paymentOccurrenceId: integer("payment_occurrence_id"), // Link to scheduled payment occurrence if this is a scheduled payment transaction
   spendingTrackerEnabled: boolean("spending_tracker_enabled").notNull().default(false), // user tracks how this income was spent (transaction_spending_entries)
+  excludedFromAllowance: boolean("excluded_from_allowance").notNull().default(false), // user marked this debit "Not daily spending" for the spending allowance
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
@@ -163,6 +164,7 @@ export const insertTransactionSchema = createInsertSchema(transactions).omit({
   paymentOccurrenceId: z.union([z.number(), z.null()]).optional(),
   smsId: z.union([z.number(), z.null()]).optional(),
   availableBalance: z.union([z.string(), z.null()]).optional(),
+  excludedFromAllowance: z.boolean().optional(),
 });
 
 export type InsertTransaction = z.infer<typeof insertTransactionSchema>;
@@ -534,6 +536,8 @@ export const salaryProfiles = pgTable("salary_profiles", {
   isActive: boolean("is_active").default(true),
   autoMarkPaidEnabled: boolean("auto_mark_paid_enabled").default(false), // when true, a matching credited SMS auto-marks the current salary cycle as credited, reusing that SMS's own transaction
   autoMarkKeyword: varchar("auto_mark_keyword", { length: 100 }), // required substring (case-insensitive) that must appear in the SMS for auto-match; required whenever autoMarkPaidEnabled is true
+  allowanceHoldBackSavings: boolean("allowance_hold_back_savings").notNull().default(true), // spending allowance holds back savings goal amounts
+  allowanceExcludedCategoryIds: integer("allowance_excluded_category_ids").array(), // never-count categories for the allowance; null = never set (seeded on first read)
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
@@ -557,6 +561,8 @@ export const insertSalaryProfileSchema = createInsertSchema(salaryProfiles).omit
   accountId: z.number().nullish(),
   autoMarkPaidEnabled: z.boolean().optional(),
   autoMarkKeyword: z.union([z.string(), z.null()]).optional(),
+  allowanceHoldBackSavings: z.boolean().optional(),
+  allowanceExcludedCategoryIds: z.array(z.number().int()).nullish(),
 }).refine(
   (data) => !data.autoMarkPaidEnabled || !!data.autoMarkKeyword?.trim(),
   {

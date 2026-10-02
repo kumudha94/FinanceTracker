@@ -12,6 +12,7 @@ import type { Category, Account, Transaction } from '../lib/types';
 import { RootStackParamList } from '../../App';
 import React from 'react';
 import { useTheme } from '../contexts/ThemeContext';
+import { refreshWidgets } from '../../modules/widget-bridge';
 
 type AddTransactionRouteProp = RouteProp<RootStackParamList, 'AddTransaction'>;
 
@@ -104,6 +105,8 @@ export default function AddTransactionScreen() {
       queryClient.invalidateQueries({ queryKey: ['/api/accounts'] });
       queryClient.invalidateQueries({ queryKey: ['/api/monthlyExpenses'] });
       queryClient.invalidateQueries({ queryKey: ['categoryBreakdown'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/spending-allowance'] });
+      refreshWidgets().catch(() => {});
       navigation.goBack();
       Toast.show({
         type: 'success',
@@ -131,6 +134,8 @@ export default function AddTransactionScreen() {
       queryClient.invalidateQueries({ queryKey: ['/api/accounts'] });
       queryClient.invalidateQueries({ queryKey: ['/api/monthlyExpenses'] });
       queryClient.invalidateQueries({ queryKey: ['categoryBreakdown'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/spending-allowance'] });
+      refreshWidgets().catch(() => {});
 
       const merchantChanged = merchant.trim().length > 0;
       const categoryChanged = selectedCategoryId !== originalCategoryId;
@@ -179,6 +184,8 @@ export default function AddTransactionScreen() {
       queryClient.invalidateQueries({ queryKey: ['/api/transactions'] });
       queryClient.invalidateQueries({ queryKey: ['/api/dashboard'] });
       queryClient.invalidateQueries({ queryKey: ['categoryBreakdown'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/spending-allowance'] });
+      refreshWidgets().catch(() => {});
       setShowMerchantMatchModal(false);
       navigation.goBack();
       Toast.show({
@@ -208,6 +215,23 @@ export default function AddTransactionScreen() {
       Toast.show({ type: 'error', text1: 'Could not update spending tracking', text2: error?.message, position: 'bottom' });
     },
   });
+
+  // "Not daily spending": saves straight away like the Track spending switch, so a debit opened
+  // from the SMS notification can be taken out of the allowance with one tap.
+  const allowanceMutation = useMutation({
+    mutationFn: (excluded: boolean) => api.updateTransaction(Number(transactionId), { excludedFromAllowance: excluded }),
+    onSuccess: async () => {
+      refreshWidgets().catch(() => {});
+      await queryClient.invalidateQueries({ queryKey: ['/api/transactions'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/spending-allowance'] });
+    },
+    onError: () => {
+      Toast.show({ type: 'error', text1: 'Could not update', text2: 'Please try again', position: 'bottom' });
+    },
+  });
+  const savedAccountType = accounts?.find(a => a.id === savedTransaction?.accountId)?.type;
+  const showAllowanceSwitch = savedTransaction?.type === 'debit'
+    && ['bank', 'debit_card', 'wallet'].includes(savedAccountType ?? '');
 
   const handleParseSms = async () => {
     if (!smsText.trim()) {
@@ -543,6 +567,25 @@ export default function AddTransactionScreen() {
         </View>
       )}
 
+      {showAllowanceSwitch && (
+        <View style={[styles.trackerCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+          <View style={styles.trackerRow}>
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.trackerLabel, { color: colors.text }]}>Not daily spending</Text>
+              <Text style={[styles.trackerDescription, { color: colors.textMuted }]}>
+                Leave this out of your safe-to-spend limit, e.g. a transfer or one-off repayment
+              </Text>
+            </View>
+            <Switch
+              value={allowanceMutation.isPending ? !!allowanceMutation.variables : !!savedTransaction!.excludedFromAllowance}
+              onValueChange={(v) => allowanceMutation.mutate(v)}
+              disabled={allowanceMutation.isPending}
+              trackColor={{ false: colors.border, true: colors.primary }}
+              thumbColor="#fff"
+            />
+          </View>
+        </View>
+      )}
       {savedTransaction?.type === 'credit' && (
         <View style={[styles.trackerCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
           <View style={styles.trackerRow}>
