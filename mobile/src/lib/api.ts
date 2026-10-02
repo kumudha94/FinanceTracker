@@ -9,7 +9,7 @@ import type {
   CardDetails, InsertCardDetails,
   LoanTerm, LoanPayment, InsertLoanTerm, InsertLoanPayment, LoanWithDetails,
   Insurance, InsurancePremium, InsertInsurance, InsertInsurancePremium,
-  SenderInstitutionMapping, PendingBillMapping, PendingPaymentMatchReview
+  SenderInstitutionMapping, PendingBillMapping, PendingPaymentMatchReview, BalanceGapItem
 } from './types';
 import NetInfo from '@react-native-community/netinfo';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -372,6 +372,13 @@ export const api = {
   ignoreBillMapping: (mappingId: number) =>
     apiRequest<{ success: boolean; mapping: PendingBillMapping }>(`/api/bill-mappings/${mappingId}/ignore`, { method: 'POST' }),
 
+  getBalanceGaps: () => apiRequest<BalanceGapItem[]>('/api/balance-gaps'),
+  resolveBalanceGap: (
+    id: number,
+    body: { action: 'transfer'; debitTransactionId: number } | { action: 'income' | 'expense'; categoryId?: number | null }
+  ) => apiRequest<{ success: boolean }>(`/api/balance-gaps/${id}/resolve`, { method: 'POST', body: JSON.stringify(body) }),
+  dismissBalanceGap: (id: number) =>
+    apiRequest<{ success: boolean }>(`/api/balance-gaps/${id}/dismiss`, { method: 'POST' }),
   getPendingPaymentMatchReviews: () =>
     apiRequest<PendingPaymentMatchReview[]>('/api/sms-payment-match-reviews/pending'),
   resolvePaymentMatchReview: (reviewId: number, itemType: string, itemId: number) =>
