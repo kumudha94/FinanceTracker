@@ -15,7 +15,8 @@ interface MenuItem {
   icon: keyof typeof Ionicons.glyphMap;
   title: string;
   subtitle: string;
-  route: keyof MoreStackParamList;
+  // 'SpendingAllowance' lives on the root stack; navigate() bubbles up to it from the More stack.
+  route: keyof MoreStackParamList | 'SpendingAllowance';
   color: string;
 }
 
@@ -40,6 +41,13 @@ const menuItems: MenuItem[] = [
     subtitle: 'Track spending by category',
     route: 'Budgets',
     color: '#3b82f6',
+  },
+  {
+    icon: 'wallet-outline',
+    title: 'Safe to Spend',
+    subtitle: 'Daily, weekly and payday limits',
+    route: 'SpendingAllowance',
+    color: '#16a34a',
   },
   {
     icon: 'calendar-outline',

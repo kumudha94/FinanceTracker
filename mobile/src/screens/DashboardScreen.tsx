@@ -15,6 +15,7 @@ import { BillItem, NextMonthForecast, NextMonthForecastItem, ForecastItemType, W
 import { isAutoReadEnabled, hasSmsPermission } from '../lib/smsAutoReader';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Toast from 'react-native-toast-message';
+import { AllowanceCard } from '../components/AllowanceCard';
 
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
@@ -430,6 +431,7 @@ export default function DashboardScreen() {
       queryClient.invalidateQueries({ queryKey: ['/api/institution-mappings/pending'] });
       queryClient.invalidateQueries({ queryKey: ['/api/bill-mappings/pending'] });
       queryClient.invalidateQueries({ queryKey: ['/api/accounts'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/spending-allowance'] });
     }, [queryClient])
   );
 
@@ -445,6 +447,7 @@ export default function DashboardScreen() {
       queryClient.refetchQueries({ queryKey: ['/api/institution-mappings/pending'] }),
       queryClient.refetchQueries({ queryKey: ['/api/bill-mappings/pending'] }),
       queryClient.refetchQueries({ queryKey: ['/api/accounts'] }),
+      queryClient.refetchQueries({ queryKey: ['/api/spending-allowance'] }),
     ]);
     setRefreshing(false);
   }, [queryClient]);
@@ -1670,6 +1673,8 @@ export default function DashboardScreen() {
             </View>
           </View>
         )}
+
+        <AllowanceCard colors={colors} />
 
         {/* ===== Remaining Cards below main card ===== */}
 
