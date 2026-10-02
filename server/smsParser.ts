@@ -23,7 +23,7 @@ const DEBIT_KEYWORDS = [
 ];
 
 const CREDIT_KEYWORDS = [
-  "credited", "received", "deposited", "refunded", "added", "reversed"
+  "credited", "received", "deposited", "refunded", "added", "reversed", "loaded"
 ];
 
 const DUE_KEYWORDS = [

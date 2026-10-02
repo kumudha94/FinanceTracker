@@ -74,7 +74,7 @@ export async function hasSmsPermission(): Promise<boolean> {
 // credited, received, deposited, refunded, added, reversed) — anything missing here is silently
 // dropped before the server ever sees it, which is worse than one extra discarded network call.
 function looksFinancial(body: string): boolean {
-  return /debited|deducted|withdrawn|spent|used for|paid|purchase|charged|sent|credited|received|deposited|refunded|added|reversed/i.test(body);
+  return /debited|deducted|withdrawn|spent|used for|paid|purchase|charged|sent|credited|received|deposited|refunded|added|reversed|loaded/i.test(body);
 }
 
 async function getProcessedIds(): Promise<string[]> {

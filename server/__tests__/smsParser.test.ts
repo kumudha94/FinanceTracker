@@ -361,6 +361,19 @@ test("a real 'paid' debit still parses", () => {
   assert.equal(r!.type, "debit");
 });
 
+// ── Prepaid card top-ups ───────────────────────────────────────────────────
+console.log("\nPrepaid card top-ups:");
+
+test("ICICI prepaid (Meal Card) top-up: 'loaded with' is a credit", () => {
+  const sms = "Dear Customer, your ICICI Bank Prepaid Card XX1286 is now active and loaded with Rs 8,800.00. The Available Balance is Rs 9,170.52 .";
+  const r = parseSmsByRegex(sms, "AX-ICICIT-S");
+  assert.ok(r, "should parse");
+  assert.equal(r!.type, "credit");
+  assert.equal(r!.amount, 8800);
+  assert.equal(r!.accountLastDigits, "1286");
+  assert.equal(r!.availableBalance, 9170.52);
+});
+
 // ── Summary ────────────────────────────────────────────────────────────────
 console.log(`\n=== Results: ${passed} passed, ${failed} failed ===\n`);
 if (failed > 0) process.exit(1);
