@@ -690,6 +690,7 @@ export class DatabaseStorage implements IStorage {
       savingsContributionId: transactions.savingsContributionId,
       paymentOccurrenceId: transactions.paymentOccurrenceId,
       spendingTrackerEnabled: transactions.spendingTrackerEnabled,
+      excludedFromAllowance: transactions.excludedFromAllowance,
       createdAt: transactions.createdAt,
       account: accounts,
       toAccount: toAccountAlias,
