@@ -3516,6 +3516,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         linkedPaymentTxnIds,
         neverCountCategoryIds: new Set(settings.neverCountCategoryIds),
         cardBillItems: commitments.filter(c => c.itemType === 'credit_card_bill'),
+        holdBackSavings: settings.holdBackSavings,
       });
 
       const salary = resolveSalaryIncome(profile.monthlyAmount, lastSalaryCycle, cycleStart, cycleEnd);

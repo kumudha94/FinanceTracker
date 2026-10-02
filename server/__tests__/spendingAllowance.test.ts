@@ -24,6 +24,7 @@ function txn(over: Partial<AllowanceTxn>): AllowanceTxn {
 const cycleStart = new Date("2026-09-29T00:00:00Z");
 const ctx = (over: Partial<Parameters<typeof selectCountedDebits>[2]> = {}) => ({
   linkedPaymentTxnIds: new Set<number>(), neverCountCategoryIds: new Set<number>(), cardBillItems: [] as CommitmentItem[],
+  holdBackSavings: true,
   ...over,
 });
 const reasons = (r: ReturnType<typeof selectCountedDebits>) => r.excluded.map(e => e.reason);
@@ -126,10 +127,33 @@ test("rule 5: card bill matches within Rs 1, and only once", () => {
   assert.equal(r.counted.length, 1);
 });
 
+test("rule 2: savings contribution is a planned payment only while savings goals are held back", () => {
+  const on = selectCountedDebits([txn({ savingsContributionId: 3 })], cycleStart, ctx({ holdBackSavings: true }));
+  assert.deepEqual(reasons(on), ["Planned payment"]);
+  const off = selectCountedDebits([txn({ savingsContributionId: 3 })], cycleStart, ctx({ holdBackSavings: false }));
+  assert.equal(off.counted.length, 1);
+  assert.equal(off.excluded.length, 0);
+});
+
+test("rule 2: with savings not held back, other planned payments are still excluded", () => {
+  const r = selectCountedDebits([txn({ paymentOccurrenceId: 166 })], cycleStart, ctx({ holdBackSavings: false }));
+  assert.deepEqual(reasons(r), ["Planned payment"]);
+});
+
+test("rule 4 card-bill pairing uses up the matching bill item, so rule 5 can't drop a real spend", () => {
+  const bill: CommitmentItem = { itemType: "credit_card_bill", id: "cc-auto-34", name: "HDFC CC Bill", amount: 5000, subLabel: "" };
+  const billPay = txn({ amount: 5000, transactionDate: new Date("2026-10-01T06:00:00Z") });
+  const cardIn = txn({ type: "credit", amount: 5000, accountId: 34, accountType: "credit_card", transactionDate: new Date("2026-10-01T06:05:00Z") });
+  const spend = txn({ amount: 5000.5, transactionDate: new Date("2026-10-01T09:00:00Z") });
+  const r = selectCountedDebits([billPay, cardIn, spend], cycleStart, ctx({ cardBillItems: [bill] }));
+  assert.deepEqual(reasons(r), ["Card bill (held back)"]);
+  assert.deepEqual(r.counted.map(t => t.id), [spend.id]);
+});
+
 console.log("\n=== Wallet income ===\n");
 
 const wallet = { accountId: 40, accountType: "wallet", accountName: "ICICI Meal Card" };
-const noCtx = { linkedPaymentTxnIds: new Set<number>(), neverCountCategoryIds: new Set<number>(), cardBillItems: [] as CommitmentItem[] };
+const noCtx = { linkedPaymentTxnIds: new Set<number>(), neverCountCategoryIds: new Set<number>(), cardBillItems: [] as CommitmentItem[], holdBackSavings: true };
 
 test("pairedCreditId is set for a paired transfer and absent for every other rule", () => {
   const marked = txn({ excludedFromAllowance: true });

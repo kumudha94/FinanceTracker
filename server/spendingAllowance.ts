@@ -54,7 +54,13 @@ const sameAmount = (a: number, b: number) => Math.abs(a - b) < 0.005;
 export function selectCountedDebits(
   txns: AllowanceTxn[],
   cycleStart: Date,
-  ctx: { linkedPaymentTxnIds: Set<number>; neverCountCategoryIds: Set<number>; cardBillItems: CommitmentItem[] }
+  ctx: {
+    linkedPaymentTxnIds: Set<number>;
+    neverCountCategoryIds: Set<number>;
+    cardBillItems: CommitmentItem[];
+    /** Savings goals are held back, so a debit linked to a savings contribution is already covered. */
+    holdBackSavings: boolean;
+  }
 ): { counted: AllowanceTxn[]; excluded: ExcludedDebit[] } {
   const debits = txns
     .filter(t => t.type === 'debit' && t.transactionDate >= cycleStart && COUNTED_ACCOUNT_TYPES.includes(t.accountType ?? ''))
@@ -71,7 +77,7 @@ export function selectCountedDebits(
 
     if (d.excludedFromAllowance) {
       reason = 'Marked not daily spending';
-    } else if (d.paymentOccurrenceId || d.savingsContributionId || ctx.linkedPaymentTxnIds.has(d.id)) {
+    } else if (d.paymentOccurrenceId || (ctx.holdBackSavings && d.savingsContributionId) || ctx.linkedPaymentTxnIds.has(d.id)) {
       reason = 'Planned payment';
     } else if (d.categoryId !== null && ctx.neverCountCategoryIds.has(d.categoryId)) {
       reason = `Category: ${d.categoryName ?? 'Excluded'}`;
@@ -84,7 +90,15 @@ export function selectCountedDebits(
       if (creditIdx >= 0) {
         const [credit] = unusedCredits.splice(creditIdx, 1);
         pairedCreditId = credit.id;
-        reason = credit.accountType === 'credit_card' ? 'Card bill (held back)' : 'Transfer between your accounts';
+        if (credit.accountType === 'credit_card') {
+          reason = 'Card bill (held back)';
+          // This payment settles a held-back bill: use that bill up so rule 5 can't also match it
+          // against a real spend of the same amount later in the cycle.
+          const billIdx = unusedBills.findIndex(b => Math.abs(b.amount - d.amount) <= 1);
+          if (billIdx >= 0) unusedBills.splice(billIdx, 1);
+        } else {
+          reason = 'Transfer between your accounts';
+        }
       } else {
         const billIdx = unusedBills.findIndex(b => Math.abs(b.amount - d.amount) <= 1);
         if (billIdx >= 0) {
