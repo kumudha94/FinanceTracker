@@ -37,6 +37,8 @@ import {
 } from "./spendingAllowance";
 import { z } from "zod";
 import { selectSmsOwnerAccounts, resolveSmsTransactionDate } from "./smsProcessingUtils";
+import { findInternalTransfers } from "./internalTransfers";
+import type { TransactionWithRelations } from "@shared/schema";
 import { getWeekBounds, getPreviousWeekBounds } from "./weekUtils";
 import { validateNewSpendingEntry } from "./loanSpendingValidation";
 import { validateTrackerToggle, resolveTrackerFlag, validateEntryWrite, validateAmountChange } from "./transactionSpendingValidation";
@@ -72,6 +74,25 @@ function resolveCycleLastPayDate(salaryCycle: any | null): Date | null {
   if (salaryCycle.actualPayDate) return new Date(salaryCycle.actualPayDate);
   if (salaryCycle.expectedPayDate) return new Date(salaryCycle.expectedPayDate);
   return null;
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+// Income/expense predicates for a set of transactions with internal transfers removed: card bill
+// payments and moves between the user's own accounts are neither (see internalTransfers.ts).
+function classifyIncomeAndExpense(txns: TransactionWithRelations[]) {
+  const { notIncome, notExpense } = findInternalTransfers(txns.map(t => ({
+    id: t.id,
+    type: t.type,
+    amount: parseFloat(t.amount),
+    transactionDate: new Date(t.transactionDate),
+    accountId: t.accountId,
+    accountType: t.account?.type ?? null,
+  })));
+  return {
+    isIncome: (t: TransactionWithRelations) => t.type === 'credit' && !notIncome.has(t.id),
+    isExpense: (t: TransactionWithRelations) => t.type === 'debit' && !notExpense.has(t.id),
+  };
 }
 
 export async function registerRoutes(app: Express): Promise<Server> {
@@ -2835,24 +2856,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const startOfMonth = cycleStart;
       const endOfMonth = cycleEnd;
 
-      const monthTransactions = await storage.getAllTransactions({
+      // A day either side of the cycle so a transfer whose two halves straddle its edge still pairs.
+      const nearbyTransactions = await storage.getAllTransactions({
         userId,
-        startDate: startOfMonth,
-        endDate: endOfMonth,
+        startDate: new Date(startOfMonth.getTime() - DAY_MS),
+        endDate: new Date(endOfMonth.getTime() + DAY_MS),
       });
+      const monthTransactions = nearbyTransactions.filter(t => {
+        const d = new Date(t.transactionDate);
+        return d >= startOfMonth && d <= endOfMonth;
+      });
+      const { isIncome, isExpense } = classifyIncomeAndExpense(nearbyTransactions);
 
       const totalIncome = monthTransactions
-        .filter(t => t.type === 'credit')
+        .filter(isIncome)
         .reduce((sum, t) => sum + parseFloat(t.amount), 0);
 
       const totalSpent = monthTransactions
-        .filter(t => t.type === 'debit')
+        .filter(isExpense)
         .reduce((sum, t) => sum + parseFloat(t.amount), 0);
 
       const todayTransactions = monthTransactions
         .filter(t => new Date(t.transactionDate) >= startOfToday);
       const totalSpentToday = todayTransactions
-        .filter(t => t.type === 'debit')
+        .filter(isExpense)
         .reduce((sum, t) => sum + parseFloat(t.amount), 0);
 
       const allPayments = await storage.getAllScheduledPayments(userId);
@@ -2931,7 +2958,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         .slice(0, 5);
 
       const categoryTotals = new Map<number, { name: string; total: number; color: string; icon: string }>();
-      for (const t of monthTransactions.filter(t => t.type === 'debit')) {
+      for (const t of monthTransactions.filter(isExpense)) {
         if (t.categoryId && t.category) {
           const existing = categoryTotals.get(t.categoryId) || { name: t.category.name, total: 0, color: t.category.color || '#9E9E9E', icon: t.category.icon || 'ellipsis-horizontal' };
           existing.total += parseFloat(t.amount);
@@ -3006,7 +3033,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }));
 
       const incomeByAccount = new Map<number, { accountId: number; accountName: string; bankName: string; amount: number }>();
-      for (const t of monthTransactions.filter(t => t.type === 'credit')) {
+      for (const t of monthTransactions.filter(isIncome)) {
         if (t.accountId && t.account) {
           const existing = incomeByAccount.get(t.accountId) || {
             accountId: t.accountId,
@@ -3020,7 +3047,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const expenseByAccount = new Map<number, { accountId: number; accountName: string; bankName: string; amount: number }>();
-      for (const t of monthTransactions.filter(t => t.type === 'debit')) {
+      for (const t of monthTransactions.filter(isExpense)) {
         if (t.accountId && t.account) {
           const existing = expenseByAccount.get(t.accountId) || {
             accountId: t.accountId,
@@ -3263,27 +3290,36 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { weekStart, weekEnd } = getWeekBounds(now);
       const { weekStart: lastWeekStart, weekEnd: lastWeekEnd } = getPreviousWeekBounds(now);
 
-      const [thisWeekTxns, lastWeekTxns] = await Promise.all([
-        storage.getAllTransactions({ userId, startDate: weekStart, endDate: weekEnd }),
-        storage.getAllTransactions({ userId, startDate: lastWeekStart, endDate: lastWeekEnd }),
-      ]);
+      // One fetch covering both weeks plus a day either side, so transfers pair across edges.
+      const nearbyTxns = await storage.getAllTransactions({
+        userId,
+        startDate: new Date(lastWeekStart.getTime() - DAY_MS),
+        endDate: new Date(weekEnd.getTime() + DAY_MS),
+      });
+      const within = (start: Date, end: Date) => nearbyTxns.filter(t => {
+        const d = new Date(t.transactionDate);
+        return d >= start && d <= end;
+      });
+      const thisWeekTxns = within(weekStart, weekEnd);
+      const lastWeekTxns = within(lastWeekStart, lastWeekEnd);
+      const { isIncome, isExpense } = classifyIncomeAndExpense(nearbyTxns);
 
       const income = thisWeekTxns
-        .filter(t => t.type === 'credit')
+        .filter(isIncome)
         .reduce((sum, t) => sum + parseFloat(t.amount), 0);
       const expense = thisWeekTxns
-        .filter(t => t.type === 'debit')
+        .filter(isExpense)
         .reduce((sum, t) => sum + parseFloat(t.amount), 0);
       const spentFromCreditCard = thisWeekTxns
-        .filter(t => t.type === 'debit' && t.account?.type === 'credit_card')
+        .filter(t => isExpense(t) && t.account?.type === 'credit_card')
         .reduce((sum, t) => sum + parseFloat(t.amount), 0);
       const spentFromAccount = expense - spentFromCreditCard;
 
       const lastWeekIncome = lastWeekTxns
-        .filter(t => t.type === 'credit')
+        .filter(isIncome)
         .reduce((sum, t) => sum + parseFloat(t.amount), 0);
       const lastWeekExpense = lastWeekTxns
-        .filter(t => t.type === 'debit')
+        .filter(isExpense)
         .reduce((sum, t) => sum + parseFloat(t.amount), 0);
 
       const incomeChangePercent = lastWeekIncome > 0
