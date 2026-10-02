@@ -3979,8 +3979,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     if (bankBalance === undefined || !SYNCED_ACCOUNT_TYPES.includes(account.type)) return undefined;
     try {
       const smsDate = new Date(transaction.transactionDate);
-      const latest = await storage.getLatestBalanceFigureDate(account.id, transaction.id);
-      if (!isNewestBalanceFigure(smsDate, latest)) return undefined;
+      const latest = await storage.getLatestOtherTransactionDate(account.id, transaction.id);
+      if (!isNewestBalanceFigure(smsDate, latest, new Date())) return undefined;
       const current = await storage.getAccount(account.id);
       if (!current) return undefined;
       const appBalanceAfterSms = parseFloat(current.balance || '0');
@@ -4913,11 +4913,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const parsed = resolveGapSchema.safeParse(req.body);
       if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0]?.message ?? "Invalid request" });
       const gapAmount = parseFloat(gap.gapAmount);
-      let resolvedTransactionId: number;
+      const action = parsed.data;
 
-      if (parsed.data.action === 'transfer') {
+      // Validate everything that doesn't write before claiming the gap.
+      let debitId: number | undefined;
+      if (action.action === 'transfer') {
         if (gapAmount <= 0) return res.status(400).json({ error: "Only a higher bank balance can be a transfer in" });
-        const debit = await storage.getTransaction(parsed.data.debitTransactionId);
+        const debit = await storage.getTransaction(action.debitTransactionId);
         const debitAccount = debit?.accountId ? await storage.getAccount(debit.accountId) : undefined;
         const stillMatches = !!debit && debit.userId === userId && !!debitAccount && findTransferCandidates({
           gapAmount,
@@ -4930,30 +4932,47 @@ export async function registerRoutes(app: Express): Promise<Server> {
           }],
         }).length === 1;
         if (!stillMatches) return res.status(400).json({ error: "That transaction no longer matches this gap" });
-        const converted = await storage.convertDebitToSyncedTransfer(debit!.id, gap.accountId);
-        if (!converted) return res.status(400).json({ error: "That transaction no longer matches this gap" });
-        resolvedTransactionId = converted.id;
+        debitId = debit!.id;
       } else {
-        const wantsIncome = parsed.data.action === 'income';
+        const wantsIncome = action.action === 'income';
         if (wantsIncome !== gapAmount > 0) {
           return res.status(400).json({ error: wantsIncome ? "The bank balance was lower, not higher" : "The bank balance was higher, not lower" });
         }
-        const created = await storage.insertTransactionWithoutBalance({
-          userId,
-          accountId: gap.accountId,
-          type: wantsIncome ? 'credit' : 'debit',
-          amount: parsed.data.amount ?? Math.abs(gapAmount).toFixed(2),
-          categoryId: parsed.data.categoryId ?? null,
-          description: parsed.data.description ?? (wantsIncome ? 'Unrecorded credit (found from bank balance)' : 'Unrecorded debit (found from bank balance)'),
-          transactionDate: (await gapSmsDate(gap)).toISOString(),
-        });
-        resolvedTransactionId = created.id;
       }
 
-      const updated = await storage.markBalanceGap(gap.id, {
-        status: 'resolved', resolution: parsed.data.action, resolvedTransactionId, resolvedAt: new Date(),
-      });
-      if (!updated) return res.status(409).json({ error: "This gap was already handled" });
+      // Claim the gap first: a second tap arriving at the same time gets 409 and creates nothing.
+      const claimed = await storage.markBalanceGap(gap.id, { status: 'resolved', resolution: action.action, resolvedAt: new Date() });
+      if (!claimed) return res.status(409).json({ error: "This gap was already handled" });
+      const releaseClaim = () => storage.markBalanceGap(gap.id, { status: 'pending', resolution: null, resolvedAt: null }, false);
+
+      let resolvedTransactionId: number;
+      try {
+        if (debitId !== undefined) {
+          const converted = await storage.convertDebitToSyncedTransfer(debitId, gap.accountId);
+          if (!converted) {
+            await releaseClaim();
+            return res.status(400).json({ error: "That transaction no longer matches this gap" });
+          }
+          resolvedTransactionId = converted.id;
+        } else {
+          const wantsIncome = action.action === 'income';
+          const created = await storage.insertTransactionWithoutBalance({
+            userId,
+            accountId: gap.accountId,
+            type: wantsIncome ? 'credit' : 'debit',
+            amount: ('amount' in action && action.amount) || Math.abs(gapAmount).toFixed(2),
+            categoryId: ('categoryId' in action ? action.categoryId : null) ?? null,
+            description: ('description' in action && action.description) || (wantsIncome ? 'Unrecorded credit (found from bank balance)' : 'Unrecorded debit (found from bank balance)'),
+            transactionDate: (await gapSmsDate(gap)).toISOString(),
+          });
+          resolvedTransactionId = created.id;
+        }
+      } catch (error) {
+        await releaseClaim();
+        throw error;
+      }
+
+      await storage.markBalanceGap(gap.id, { resolvedTransactionId }, false);
       res.json({ success: true });
     } catch (error) {
       console.error("Error resolving balance gap:", error);

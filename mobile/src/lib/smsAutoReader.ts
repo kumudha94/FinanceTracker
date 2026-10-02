@@ -4,6 +4,7 @@ import * as Notifications from 'expo-notifications';
 import NetInfo from '@react-native-community/netinfo';
 import { API_BASE_URL, TASKER_API_KEY } from './api';
 import { buildSmsNotification, buildBalanceGapNotification, SmsNotificationResult } from './smsNotificationContent';
+import { createSerialQueue } from './serialQueue';
 import { refreshWidgets } from '../../modules/widget-bridge';
 
 const STORAGE_KEYS = {
@@ -169,7 +170,14 @@ export async function drainFailedQueue(): Promise<void> {
   await setQueue(remaining);
 }
 
-export async function processIncomingSms(payload: RawSmsPayload): Promise<void> {
+// One SMS at a time: parallel balance-bearing SMS for an account would raise false balance gaps.
+const smsQueue = createSerialQueue();
+
+export function processIncomingSms(payload: RawSmsPayload): Promise<void> {
+  return smsQueue(() => processIncomingSmsNow(payload));
+}
+
+async function processIncomingSmsNow(payload: RawSmsPayload): Promise<void> {
   const enabled = await isAutoReadEnabled();
   if (!enabled) return;
 

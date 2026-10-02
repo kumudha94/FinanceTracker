@@ -82,7 +82,7 @@ export interface IStorage {
   getUsedGapDebitIds(userId: number): Promise<Set<number>>;
   markBalanceGap(id: number, fields: Partial<InsertBalanceGap>, onlyIfPending?: boolean): Promise<BalanceGap | undefined>;
   setAccountBalance(accountId: number, balance: string): Promise<void>;
-  getLatestBalanceFigureDate(accountId: number, excludeTransactionId: number): Promise<Date | null>;
+  getLatestOtherTransactionDate(accountId: number, excludeTransactionId: number): Promise<Date | null>;
   insertTransactionWithoutBalance(data: InsertTransaction): Promise<Transaction>;
   convertDebitToSyncedTransfer(debitId: number, toAccountId: number): Promise<Transaction | undefined>;
 
@@ -3299,11 +3299,16 @@ export class DatabaseStorage implements IStorage {
     await db.update(accounts).set({ balance, updatedAt: new Date() }).where(eq(accounts.id, accountId));
   }
 
-  // Date of the newest other transaction on this account that carried the bank's balance.
-  async getLatestBalanceFigureDate(accountId: number, excludeTransactionId: number): Promise<Date | null> {
-    const [r] = await db.select({ d: sql<string | null>`max(${transactions.transactionDate})` }).from(transactions)
-      .where(and(eq(transactions.accountId, accountId), isNotNull(transactions.availableBalance), ne(transactions.id, excludeTransactionId)));
-    return r?.d ? new Date(r.d) : null;
+  // Date of the newest other transaction touching this account (either side of a transfer).
+  // mapWith keeps drizzle's UTC handling of the timestamp column for the raw max().
+  async getLatestOtherTransactionDate(accountId: number, excludeTransactionId: number): Promise<Date | null> {
+    const [r] = await db.select({ d: sql<Date | null>`max(${transactions.transactionDate})`.mapWith(transactions.transactionDate) })
+      .from(transactions)
+      .where(and(
+        or(eq(transactions.accountId, accountId), eq(transactions.toAccountId, accountId)),
+        ne(transactions.id, excludeTransactionId),
+      ));
+    return r?.d ?? null;
   }
 
   // For transactions that explain a gap the balance was already synced for.

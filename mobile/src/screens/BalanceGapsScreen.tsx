@@ -32,7 +32,10 @@ export default function BalanceGapsScreen() {
     mutationFn: ({ id, body }: { id: number; body: GapAction }) =>
       body.action === 'dismiss' ? api.dismissBalanceGap(id) : api.resolveBalanceGap(id, body),
     onSuccess: (_data, { body }) => {
-      for (const key of ['/api/balance-gaps', '/api/transactions', '/api/accounts', '/api/spending-allowance', '/api/dashboard-summary']) {
+      for (const key of [
+        '/api/balance-gaps', '/api/transactions', '/api/accounts', '/api/spending-allowance',
+        '/api/dashboard', '/api/dashboard-summary', '/api/dashboard/weekly-summary', '/api/monthlyExpenses', 'categoryBreakdown',
+      ]) {
         queryClient.invalidateQueries({ queryKey: [key] });
       }
       refreshWidgets().catch(() => {});

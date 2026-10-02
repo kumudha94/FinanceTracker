@@ -20,9 +20,12 @@ export function detectBalanceGap(i: {
   return { gapAmount, status: i.isFirstGapForAccount ? 'auto_synced' : 'pending' };
 }
 
-// A rescan or a late SMS must never set the balance back to an older figure.
-export function isNewestBalanceFigure(smsDate: Date, latestOtherFigureDate: Date | null): boolean {
-  return latestOtherFigureDate === null || smsDate.getTime() >= latestOtherFigureDate.getTime();
+// A rescan or a late SMS must never set the balance back to an older figure. The bank's figure
+// is only current if nothing else has happened on the account since this SMS, and the SMS is
+// recent: a rescan can be the first balance figure an account ever gets.
+export function isNewestBalanceFigure(smsDate: Date, latestOtherTransactionDate: Date | null, now: Date): boolean {
+  if (now.getTime() - smsDate.getTime() >= DAY_MS) return false;
+  return latestOtherTransactionDate === null || smsDate.getTime() >= latestOtherTransactionDate.getTime();
 }
 
 export interface CandidateDebit {

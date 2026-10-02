@@ -49,17 +49,27 @@ test("wallet accounts (Meal Card) are synced", () => {
 
 console.log("\n=== Newest Balance Figure ===\n");
 
-test("no earlier figure: sync", () => {
-  assert.equal(isNewestBalanceFigure(new Date("2026-09-29T11:00:00Z"), null), true);
+const now = new Date("2026-09-29T11:30:00Z");
+
+test("no later activity, fresh SMS: sync", () => {
+  assert.equal(isNewestBalanceFigure(new Date("2026-09-29T11:25:00Z"), null, now), true);
 });
 
-test("same time as the latest figure: sync", () => {
-  const d = new Date("2026-09-29T11:00:00Z");
-  assert.equal(isNewestBalanceFigure(d, new Date(d)), true);
+test("another transaction at the same time: sync", () => {
+  const d = new Date("2026-09-29T11:25:00Z");
+  assert.equal(isNewestBalanceFigure(d, new Date(d), now), true);
 });
 
-test("older than the latest figure (rescan): no sync", () => {
-  assert.equal(isNewestBalanceFigure(new Date("2026-09-01T11:00:00Z"), new Date("2026-09-29T11:00:00Z")), false);
+test("a later transaction exists on the account (late or rescanned SMS): no sync", () => {
+  assert.equal(isNewestBalanceFigure(new Date("2026-09-29T09:00:00Z"), new Date("2026-09-29T10:00:00Z"), now), false);
+});
+
+test("SMS more than a day old with no later activity (first-ever rescan): no sync", () => {
+  assert.equal(isNewestBalanceFigure(new Date("2026-09-01T11:00:00Z"), null, now), false);
+});
+
+test("SMS just under a day old: sync", () => {
+  assert.equal(isNewestBalanceFigure(new Date(now.getTime() - 86400000 + 60000), null, now), true);
 });
 
 console.log("\n=== Transfer Candidates ===\n");
