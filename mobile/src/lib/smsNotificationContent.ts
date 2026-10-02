@@ -14,6 +14,7 @@ export interface SmsNotificationResult {
     categoryName: string | null;
     balance: string | null;
   };
+  balanceGap?: { id: number; accountName: string; gapAmount: number; status: string };
 }
 
 export interface SmsNotificationContent {
@@ -41,6 +42,19 @@ function formatWhen(date: Date): string {
   const period = hours >= 12 ? 'PM' : 'AM';
   const hour12 = hours % 12 === 0 ? 12 : hours % 12;
   return `${date.getDate()} ${MONTHS[date.getMonth()]}, ${hour12}:${minutes} ${period}`;
+}
+
+// A second notification when the bank's own balance showed money moving without an SMS. The
+// first, auto-synced gap per account is old drift and stays quiet.
+export function buildBalanceGapNotification(result: SmsNotificationResult): SmsNotificationContent | null {
+  const gap = result.balanceGap;
+  if (!gap || gap.status !== 'pending') return null;
+  const direction = gap.gapAmount > 0 ? 'higher' : 'lower';
+  return {
+    title: `${gap.accountName} balance was ${formatRupees(Math.abs(gap.gapAmount))} ${direction} than expected`,
+    body: 'Tap to review what it was.',
+    data: { url: `${DEEP_LINK_PREFIX}balance-gaps` },
+  };
 }
 
 // Returns null when there is nothing to tell the user: unparsed SMS, ignored senders, and

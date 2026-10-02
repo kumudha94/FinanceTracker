@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { buildSmsNotification } from '../smsNotificationContent';
+import { buildSmsNotification, buildBalanceGapNotification } from '../smsNotificationContent';
 
 let passed = 0;
 let failed = 0;
@@ -62,6 +62,28 @@ test('older server without summary still gives a useful message', () => {
   const n = buildSmsNotification({ transaction: { id: 1, transactionDate: when }, parsed: { amount: 99.5, type: 'debit' } })!;
   assert.equal(n.title, '₹99.50 debited');
   assert.equal(n.body, '1 Oct, 12:18 PM · Tap to edit');
+});
+
+console.log('\n=== Balance Gap Notification Tests ===\n');
+
+test('pending gap, bank higher: tap to review', () => {
+  const n = buildBalanceGapNotification({ balanceGap: { id: 1, accountName: 'YesBank Account', gapAmount: 27000, status: 'pending' } })!;
+  assert.equal(n.title, 'YesBank Account balance was ₹27,000 higher than expected');
+  assert.equal(n.body, 'Tap to review what it was.');
+  assert.equal(n.data.url, 'com.mytracker.finance://balance-gaps');
+});
+
+test('pending gap, bank lower', () => {
+  const n = buildBalanceGapNotification({ balanceGap: { id: 2, accountName: 'HDFC Savings', gapAmount: -250, status: 'pending' } })!;
+  assert.equal(n.title, 'HDFC Savings balance was ₹250 lower than expected');
+});
+
+test('first (auto-synced) gap does not notify', () => {
+  assert.equal(buildBalanceGapNotification({ balanceGap: { id: 3, accountName: 'X', gapAmount: 500, status: 'auto_synced' } }), null);
+});
+
+test('no gap, no notification', () => {
+  assert.equal(buildBalanceGapNotification({}), null);
 });
 
 console.log(`\n${passed} passed, ${failed} failed\n`);
