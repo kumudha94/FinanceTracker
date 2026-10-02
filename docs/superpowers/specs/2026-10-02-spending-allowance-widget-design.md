@@ -53,6 +53,18 @@ buildCycleCommitments(userId, { cycleStart, cycleEnd }): Promise<{
 // CommitmentItem = { itemType, id, name, amount, dueDate, subLabel, excluded }
 ```
 
+It takes a `mode`. In `'next'` mode it behaves exactly like today's forecast code. In
+`'current'` mode, used by the allowance, two things differ because the cycle is already
+under way:
+
+- **Insurance premiums already paid still count** (the forecast drops paid ones). Their
+  payment is excluded from spending instead (§3 rule 2), so dropping them would make the
+  money vanish from the calculation.
+- **Card bills use the card's last *closed* billing cycle**, relative to the salary cycle's
+  start. That's the bill falling due in this salary cycle. For example, the YES Bank card
+  bills on the 12th, so for the cycle starting 29 Sep it uses 12 Aug–11 Sep, due 1 Oct. The
+  forecast's `'next'` mode keeps using the card's open cycle (what will be due next cycle).
+
 `next-month-forecast` calls it with the next cycle's dates and keeps its response shape
 exactly, so the Forecast screen is unchanged. **Verification:** capture the endpoint's JSON for
 the live user before the refactor and compare it after. It must be identical.
@@ -139,13 +151,11 @@ and validates with zod (category ids must exist).
 - `transactions.excludedFromAllowance`: boolean, not null, default `false`. Accepted by the
   existing transaction PATCH and insert schemas.
 - `salaryProfiles.allowanceHoldBackSavings`: boolean, not null, default `true`.
-- `salaryProfiles.allowanceExcludedCategoryIds`: `integer[]`, not null, default `{}`.
-  On first read, when the profile has never saved allowance settings, the endpoint seeds it
-  with the ids of the categories named **Repayment, EMI, Investment, Transfer** (those that exist).
-  It stores them, so the user sees and can change the starting list.
-
-  This needs a marker to tell "never set" apart from "user cleared it": use
-  `allowanceSettingsSavedAt: timestamp, nullable`. Seed only while it's null.
+- `salaryProfiles.allowanceExcludedCategoryIds`: `integer[]`, **nullable**. `null` means
+  "never set" (an empty array means the user cleared the list). On first read while it's
+  null, the endpoint seeds it with the ids of the categories named **Repayment, EMI,
+  Investment, Transfer** (those that exist). It stores them, so the user sees and can change
+  the starting list.
 
 **Deploy ordering:** `npm run db:push` must run before (or atomically with) the server
 deploy. The transactions query selects the new column unconditionally (same lesson as
@@ -211,8 +221,9 @@ and from the More menu.
 ## 9. Transaction edit switch (`AddTransactionScreen.tsx`)
 
 "Not daily spending" switch, shown only in edit mode for `debit` transactions on a counted
-account type. Saved through the existing update mutation. Invalidates
-`['/api/spending-allowance']` along with the existing invalidations.
+account type. Like the existing "Track spending" switch, it saves immediately with its own
+PATCH (`{ excludedFromAllowance }`), no Save tap needed. Invalidates `['/api/transactions']`
+and `['/api/spending-allowance']`.
 
 ## 10. Testing
 
