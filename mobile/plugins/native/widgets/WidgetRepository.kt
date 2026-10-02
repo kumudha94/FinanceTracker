@@ -38,6 +38,31 @@ data class CardSpend(val name: String, val bankName: String, val spent: Double, 
 /** The Top Spending and Credit Cards blocks of the Dashboard, from /api/dashboard-summary. */
 data class DashboardSpending(val totalSpent: Double, val topCategories: List<CategorySpend>, val creditCards: List<CardSpend>)
 
+/** /api/spending-allowance, reduced to what the widget shows. configured = false: salary not set up, other fields are 0. */
+data class AllowanceSummary(
+  val configured: Boolean,
+  val todayLimit: Double,
+  val todaySpent: Double,
+  val todayLeft: Double,
+  val weekLeft: Double,
+  val cycleLeft: Double,
+  val daysLeft: Int
+)
+
+fun parseAllowance(obj: JSONObject): AllowanceSummary {
+  if (!obj.optBoolean("configured", false)) return AllowanceSummary(false, 0.0, 0.0, 0.0, 0.0, 0.0, 0)
+  val today = obj.getJSONObject("today")
+  return AllowanceSummary(
+    configured = true,
+    todayLimit = today.optDouble("limit", 0.0),
+    todaySpent = today.optDouble("spent", 0.0),
+    todayLeft = today.optDouble("left", 0.0),
+    weekLeft = obj.getJSONObject("week").optDouble("left", 0.0),
+    cycleLeft = obj.optDouble("cycleLeft", 0.0),
+    daysLeft = obj.getJSONObject("cycle").optInt("daysLeft", 0)
+  )
+}
+
 object WidgetRepository {
   private val client = OkHttpClient()
 
@@ -96,6 +121,20 @@ object WidgetRepository {
               }
             )
           )
+        } catch (e: JSONException) {
+          WidgetDataResult.NetworkError
+        }
+      }
+      is WidgetDataResult.AuthFailure -> WidgetDataResult.AuthFailure
+      is WidgetDataResult.NetworkError -> WidgetDataResult.NetworkError
+    }
+  }
+
+  suspend fun fetchSpendingAllowance(context: Context): WidgetDataResult<AllowanceSummary> {
+    return when (val result = authenticatedGet(context, "$API_BASE_URL/api/spending-allowance")) {
+      is WidgetDataResult.Success -> {
+        try {
+          WidgetDataResult.Success(parseAllowance(JSONObject(result.data)))
         } catch (e: JSONException) {
           WidgetDataResult.NetworkError
         }

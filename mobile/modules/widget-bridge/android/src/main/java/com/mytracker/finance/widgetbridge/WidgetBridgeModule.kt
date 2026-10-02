@@ -21,5 +21,13 @@ class WidgetBridgeModule : Module() {
       val context = appContext.reactContext ?: return@AsyncFunction Unit
       WidgetAuthPrefs.clear(context)
     }
+
+    // Explicit broadcast to the app's WidgetRefreshReceiver: this module can't reference the
+    // widget classes directly (they live in the app module), but an explicit intent needs no link.
+    AsyncFunction("refreshWidgets") {
+      val context = appContext.reactContext ?: return@AsyncFunction Unit
+      val intent = android.content.Intent().setClassName(context, "${context.packageName}.widgets.WidgetRefreshReceiver")
+      context.sendBroadcast(intent)
+    }
   }
 }

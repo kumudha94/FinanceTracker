@@ -4,6 +4,7 @@ import * as Notifications from 'expo-notifications';
 import NetInfo from '@react-native-community/netinfo';
 import { API_BASE_URL, TASKER_API_KEY } from './api';
 import { buildSmsNotification, SmsNotificationResult } from './smsNotificationContent';
+import { refreshWidgets } from '../../modules/widget-bridge';
 
 const STORAGE_KEYS = {
   AUTO_READ_ENABLED: '@finance_tracker_sms_auto_read_enabled',
@@ -132,6 +133,9 @@ async function notifyTransactionAdded(result: ParseSmsResult): Promise<void> {
 
   // data.url is what App.tsx's linking config opens when the notification is tapped.
   await Notifications.scheduleNotificationAsync({ content, trigger: null });
+
+  // Best-effort: widgets also refresh every 30 minutes, so a failure here is harmless.
+  refreshWidgets().catch(() => {});
 }
 
 export async function drainFailedQueue(): Promise<void> {

@@ -16,3 +16,8 @@ export function clearWidgetAuth(): Promise<void> {
   if (!WidgetBridge) return Promise.resolve();
   return WidgetBridge.clearWidgetAuth();
 }
+
+export function refreshWidgets(): Promise<void> {
+  if (!WidgetBridge) return Promise.resolve();
+  return WidgetBridge.refreshWidgets();
+}
