@@ -22,14 +22,20 @@ import {
   insertCardDetailsSchema,
   insertInsuranceSchema,
   insertInsurancePremiumSchema,
-  insertPlannedIncomeEntrySchema
+  insertPlannedIncomeEntrySchema,
+  type SalaryProfile,
 } from "@shared/schema";
 import { suggestCategory, parseSmsMessage, parseStatementPDF, ExtractedTransaction } from "./openai";
 import { deriveInstitutionKey, parseDueSms } from "./smsParser";
 import multer from "multer";
 // pdf-parse is imported dynamically at usage site to avoid pdfjs-dist crashing on startup
 import { getPaydayForMonth, getNextPaydays, getPastPaydays, getCurrentCycleDates, getNextCycleDates, getCyclePrimaryMonth, findOccurrenceInCycle, getSpannedMonths, filterOccurrencesInCycle, getCreditCardBillingCycle, shouldAutoMarkSalaryCredit } from "./salaryUtils";
-import { buildCycleCommitments } from "./cycleCommitments";
+import { buildCycleCommitments, type CycleCommitmentGroups } from "./cycleCommitments";
+import {
+  selectCountedDebits, resolveSalaryIncome, computeSpendingAllowance, computeWalletIncome,
+  type AllowanceTxn, type CommitmentItem, type CommitmentType,
+} from "./spendingAllowance";
+import { z } from "zod";
 import { selectSmsOwnerAccounts, resolveSmsTransactionDate } from "./smsProcessingUtils";
 import { getWeekBounds, getPreviousWeekBounds } from "./weekUtils";
 import { validateNewSpendingEntry } from "./loanSpendingValidation";
@@ -3441,6 +3447,136 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error: any) {
       console.error("Error toggling forecast exclusion:", error.message);
       res.status(500).json({ error: error.message || "Failed to toggle forecast exclusion" });
+    }
+  });
+
+  const DEFAULT_NEVER_COUNT_CATEGORIES = ["Repayment", "EMI", "Investment", "Transfer"];
+
+  // Allowance settings live on the salary profile. A null category list means "never set":
+  // seed it once with the default categories (those that exist) and store it, so the user sees
+  // and can change the starting list. An empty array means the user cleared it.
+  async function resolveAllowanceSettings(profile: SalaryProfile) {
+    let neverCountCategoryIds = profile.allowanceExcludedCategoryIds;
+    if (neverCountCategoryIds == null) {
+      const all = await storage.getAllCategories();
+      neverCountCategoryIds = all.filter(c => DEFAULT_NEVER_COUNT_CATEGORIES.includes(c.name)).map(c => c.id);
+      await storage.updateSalaryProfile(profile.id, { allowanceExcludedCategoryIds: neverCountCategoryIds });
+    }
+    return { holdBackSavings: profile.allowanceHoldBackSavings, neverCountCategoryIds };
+  }
+
+  const COMMITMENT_GROUP_TYPES: Array<[keyof Omit<CycleCommitmentGroups, 'plannedIncome'>, CommitmentType]> = [
+    ['scheduledPayments', 'scheduled_payment'],
+    ['loans', 'loan'],
+    ['insurance', 'insurance'],
+    ['creditCardBills', 'credit_card_bill'],
+    ['savings', 'savings_goal'],
+  ];
+
+  app.get("/api/spending-allowance", authenticateToken, async (req, res) => {
+    try {
+      const userId = req.user!.userId;
+      const now = new Date();
+      const profile = await storage.getSalaryProfile(userId);
+      if (!profile || !profile.isActive || !profile.monthlyAmount) {
+        return res.json({ configured: false });
+      }
+      const lastSalaryCycle = (await storage.getSalaryCycles(profile.id, 1))[0] ?? null;
+      const { cycleStart, cycleEnd } = getCurrentCycleDates(profile, lastSalaryCycle, now);
+      const settings = await resolveAllowanceSettings(profile);
+
+      const groups = await buildCycleCommitments(userId, { cycleStart, cycleEnd, now, mode: 'current' });
+      const commitments: CommitmentItem[] = COMMITMENT_GROUP_TYPES
+        .filter(([, itemType]) => settings.holdBackSavings || itemType !== 'savings_goal')
+        .flatMap(([group, itemType]) => groups[group]
+          .filter((i: any) => !i.excluded && i.amount > 0)
+          .map((i: any) => ({ itemType, id: i.id, name: i.name, amount: i.amount, subLabel: i.subLabel ?? '' })));
+
+      // A day before the cycle too, so a transfer's other half just before payday still pairs.
+      const rows = await storage.getAllTransactions({ userId, startDate: new Date(cycleStart.getTime() - 24 * 60 * 60 * 1000), endDate: now });
+      const txns: AllowanceTxn[] = rows.map(t => ({
+        id: t.id,
+        type: t.type,
+        amount: parseFloat(t.amount),
+        transactionDate: new Date(t.transactionDate),
+        accountId: t.accountId,
+        accountType: t.account?.type ?? null,
+        accountName: t.account?.name ?? null,
+        categoryId: t.categoryId,
+        categoryName: t.category?.name ?? null,
+        merchant: t.merchant || t.description || null,
+        excludedFromAllowance: !!t.excludedFromAllowance,
+        paymentOccurrenceId: t.paymentOccurrenceId,
+        savingsContributionId: t.savingsContributionId,
+      }));
+
+      const cycleDebitIds = txns.filter(t => t.type === 'debit' && t.transactionDate >= cycleStart).map(t => t.id);
+      const linkedPaymentTxnIds = await storage.getPaymentLinkedTransactionIds(cycleDebitIds);
+      const { counted, excluded } = selectCountedDebits(txns, cycleStart, {
+        linkedPaymentTxnIds,
+        neverCountCategoryIds: new Set(settings.neverCountCategoryIds),
+        cardBillItems: commitments.filter(c => c.itemType === 'credit_card_bill'),
+      });
+
+      const salary = resolveSalaryIncome(profile.monthlyAmount, lastSalaryCycle, cycleStart, cycleEnd);
+      // Wallet credits, less the wallet half of bank -> wallet top-ups (already in the salary).
+      const walletIncome = computeWalletIncome(txns, excluded, cycleStart);
+
+      const a = computeSpendingAllowance({ now, cycleEnd, salaryIncome: salary.amount, walletIncome, commitments, counted });
+      const row = (t: AllowanceTxn) => ({
+        id: t.id, date: t.transactionDate.toISOString(), merchant: t.merchant, amount: t.amount,
+        accountName: t.accountName, categoryName: t.categoryName,
+      });
+      const newestFirst = (x: { date: string }, y: { date: string }) => y.date.localeCompare(x.date);
+
+      res.json({
+        configured: true,
+        cycle: { start: cycleStart.toISOString(), end: cycleEnd.toISOString(), daysLeft: a.daysLeft },
+        today: { limit: a.dailyLimit, spent: a.spentToday, left: a.todayLeft },
+        week: { left: a.weekLeft },
+        cycleLeft: a.cycleLeft,
+        income: { salary: salary.amount, salaryIsActual: salary.isActual, wallet: walletIncome },
+        heldBack: { total: a.heldBack, items: commitments },
+        spent: { total: Math.round((a.spentToday + a.spentBeforeToday) * 100) / 100, counted: counted.map(row).sort(newestFirst) },
+        excluded: excluded.map(e => ({ ...row(e.txn), reason: e.reason })).sort(newestFirst),
+        settings,
+      });
+    } catch (error) {
+      console.error("Error computing spending allowance:", error);
+      res.status(500).json({ error: "Failed to compute spending allowance" });
+    }
+  });
+
+  const allowanceSettingsSchema = z.object({
+    holdBackSavings: z.boolean().optional(),
+    neverCountCategoryIds: z.array(z.number().int()).optional(),
+  });
+
+  app.patch("/api/spending-allowance/settings", authenticateToken, async (req, res) => {
+    try {
+      const userId = req.user!.userId;
+      const parsed = allowanceSettingsSchema.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0]?.message ?? "Invalid settings" });
+      const profile = await storage.getSalaryProfile(userId);
+      if (!profile) return res.status(404).json({ error: "Set up a salary profile first" });
+
+      const { holdBackSavings, neverCountCategoryIds } = parsed.data;
+      if (neverCountCategoryIds) {
+        const known = new Set((await storage.getAllCategories()).map(c => c.id));
+        const unknown = neverCountCategoryIds.filter(id => !known.has(id));
+        if (unknown.length > 0) return res.status(400).json({ error: `Unknown category id(s): ${unknown.join(', ')}` });
+      }
+      const updated = await storage.updateSalaryProfile(profile.id, {
+        ...(holdBackSavings !== undefined && { allowanceHoldBackSavings: holdBackSavings }),
+        ...(neverCountCategoryIds !== undefined && { allowanceExcludedCategoryIds: neverCountCategoryIds }),
+      });
+      res.json({
+        holdBackSavings: updated!.allowanceHoldBackSavings,
+        neverCountCategoryIds: updated!.allowanceExcludedCategoryIds ?? [],
+      });
+    } catch (error: any) {
+      console.error("Error updating allowance settings:", error.message);
+      res.status(500).json({ error: "Failed to update allowance settings" });
     }
   });
 

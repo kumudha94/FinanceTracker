@@ -98,6 +98,32 @@ export function selectCountedDebits(
 }
 
 /**
+ * Credits into wallet accounts within the cycle, less the wallet half of any bank -> wallet
+ * top-up that `selectCountedDebits` excluded as "Transfer between your accounts" (that money is
+ * already in the salary, so counting it again would double it). For each such debit the closest
+ * wallet credit of the same amount within 24h is dropped, each credit at most once. Wallet
+ * credits with no matching debit (e.g. employer-funded meal card loads) still count.
+ */
+export function computeWalletIncome(txns: AllowanceTxn[], excluded: ExcludedDebit[], cycleStart: Date): number {
+  const walletCredits = txns.filter(t => t.type === 'credit' && t.accountType === 'wallet');
+  const dropped = new Set<number>();
+  for (const { txn: d, reason } of excluded) {
+    if (reason !== 'Transfer between your accounts') continue;
+    let best: AllowanceTxn | null = null;
+    for (const c of walletCredits) {
+      if (dropped.has(c.id) || c.accountId === d.accountId || !sameAmount(c.amount, d.amount)) continue;
+      const gap = Math.abs(c.transactionDate.getTime() - d.transactionDate.getTime());
+      if (gap > DAY_MS) continue;
+      if (!best || gap < Math.abs(best.transactionDate.getTime() - d.transactionDate.getTime())) best = c;
+    }
+    if (best) dropped.add(best.id);
+  }
+  return round2(walletCredits
+    .filter(c => !dropped.has(c.id) && c.transactionDate >= cycleStart)
+    .reduce((sum, c) => sum + c.amount, 0));
+}
+
+/**
  * Salary for the cycle: the actual credited amount when the latest salary cycle was paid within
  * this cycle (5 days of slack before the start, since salary often lands the day before payday),
  * otherwise the profile's expected monthly amount.
