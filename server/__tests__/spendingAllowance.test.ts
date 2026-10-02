@@ -129,6 +129,27 @@ test("rule 5: card bill matches within Rs 1, and only once", () => {
 console.log("\n=== Wallet income ===\n");
 
 const wallet = { accountId: 40, accountType: "wallet", accountName: "ICICI Meal Card" };
+const noCtx = { linkedPaymentTxnIds: new Set<number>(), neverCountCategoryIds: new Set<number>(), cardBillItems: [] as CommitmentItem[] };
+
+test("pairedCreditId is set for a paired transfer and absent for every other rule", () => {
+  const marked = txn({ excludedFromAllowance: true });
+  const planned = txn({ paymentOccurrenceId: 5 });
+  const cat = txn({ categoryId: 12, categoryName: "Repayment" });
+  const transfer = txn({ amount: 1000, transactionDate: new Date("2026-10-01T06:00:00Z") });
+  const otherHalf = txn({ type: "credit", amount: 1000, accountId: 2, accountName: "SBI", transactionDate: new Date("2026-10-01T06:05:00Z") });
+  const billPaid = txn({ amount: 4999.5 });
+  const r = selectCountedDebits([marked, planned, cat, transfer, otherHalf, billPaid], cycleStart, ctx({
+    neverCountCategoryIds: new Set([12]),
+    cardBillItems: [{ itemType: "credit_card_bill", id: "cc-1", name: "Card Bill", amount: 5000, subLabel: "" }],
+  }));
+  const byId = new Map(r.excluded.map(e => [e.txn.id, e]));
+  assert.equal(byId.get(transfer.id)?.reason, "Transfer between your accounts");
+  assert.equal(byId.get(transfer.id)?.pairedCreditId, otherHalf.id);
+  for (const t of [marked, planned, cat, billPaid]) {
+    assert.ok(byId.has(t.id), `txn ${t.id} should be excluded`);
+    assert.equal(byId.get(t.id)!.pairedCreditId, undefined);
+  }
+});
 
 test("wallet credits in the cycle count; bank credits and pre-cycle wallet credits don't", () => {
   const txns = [
@@ -139,45 +160,37 @@ test("wallet credits in the cycle count; bank credits and pre-cycle wallet credi
   assert.equal(computeWalletIncome(txns, [], cycleStart), 2200);
 });
 
-test("bank -> wallet top-up: the wallet credit doesn't count as income", () => {
+test("bank -> wallet top-up: the paired wallet credit doesn't count as income", () => {
   const debit = txn({ amount: 1000, transactionDate: new Date("2026-10-01T06:00:00Z") });
   const topUp = txn({ ...wallet, type: "credit", amount: 1000, transactionDate: new Date("2026-10-01T06:05:00Z") });
   const employer = txn({ ...wallet, type: "credit", amount: 2200, transactionDate: new Date("2026-09-30T06:00:00Z") });
   const txns = [debit, topUp, employer];
-  const { excluded } = selectCountedDebits(txns, cycleStart, ctx());
-  assert.deepEqual(reasons({ counted: [], excluded }), ["Transfer between your accounts"]);
+  const { excluded } = selectCountedDebits(txns, cycleStart, noCtx);
+  assert.deepEqual(excluded.map(e => e.reason), ["Transfer between your accounts"]);
   assert.equal(computeWalletIncome(txns, excluded, cycleStart), 2200);
 });
 
-test("each wallet credit is dropped at most once", () => {
+test("bank -> bank transfer with a coincident wallet load: the wallet load still counts", () => {
+  // Newest first, as getAllTransactions returns rows.
+  const txns = [
+    txn({ type: "credit", amount: 1000, accountId: 2, accountName: "SBI", transactionDate: new Date("2026-10-01T06:30:00Z") }),
+    txn({ ...wallet, type: "credit", amount: 1000, transactionDate: new Date("2026-10-01T06:05:00Z") }),
+    txn({ amount: 1000, accountId: 1, transactionDate: new Date("2026-10-01T06:00:00Z") }),
+  ];
+  const { excluded } = selectCountedDebits(txns, cycleStart, noCtx);
+  assert.deepEqual(excluded.map(e => e.reason), ["Transfer between your accounts"]);
+  assert.equal(computeWalletIncome(txns, excluded, cycleStart), 1000);
+});
+
+test("drops exactly the paired credit, never a look-alike", () => {
   const d1 = txn({ amount: 500, transactionDate: new Date("2026-10-01T06:00:00Z") });
   const c1 = txn({ ...wallet, type: "credit", amount: 500, transactionDate: new Date("2026-10-01T06:01:00Z") });
   const c2 = txn({ ...wallet, type: "credit", amount: 500, transactionDate: new Date("2026-10-01T07:00:00Z") });
-  const excluded = [{ txn: d1, reason: "Transfer between your accounts" }];
-  assert.equal(computeWalletIncome([d1, c1, c2], excluded, cycleStart), 500);
-});
-
-test("only 'Transfer between your accounts' drops a credit, and only within 24h and same amount", () => {
-  const d1 = txn({ amount: 500, transactionDate: new Date("2026-10-01T06:00:00Z") });
-  const d2 = txn({ amount: 700, transactionDate: new Date("2026-10-01T06:00:00Z") });
-  const d3 = txn({ amount: 900, transactionDate: new Date("2026-10-01T06:00:00Z") });
-  const sameAmtOtherReason = txn({ ...wallet, type: "credit", amount: 500, transactionDate: new Date("2026-10-01T06:01:00Z") });
-  const tooLate = txn({ ...wallet, type: "credit", amount: 700, transactionDate: new Date("2026-10-02T06:01:00Z") });
-  const otherAmt = txn({ ...wallet, type: "credit", amount: 901, transactionDate: new Date("2026-10-01T06:01:00Z") });
-  const excluded = [
-    { txn: d1, reason: "Category: Repayment" },
-    { txn: d2, reason: "Transfer between your accounts" },
-    { txn: d3, reason: "Transfer between your accounts" },
-  ];
-  assert.equal(computeWalletIncome([d1, d2, d3, sameAmtOtherReason, tooLate, otherAmt], excluded, cycleStart), 500 + 700 + 901);
-});
-
-test("top-up whose wallet credit landed just before the cycle doesn't drop an in-cycle credit", () => {
-  const debit = txn({ amount: 1000, transactionDate: new Date("2026-09-29T02:00:00Z") });
-  const preCycle = txn({ ...wallet, type: "credit", amount: 1000, transactionDate: new Date("2026-09-28T23:00:00Z") });
-  const inCycle = txn({ ...wallet, type: "credit", amount: 1000, transactionDate: new Date("2026-09-29T20:00:00Z") });
-  const excluded = [{ txn: debit, reason: "Transfer between your accounts" }];
-  assert.equal(computeWalletIncome([debit, preCycle, inCycle], excluded, cycleStart), 1000);
+  const excluded = [{ txn: d1, reason: "Transfer between your accounts", pairedCreditId: c2.id }];
+  const income = computeWalletIncome([d1, c1, c2], excluded, cycleStart);
+  assert.equal(income, 500);
+  // Excluded debits without a paired credit (category, planned, ...) never drop a wallet credit.
+  assert.equal(computeWalletIncome([d1, c1, c2], [{ txn: d1, reason: "Category: Repayment" }], cycleStart), 1000);
 });
 
 console.log("\n=== Salary income ===\n");

@@ -40,6 +40,8 @@ export interface AllowanceTxn {
 export interface ExcludedDebit {
   txn: AllowanceTxn;
   reason: string;
+  /** Set only when the debit was paired with a credit on another account (transfer or card bill paid from a counted account). */
+  pairedCreditId?: number;
 }
 
 const sameAmount = (a: number, b: number) => Math.abs(a - b) < 0.005;
@@ -65,6 +67,7 @@ export function selectCountedDebits(
 
   for (const d of debits) {
     let reason: string | null = null;
+    let pairedCreditId: number | undefined;
 
     if (d.excludedFromAllowance) {
       reason = 'Marked not daily spending';
@@ -80,6 +83,7 @@ export function selectCountedDebits(
       );
       if (creditIdx >= 0) {
         const [credit] = unusedCredits.splice(creditIdx, 1);
+        pairedCreditId = credit.id;
         reason = credit.accountType === 'credit_card' ? 'Card bill (held back)' : 'Transfer between your accounts';
       } else {
         const billIdx = unusedBills.findIndex(b => Math.abs(b.amount - d.amount) <= 1);
@@ -90,7 +94,7 @@ export function selectCountedDebits(
       }
     }
 
-    if (reason) excluded.push({ txn: d, reason });
+    if (reason) excluded.push(pairedCreditId !== undefined ? { txn: d, reason, pairedCreditId } : { txn: d, reason });
     else counted.push(d);
   }
 
@@ -98,29 +102,16 @@ export function selectCountedDebits(
 }
 
 /**
- * Credits into wallet accounts within the cycle, less the wallet half of any bank -> wallet
- * top-up that `selectCountedDebits` excluded as "Transfer between your accounts" (that money is
- * already in the salary, so counting it again would double it). For each such debit the closest
- * wallet credit of the same amount within 24h is dropped, each credit at most once. Wallet
- * credits with no matching debit (e.g. employer-funded meal card loads) still count.
+ * Credits into wallet accounts within the cycle, less any wallet credit that `selectCountedDebits`
+ * paired with an excluded debit (the wallet half of a bank -> wallet top-up: that money is already
+ * in the salary, so counting it again would double it). Wallet credits nobody paired (e.g.
+ * employer-funded meal card loads) still count.
  */
 export function computeWalletIncome(txns: AllowanceTxn[], excluded: ExcludedDebit[], cycleStart: Date): number {
-  const walletCredits = txns.filter(t => t.type === 'credit' && t.accountType === 'wallet');
-  const dropped = new Set<number>();
-  for (const { txn: d, reason } of excluded) {
-    if (reason !== 'Transfer between your accounts') continue;
-    let best: AllowanceTxn | null = null;
-    for (const c of walletCredits) {
-      if (dropped.has(c.id) || c.accountId === d.accountId || !sameAmount(c.amount, d.amount)) continue;
-      const gap = Math.abs(c.transactionDate.getTime() - d.transactionDate.getTime());
-      if (gap > DAY_MS) continue;
-      if (!best || gap < Math.abs(best.transactionDate.getTime() - d.transactionDate.getTime())) best = c;
-    }
-    if (best) dropped.add(best.id);
-  }
-  return round2(walletCredits
-    .filter(c => !dropped.has(c.id) && c.transactionDate >= cycleStart)
-    .reduce((sum, c) => sum + c.amount, 0));
+  const paired = new Set(excluded.flatMap(e => (e.pairedCreditId !== undefined ? [e.pairedCreditId] : [])));
+  return round2(txns
+    .filter(t => t.type === 'credit' && t.accountType === 'wallet' && t.transactionDate >= cycleStart && !paired.has(t.id))
+    .reduce((sum, t) => sum + t.amount, 0));
 }
 
 /**
