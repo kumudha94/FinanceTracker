@@ -14,6 +14,7 @@ import { FABButton } from '../components/FABButton';
 import type { Transaction, Category, Account } from '../lib/types';
 import { useTheme } from '../contexts/ThemeContext';
 import { useSwipeSettings } from '../hooks/useSwipeSettings';
+import { refreshWidgets } from '../../modules/widget-bridge';
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
@@ -94,6 +95,8 @@ export default function TransactionsScreen() {
       queryClient.invalidateQueries({ queryKey: ['/api/accounts'] });
       queryClient.invalidateQueries({ queryKey: ['/api/monthlyExpenses'] });
       queryClient.invalidateQueries({ queryKey: ['categoryBreakdown'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/spending-allowance'] });
+      refreshWidgets().catch(() => {});
       setIsDeleteModalOpen(false);
       setSelectedTransaction(null);
       Toast.show({

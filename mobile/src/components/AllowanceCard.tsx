@@ -11,7 +11,10 @@ export function AllowanceCard({ colors }: { colors: any }) {
   const navigation = useNavigation<any>();
   const { data } = useQuery({ queryKey: ['/api/spending-allowance'], queryFn: api.getSpendingAllowance });
   if (!data || !data.configured) return null;
+  // A negative daily limit means the whole cycle is overspent, not just today (matches the widget).
+  const overCycle = data.today.limit < 0;
   const over = data.today.left < 0;
+  const danger = colors.danger ?? '#dc2626';
   return (
     <TouchableOpacity
       style={[styles.card, { backgroundColor: colors.card }]}
@@ -19,11 +22,17 @@ export function AllowanceCard({ colors }: { colors: any }) {
     >
       <View style={{ flex: 1 }}>
         <Text style={{ color: colors.textMuted, fontSize: 13, fontWeight: '600' }}>Safe to spend today</Text>
-        <Text style={{ color: over ? colors.danger ?? '#dc2626' : colors.primary, fontSize: 24, fontWeight: '800' }}>
-          {over ? `${formatCurrency(-data.today.left)} over` : formatCurrency(data.today.left)}
-        </Text>
+        {overCycle ? (
+          <Text style={{ color: danger, fontSize: 18, fontWeight: '800' }}>
+            Over budget for this cycle by {formatCurrency(-data.cycleLeft)}
+          </Text>
+        ) : (
+          <Text style={{ color: over ? danger : colors.primary, fontSize: 24, fontWeight: '800' }}>
+            {over ? `${formatCurrency(-data.today.left)} over` : formatCurrency(data.today.left)}
+          </Text>
+        )}
         <Text style={{ color: colors.textMuted, fontSize: 12 }}>
-          Week {formatCurrency(data.week.left)} · {data.cycle.daysLeft} days to payday
+          Week {formatCurrency(data.week.left)} · {data.cycle.daysLeft} {data.cycle.daysLeft === 1 ? 'day' : 'days'} to payday
         </Text>
       </View>
       <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />

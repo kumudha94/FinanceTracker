@@ -4,12 +4,14 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
+import Toast from 'react-native-toast-message';
 import { api } from '../lib/api';
 import { formatCurrency } from '../lib/utils';
 import { useTheme } from '../contexts/ThemeContext';
 import { getThemedColors } from '../lib/utils';
 import type { RootStackParamList } from '../../App';
 import type { AllowanceCommitment, AllowanceTxnRow } from '../lib/types';
+import { refreshWidgets } from '../../modules/widget-bridge';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 
@@ -32,7 +34,7 @@ export default function SpendingAllowanceScreen() {
   const [showExcluded, setShowExcluded] = useState(false);
   const [showCategories, setShowCategories] = useState(false);
 
-  const { data, isLoading, refetch, isRefetching } = useQuery({
+  const { data, isLoading, isError, refetch, isRefetching } = useQuery({
     queryKey: ['/api/spending-allowance'],
     queryFn: api.getSpendingAllowance,
   });
@@ -40,11 +42,31 @@ export default function SpendingAllowanceScreen() {
 
   const settingsMutation = useMutation({
     mutationFn: api.updateSpendingAllowanceSettings,
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['/api/spending-allowance'] }),
+    onSuccess: () => {
+      refreshWidgets().catch(() => {});
+      return queryClient.invalidateQueries({ queryKey: ['/api/spending-allowance'] });
+    },
+    onError: () => {
+      Toast.show({ type: 'error', text1: 'Could not update', text2: 'Please try again', position: 'bottom' });
+    },
   });
 
   if (isLoading) {
     return <View style={[styles.center, { backgroundColor: colors.background }]}><ActivityIndicator color={colors.primary} /></View>;
+  }
+  if (!data && isError) {
+    return (
+      <ScrollView
+        style={{ backgroundColor: colors.background }}
+        contentContainerStyle={styles.center}
+        refreshControl={<RefreshControl refreshing={isRefetching} onRefresh={refetch} />}
+      >
+        <Text style={{ color: colors.textMuted, marginBottom: 12 }}>Couldn't load. Pull to refresh.</Text>
+        <TouchableOpacity onPress={() => refetch()}>
+          <Text style={{ color: colors.primary, fontWeight: '600' }}>Try again</Text>
+        </TouchableOpacity>
+      </ScrollView>
+    );
   }
   if (!data || !data.configured) {
     return (
@@ -57,8 +79,11 @@ export default function SpendingAllowanceScreen() {
     );
   }
 
+  // A negative daily limit means the whole cycle is overspent, not just today (matches the widget).
+  const overCycle = data.today.limit < 0;
   const over = data.today.left < 0;
-  const moneyColor = (n: number) => (n < 0 ? colors.danger ?? '#dc2626' : colors.text);
+  const danger = colors.danger ?? '#dc2626';
+  const moneyColor = (n: number) => (n < 0 ? danger : colors.text);
   const openTxn = (row: AllowanceTxnRow) => navigation.navigate('AddTransaction', { transactionId: row.id });
   const grouped = Object.entries(
     data.heldBack.items.reduce<Record<string, AllowanceCommitment[]>>((acc, i) => {
@@ -81,12 +106,20 @@ export default function SpendingAllowanceScreen() {
     >
       <View style={[styles.card, { backgroundColor: colors.card }]}>
         <Text style={[styles.label, { color: colors.textMuted }]}>Safe to spend today</Text>
-        <Text style={[styles.big, { color: over ? colors.danger ?? '#dc2626' : colors.primary }]}>
-          {over ? `${formatCurrency(-data.today.left)} over today` : formatCurrency(data.today.left)}
-        </Text>
-        <Text style={{ color: colors.textMuted }}>
-          {formatCurrency(data.today.spent)} spent of {formatCurrency(data.today.limit)}
-        </Text>
+        {overCycle ? (
+          <Text style={[styles.overCycle, { color: danger }]}>
+            Over budget for this cycle by {formatCurrency(-data.cycleLeft)}
+          </Text>
+        ) : (
+          <>
+            <Text style={[styles.big, { color: over ? danger : colors.primary }]}>
+              {over ? `${formatCurrency(-data.today.left)} over today` : formatCurrency(data.today.left)}
+            </Text>
+            <Text style={{ color: colors.textMuted }}>
+              {formatCurrency(data.today.spent)} spent of {formatCurrency(data.today.limit)}
+            </Text>
+          </>
+        )}
         <View style={styles.row}>
           <Stat label="This week" value={data.week.left} color={moneyColor(data.week.left)} muted={colors.textMuted} />
           <Stat label="Until payday" value={data.cycleLeft} color={moneyColor(data.cycleLeft)} muted={colors.textMuted} />
@@ -198,6 +231,7 @@ const styles = StyleSheet.create({
   card: { borderRadius: 16, padding: 16, marginBottom: 12 },
   label: { fontSize: 13, fontWeight: '600' },
   big: { fontSize: 32, fontWeight: '800', marginVertical: 4 },
+  overCycle: { fontSize: 22, fontWeight: '800', marginVertical: 4 },
   row: { flexDirection: 'row' },
   section: { fontSize: 16, fontWeight: '700', marginTop: 8, marginBottom: 8 },
   line: { flexDirection: 'row', alignItems: 'center', paddingVertical: 6 },

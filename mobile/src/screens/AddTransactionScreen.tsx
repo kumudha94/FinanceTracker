@@ -12,6 +12,7 @@ import type { Category, Account, Transaction } from '../lib/types';
 import { RootStackParamList } from '../../App';
 import React from 'react';
 import { useTheme } from '../contexts/ThemeContext';
+import { refreshWidgets } from '../../modules/widget-bridge';
 
 type AddTransactionRouteProp = RouteProp<RootStackParamList, 'AddTransaction'>;
 
@@ -104,6 +105,8 @@ export default function AddTransactionScreen() {
       queryClient.invalidateQueries({ queryKey: ['/api/accounts'] });
       queryClient.invalidateQueries({ queryKey: ['/api/monthlyExpenses'] });
       queryClient.invalidateQueries({ queryKey: ['categoryBreakdown'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/spending-allowance'] });
+      refreshWidgets().catch(() => {});
       navigation.goBack();
       Toast.show({
         type: 'success',
@@ -131,6 +134,8 @@ export default function AddTransactionScreen() {
       queryClient.invalidateQueries({ queryKey: ['/api/accounts'] });
       queryClient.invalidateQueries({ queryKey: ['/api/monthlyExpenses'] });
       queryClient.invalidateQueries({ queryKey: ['categoryBreakdown'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/spending-allowance'] });
+      refreshWidgets().catch(() => {});
 
       const merchantChanged = merchant.trim().length > 0;
       const categoryChanged = selectedCategoryId !== originalCategoryId;
@@ -179,6 +184,8 @@ export default function AddTransactionScreen() {
       queryClient.invalidateQueries({ queryKey: ['/api/transactions'] });
       queryClient.invalidateQueries({ queryKey: ['/api/dashboard'] });
       queryClient.invalidateQueries({ queryKey: ['categoryBreakdown'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/spending-allowance'] });
+      refreshWidgets().catch(() => {});
       setShowMerchantMatchModal(false);
       navigation.goBack();
       Toast.show({
@@ -214,6 +221,7 @@ export default function AddTransactionScreen() {
   const allowanceMutation = useMutation({
     mutationFn: (excluded: boolean) => api.updateTransaction(Number(transactionId), { excludedFromAllowance: excluded }),
     onSuccess: async () => {
+      refreshWidgets().catch(() => {});
       await queryClient.invalidateQueries({ queryKey: ['/api/transactions'] });
       queryClient.invalidateQueries({ queryKey: ['/api/spending-allowance'] });
     },
