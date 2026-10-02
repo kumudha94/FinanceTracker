@@ -69,6 +69,9 @@ export default function AddTransactionScreen() {
     queryKey: ['/api/transactions'],
     queryFn: api.getTransactions,
     enabled: isEditMode,
+    // Opened from an SMS notification, the transaction is seconds old and a cached list
+    // (fresh for 2 minutes) wouldn't have it, leaving the edit form empty.
+    refetchOnMount: 'always',
   });
 
   // Load transaction data for edit mode. Hydrates once per transactionId so that a later

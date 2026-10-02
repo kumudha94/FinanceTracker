@@ -4054,7 +4054,40 @@ export async function registerRoutes(app: Express): Promise<Server> {
     institutionKey?: string;
     message?: string;
     smsLogId?: number;
+    summary?: SmsTransactionSummary;
   };
+
+  // What the phone's "transaction added" notification shows beyond the parsed SMS itself.
+  type SmsTransactionSummary = {
+    accountName: string;
+    accountType: string;
+    categoryName: string | null;
+    balance: string | null;
+  };
+
+  async function buildSmsTransactionSummary(
+    accountId: number,
+    categoryId: number | null,
+    smsAvailableBalance: number | undefined
+  ): Promise<SmsTransactionSummary | undefined> {
+    try {
+      // Read the account after the transaction was created, so the app balance includes it.
+      const account = await storage.getAccount(accountId);
+      if (!account) return undefined;
+      const category = categoryId ? await storage.getCategory(categoryId) : undefined;
+      return {
+        accountName: account.name,
+        accountType: account.type,
+        categoryName: category?.name ?? null,
+        // The bank's own figure beats the app's running balance, which drifts if an SMS was missed.
+        balance: smsAvailableBalance !== undefined ? smsAvailableBalance.toString() : account.balance ?? null,
+      };
+    } catch (error) {
+      // The transaction is already saved; a missing summary only makes the notification shorter.
+      console.error("Failed to build SMS transaction summary:", error);
+      return undefined;
+    }
+  }
 
   // Parses a due-reminder SMS ("has dues of Rs X", "minimum due", "total outstanding") — these
   // aren't transactions, so parseSmsMessage already returned null before this is tried. A credit
@@ -4369,7 +4402,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         await runSalaryAutoMark(transaction, messageText);
       }
 
-      return { success: true, transaction, parsed: parsedData };
+      const summary = await buildSmsTransactionSummary(account.id, transaction.categoryId, parsedData.availableBalance);
+      return { success: true, transaction, parsed: parsedData, summary };
     };
 
     const matchedAccount = matchAccountBySender(accounts, sender || "", parsedData.accountLastDigits, parsedData.accountContext);

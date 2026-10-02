@@ -1,12 +1,14 @@
 import 'react-native-gesture-handler';
-import { NavigationContainer, DefaultTheme, DarkTheme } from '@react-navigation/native';
+import { NavigationContainer, DefaultTheme, DarkTheme, LinkingOptions } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { StatusBar } from 'expo-status-bar';
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-import { View, ActivityIndicator } from 'react-native';
+import { View, ActivityIndicator, Linking } from 'react-native';
+import * as Notifications from 'expo-notifications';
+import { DEEP_LINK_PREFIX } from './src/lib/smsNotificationContent';
 import Toast from 'react-native-toast-message';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
@@ -375,18 +377,49 @@ function TabNavigator() {
   );
 }
 
+// The navigator remounts on every PIN unlock and asks getInitialURL again, which would reopen
+// the last tapped notification each time. Each notification opens its link once.
+const handledNotificationIds = new Set<string>();
+
+function takeNotificationUrl(response: Notifications.NotificationResponse | null): string | null {
+  if (!response) return null;
+  const id = response.notification.request.identifier;
+  const url = response.notification.request.content.data?.url;
+  if (typeof url !== 'string' || handledNotificationIds.has(id)) return null;
+  handledNotificationIds.add(id);
+  return url;
+}
+
 function MainApp() {
   const { resolvedTheme } = useTheme();
   const { isLocked, isLoading, isAuthenticated, hasPassword } = useAuth();
   const colors = getThemedColors(resolvedTheme);
 
-  const linking = {
-    prefixes: ['com.mytracker.finance://'],
+  const linking: LinkingOptions<RootStackParamList> = {
+    prefixes: [DEEP_LINK_PREFIX],
     config: {
       screens: {
         Main: '',
-        AddTransaction: 'transaction/:transactionId',
+        AddTransaction: { path: 'transaction/:transactionId', parse: { transactionId: Number } },
+        InstitutionMappings: 'institution-mappings',
       },
+    },
+    // Tapping an SMS auto-read notification opens the link in its data.url, same as a widget tap.
+    async getInitialURL() {
+      const url = await Linking.getInitialURL();
+      if (url) return url;
+      return takeNotificationUrl(await Notifications.getLastNotificationResponseAsync());
+    },
+    subscribe(listener) {
+      const urlSub = Linking.addEventListener('url', ({ url }) => listener(url));
+      const tapSub = Notifications.addNotificationResponseReceivedListener(response => {
+        const url = takeNotificationUrl(response);
+        if (url) listener(url);
+      });
+      return () => {
+        urlSub.remove();
+        tapSub.remove();
+      };
     },
   };
 

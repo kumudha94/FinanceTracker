@@ -3,6 +3,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Notifications from 'expo-notifications';
 import NetInfo from '@react-native-community/netinfo';
 import { API_BASE_URL, TASKER_API_KEY } from './api';
+import { buildSmsNotification, SmsNotificationResult } from './smsNotificationContent';
 
 const STORAGE_KEYS = {
   AUTO_READ_ENABLED: '@finance_tracker_sms_auto_read_enabled',
@@ -26,10 +27,8 @@ interface QueuedSms {
   processedKey: string;
 }
 
-interface ParseSmsResult {
+interface ParseSmsResult extends SmsNotificationResult {
   success: boolean;
-  transaction?: { id: number; amount: string; type: string; merchant?: string } | null;
-  parsed?: { amount: number; type: 'debit' | 'credit'; merchant?: string };
   message?: string;
 }
 
@@ -128,19 +127,11 @@ async function postSmsToBackend(sender: string, message: string, receivedAt: str
 }
 
 async function notifyTransactionAdded(result: ParseSmsResult): Promise<void> {
-  if (!result.transaction || !result.parsed) return;
+  const content = buildSmsNotification(result);
+  if (!content) return;
 
-  const { amount, type, merchant } = result.parsed;
-  const verb = type === 'credit' ? 'Credited' : 'Debited';
-  const merchantText = merchant ? ` at ${merchant}` : '';
-
-  await Notifications.scheduleNotificationAsync({
-    content: {
-      title: `${verb} ₹${amount}${merchantText}`,
-      body: 'Transaction added automatically from SMS.',
-    },
-    trigger: null,
-  });
+  // data.url is what App.tsx's linking config opens when the notification is tapped.
+  await Notifications.scheduleNotificationAsync({ content, trigger: null });
 }
 
 export async function drainFailedQueue(): Promise<void> {
