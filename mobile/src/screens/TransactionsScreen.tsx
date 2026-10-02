@@ -168,8 +168,8 @@ export default function TransactionsScreen() {
     const matchesTracked = !trackedOnly || !!t.spendingTrackerEnabled;
 
     return matchesSearch && matchesFilter && matchesCategory && matchesFromAccount && matchesToAccount && matchesStartDate && matchesEndDate && matchesTracked;
-  }) || []).sort((a, b) => 
-    new Date(b.transactionDate).getTime() - new Date(a.transactionDate).getTime()
+  }) || []).sort((a, b) =>
+    new Date(b.transactionDate).getTime() - new Date(a.transactionDate).getTime() || b.id - a.id
   );
 
   const handleEdit = (transaction: Transaction) => {

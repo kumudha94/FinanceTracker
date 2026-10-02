@@ -610,7 +610,7 @@ export class DatabaseStorage implements IStorage {
     .leftJoin(accounts, eq(transactions.accountId, accounts.id))
     .leftJoin(toAccountAlias, eq(transactions.toAccountId, toAccountAlias.id))
     .leftJoin(categories, eq(transactions.categoryId, categories.id))
-    .orderBy(desc(transactions.transactionDate))
+    .orderBy(desc(transactions.transactionDate), desc(transactions.id))
     .$dynamic();
 
     const conditions = [];

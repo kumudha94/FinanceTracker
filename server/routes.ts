@@ -29,6 +29,7 @@ import { deriveInstitutionKey, parseDueSms } from "./smsParser";
 import multer from "multer";
 // pdf-parse is imported dynamically at usage site to avoid pdfjs-dist crashing on startup
 import { getPaydayForMonth, getNextPaydays, getPastPaydays, getCurrentCycleDates, getNextCycleDates, getCyclePrimaryMonth, findOccurrenceInCycle, getSpannedMonths, filterOccurrencesInCycle, getCreditCardBillingCycle, shouldAutoMarkSalaryCredit } from "./salaryUtils";
+import { selectSmsOwnerAccounts, resolveSmsTransactionDate } from "./smsProcessingUtils";
 import { getWeekBounds, getPreviousWeekBounds } from "./weekUtils";
 import { validateNewSpendingEntry } from "./loanSpendingValidation";
 import { validateTrackerToggle, resolveTrackerFlag, validateEntryWrite, validateAmountChange } from "./transactionSpendingValidation";
@@ -4300,8 +4301,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     };
     // Every sms_logs row must carry its owning user, otherwise user-scoped queries
     // (e.g. the retention cleanup) can never match it. `accounts` comes from
-    // storage.getAllAccounts() — in this single-user app every account belongs to the
-    // same user, so any account's userId is the right owner. Zero accounts is a
+    // selectSmsOwnerAccounts(), so every account belongs to the phone's owner and any
+    // account's userId is the right owner. Zero accounts is a
     // degenerate bootstrap case: leave userId unset rather than guess.
     if (accounts.length > 0) {
       smsLogData.userId = accounts[0].userId;
@@ -4328,7 +4329,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         type: parsedData.type || "debit",
         // Prefer the date embedded in the SMS text; if the message doesn't have one, the
         // actual received time (accurate for a rescan of historical messages) beats "now".
-        transactionDate: parsedData.date || receivedAt || new Date().toISOString(),
+        transactionDate: resolveSmsTransactionDate(parsedData.date, receivedAt),
         userId: account.userId,
         accountId: account.id,
       };
@@ -4459,7 +4460,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       return { ...base, status: 'unmatched' };
     }
 
-    const transactionDate = new Date(parsedData.date || receivedAt || new Date().toISOString());
+    const transactionDate = new Date(resolveSmsTransactionDate(parsedData.date, receivedAt));
     const existingTransaction = parsedData.referenceNumber
       ? await storage.getTransactionByReferenceNumber(matchedAccount.userId, parsedData.referenceNumber)
       : await storage.getTransactionByFallbackKey(
@@ -4480,7 +4481,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "Messages array is required" });
       }
 
-      const accounts = await storage.getAllAccounts();
+      const accounts = selectSmsOwnerAccounts(await storage.getAllAccounts());
       const results = await Promise.all(
         messages.map((msg: any) => {
           const messageText = typeof msg === 'string' ? msg : msg.message;
@@ -4500,7 +4501,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/parse-sms", validateApiKey, async (req, res) => {
     try {
       const { sender, message, receivedAt, source } = req.body;
-      const accounts = await storage.getAllAccounts();
+      const accounts = selectSmsOwnerAccounts(await storage.getAllAccounts());
       const result = await processSingleSms(message, sender, receivedAt, accounts, source);
       res.json(result);
     } catch (error: any) {
@@ -4519,7 +4520,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const results = [];
-      const accounts = await storage.getAllAccounts();
+      const accounts = selectSmsOwnerAccounts(await storage.getAllAccounts());
 
       for (const msg of messages) {
         const messageText = typeof msg === 'string' ? msg : msg.message;
@@ -4619,7 +4620,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const transactionData: any = {
         amount: parsedData.amount.toString(),
         type: parsedData.type || "debit",
-        transactionDate: parsedData.date || smsLog.receivedAt.toISOString(),
+        transactionDate: resolveSmsTransactionDate(parsedData.date, smsLog.receivedAt.toISOString()),
         userId: account.userId,
         accountId: account.id,
         smsId: smsLog.id,
