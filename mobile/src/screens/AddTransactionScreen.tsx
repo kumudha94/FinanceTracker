@@ -209,6 +209,22 @@ export default function AddTransactionScreen() {
     },
   });
 
+  // "Not daily spending": saves straight away like the Track spending switch, so a debit opened
+  // from the SMS notification can be taken out of the allowance with one tap.
+  const allowanceMutation = useMutation({
+    mutationFn: (excluded: boolean) => api.updateTransaction(Number(transactionId), { excludedFromAllowance: excluded }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['/api/transactions'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/spending-allowance'] });
+    },
+    onError: () => {
+      Toast.show({ type: 'error', text1: 'Could not update', text2: 'Please try again', position: 'bottom' });
+    },
+  });
+  const savedAccountType = accounts?.find(a => a.id === savedTransaction?.accountId)?.type;
+  const showAllowanceSwitch = savedTransaction?.type === 'debit'
+    && ['bank', 'debit_card', 'wallet'].includes(savedAccountType ?? '');
+
   const handleParseSms = async () => {
     if (!smsText.trim()) {
       Alert.alert('Error', 'Please paste your bank SMS');
@@ -543,6 +559,25 @@ export default function AddTransactionScreen() {
         </View>
       )}
 
+      {showAllowanceSwitch && (
+        <View style={[styles.trackerCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+          <View style={styles.trackerRow}>
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.trackerLabel, { color: colors.text }]}>Not daily spending</Text>
+              <Text style={[styles.trackerDescription, { color: colors.textMuted }]}>
+                Leave this out of your safe-to-spend limit, e.g. a transfer or one-off repayment
+              </Text>
+            </View>
+            <Switch
+              value={allowanceMutation.isPending ? !!allowanceMutation.variables : !!savedTransaction!.excludedFromAllowance}
+              onValueChange={(v) => allowanceMutation.mutate(v)}
+              disabled={allowanceMutation.isPending}
+              trackColor={{ false: colors.border, true: colors.primary }}
+              thumbColor="#fff"
+            />
+          </View>
+        </View>
+      )}
       {savedTransaction?.type === 'credit' && (
         <View style={[styles.trackerCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
           <View style={styles.trackerRow}>

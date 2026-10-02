@@ -103,6 +103,7 @@ export interface Transaction {
   paymentOccurrenceId?: number | null;
   spendingTrackerEnabled?: boolean;
   spendingAllocated?: string | null;
+  excludedFromAllowance?: boolean;
   createdAt: string;
   account?: Account | null;
   category?: Category | null;
@@ -319,6 +320,43 @@ export interface NextMonthForecast {
   cycleInfo?: CycleInfo;
 }
 
+export interface AllowanceCommitment {
+  itemType: 'scheduled_payment' | 'loan' | 'insurance' | 'credit_card_bill' | 'savings_goal';
+  id: number | string;
+  name: string;
+  amount: number;
+  subLabel: string;
+}
+
+export interface AllowanceTxnRow {
+  id: number;
+  date: string;
+  merchant: string | null;
+  amount: number;
+  accountName: string | null;
+  categoryName: string | null;
+}
+
+export interface AllowanceSettings {
+  holdBackSavings: boolean;
+  neverCountCategoryIds: number[];
+}
+
+export type SpendingAllowance =
+  | { configured: false }
+  | {
+      configured: true;
+      cycle: { start: string; end: string; daysLeft: number };
+      today: { limit: number; spent: number; left: number };
+      week: { left: number };
+      cycleLeft: number;
+      income: { salary: number; salaryIsActual: boolean; wallet: number };
+      heldBack: { total: number; items: AllowanceCommitment[] };
+      spent: { total: number; counted: AllowanceTxnRow[] };
+      excluded: Array<AllowanceTxnRow & { reason: string }>;
+      settings: AllowanceSettings;
+    };
+
 export interface InsertAccount {
   name: string;
   type: 'bank' | 'credit_card' | 'debit_card' | 'wallet' | 'pf';
@@ -348,6 +386,7 @@ export interface InsertTransaction {
   savingsContributionId?: number;
   paymentOccurrenceId?: number;
   spendingTrackerEnabled?: boolean;
+  excludedFromAllowance?: boolean;
 }
 
 export interface InsertBudget {
