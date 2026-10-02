@@ -237,6 +237,7 @@ export interface IStorage {
   updateLoanInstallment(id: number, installment: Partial<InsertLoanInstallment>): Promise<LoanInstallment | undefined>;
   generateLoanInstallments(loanId: number): Promise<LoanInstallment[]>;
   markInstallmentPaid(id: number, paidAmount: string, transactionId?: number): Promise<LoanInstallment | undefined>;
+  getPaymentLinkedTransactionIds(transactionIds: number[]): Promise<Set<number>>;
 
   // Loan Spending Entries
   getLoanSpendingEntries(loanId: number): Promise<LoanSpendingEntry[]>;
@@ -601,6 +602,7 @@ export class DatabaseStorage implements IStorage {
       savingsContributionId: transactions.savingsContributionId,
       paymentOccurrenceId: transactions.paymentOccurrenceId,
       spendingTrackerEnabled: transactions.spendingTrackerEnabled,
+      excludedFromAllowance: transactions.excludedFromAllowance,
       createdAt: transactions.createdAt,
       account: accounts,
       toAccount: toAccountAlias,
@@ -2634,6 +2636,22 @@ export class DatabaseStorage implements IStorage {
     }
 
     return updated || undefined;
+  }
+
+  // Transactions that paid a loan installment, loan payment or insurance premium. These pay a
+  // committed item the spending allowance already holds back, so they must not count as spending.
+  async getPaymentLinkedTransactionIds(transactionIds: number[]): Promise<Set<number>> {
+    if (transactionIds.length === 0) return new Set();
+    const [installmentRows, loanPaymentRows, premiumRows] = await Promise.all([
+      db.select({ id: loanInstallments.transactionId }).from(loanInstallments).where(inArray(loanInstallments.transactionId, transactionIds)),
+      db.select({ id: loanPayments.transactionId }).from(loanPayments).where(inArray(loanPayments.transactionId, transactionIds)),
+      db.select({ id: insurancePremiums.transactionId }).from(insurancePremiums).where(inArray(insurancePremiums.transactionId, transactionIds)),
+    ]);
+    return new Set(
+      [...installmentRows, ...loanPaymentRows, ...premiumRows]
+        .map(r => r.id)
+        .filter((id): id is number => id !== null)
+    );
   }
 
   // Loan Spending Entries
