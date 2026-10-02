@@ -37,6 +37,7 @@ import {
 } from "./spendingAllowance";
 import { z } from "zod";
 import { selectSmsOwnerAccounts, resolveSmsTransactionDate } from "./smsProcessingUtils";
+import { SYNCED_ACCOUNT_TYPES, detectBalanceGap, isNewestBalanceFigure, findTransferCandidates, type CandidateDebit } from "./balanceSync";
 import { getWeekBounds, getPreviousWeekBounds } from "./weekUtils";
 import { validateNewSpendingEntry } from "./loanSpendingValidation";
 import { validateTrackerToggle, resolveTrackerFlag, validateEntryWrite, validateAmountChange } from "./transactionSpendingValidation";
@@ -3965,7 +3966,47 @@ export async function registerRoutes(app: Express): Promise<Server> {
     message?: string;
     smsLogId?: number;
     summary?: SmsTransactionSummary;
+    balanceGap?: { id: number; accountName: string; gapAmount: number; status: string };
   };
+
+  // Sync a bank/wallet balance to the bank's own figure from this SMS and record any gap.
+  // Never throws: the transaction is already saved, and the next balance-bearing SMS resyncs.
+  async function syncBalanceFromSms(
+    account: { id: number; userId: number; name: string; type: string },
+    transaction: { id: number; transactionDate: Date | string },
+    bankBalance: number | undefined
+  ): Promise<ParseSmsResult['balanceGap']> {
+    if (bankBalance === undefined || !SYNCED_ACCOUNT_TYPES.includes(account.type)) return undefined;
+    try {
+      const smsDate = new Date(transaction.transactionDate);
+      const latest = await storage.getLatestBalanceFigureDate(account.id, transaction.id);
+      if (!isNewestBalanceFigure(smsDate, latest)) return undefined;
+      const current = await storage.getAccount(account.id);
+      if (!current) return undefined;
+      const appBalanceAfterSms = parseFloat(current.balance || '0');
+      const gap = detectBalanceGap({
+        accountType: account.type,
+        appBalanceAfterSms,
+        bankBalance,
+        isFirstGapForAccount: (await storage.countBalanceGapsForAccount(account.id)) === 0,
+      });
+      if (!gap) return undefined;
+      await storage.setAccountBalance(account.id, bankBalance.toFixed(2));
+      const row = await storage.createBalanceGap({
+        userId: account.userId,
+        accountId: account.id,
+        smsTransactionId: transaction.id,
+        appBalanceBefore: appBalanceAfterSms.toFixed(2),
+        bankBalance: bankBalance.toFixed(2),
+        gapAmount: gap.gapAmount.toFixed(2),
+        status: gap.status,
+      });
+      return { id: row.id, accountName: account.name, gapAmount: gap.gapAmount, status: gap.status };
+    } catch (error) {
+      console.error("Balance sync failed:", error);
+      return undefined;
+    }
+  }
 
   // What the phone's "transaction added" notification shows beyond the parsed SMS itself.
   type SmsTransactionSummary = {
@@ -4312,8 +4353,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         await runSalaryAutoMark(transaction, messageText);
       }
 
+      // Before the summary, so the notification shows the synced balance.
+      const balanceGap = await syncBalanceFromSms(account, transaction, parsedData.availableBalance);
       const summary = await buildSmsTransactionSummary(account.id, transaction.categoryId, parsedData.availableBalance);
-      return { success: true, transaction, parsed: parsedData, summary };
+      return { success: true, transaction, parsed: parsedData, summary, balanceGap };
     };
 
     const matchedAccount = matchAccountBySender(accounts, sender || "", parsedData.accountLastDigits, parsedData.accountContext);
