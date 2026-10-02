@@ -44,6 +44,7 @@
       "./plugins/withSmsReceiver.js",
       "./plugins/withNotificationListener.js",
       "./plugins/withWidgets.js",
+      "./plugins/withLegacyBackButton.js",
       [
         "expo-notifications",
         {
