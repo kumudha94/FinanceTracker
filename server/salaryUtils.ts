@@ -452,3 +452,13 @@ export function getCreditCardBillingCycle(
 
   return { cycleStart, cycleEnd, cycleLabel };
 }
+
+/**
+ * The card billing cycle that had already closed at `reference`, i.e. the statement whose bill
+ * falls due after it. A salary cycle starting 29 Sep pays the YES Bank card's 12 Aug - 11 Sep
+ * statement (due 1 Oct), not the 12 Sep - 11 Oct cycle still open.
+ */
+export function getClosedCardCycle(reference: Date, billingDay: number) {
+  const open = getCreditCardBillingCycle(reference, billingDay);
+  return getCreditCardBillingCycle(new Date(open.cycleStart.getTime() - 1000), billingDay);
+}
