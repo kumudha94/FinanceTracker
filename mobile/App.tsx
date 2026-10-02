@@ -48,6 +48,7 @@ import AddCategoryScreen from './src/screens/AddCategoryScreen';
 import ImportStatementScreen from './src/screens/ImportStatementScreen';
 import InstitutionMappingsScreen from './src/screens/InstitutionMappingsScreen';
 import SpendingAllowanceScreen from './src/screens/SpendingAllowanceScreen';
+import BalanceGapsScreen from './src/screens/BalanceGapsScreen';
 import BillsInboxScreen from './src/screens/BillsInboxScreen';
 import SmsStatementsHubScreen from './src/screens/SmsStatementsHubScreen';
 import NeedsReviewHubScreen from './src/screens/NeedsReviewHubScreen';
@@ -125,6 +126,7 @@ export type RootStackParamList = {
   Main: undefined;
   AddTransaction: { accountId?: number; transactionId?: number } | undefined;
   SpendingAllowance: undefined;
+  BalanceGaps: undefined;
   AddAccount: { accountId?: number } | undefined;
   ExpenseDetails: undefined;
   CreditCardDetails: undefined;
@@ -405,6 +407,7 @@ function MainApp() {
         AddTransaction: { path: 'transaction/:transactionId', parse: { transactionId: Number } },
         InstitutionMappings: 'institution-mappings',
         SpendingAllowance: 'spending-allowance',
+        BalanceGaps: 'balance-gaps',
       },
     },
     // Tapping an SMS auto-read notification opens the link in its data.url, same as a widget tap.
@@ -571,6 +574,15 @@ function MainApp() {
           component={SpendingAllowanceScreen}
           options={{
             title: 'Safe to spend',
+            headerStyle: { backgroundColor: colors.primary },
+            headerTintColor: '#fff',
+          }}
+        />
+        <RootStack.Screen
+          name="BalanceGaps"
+          component={BalanceGapsScreen}
+          options={{
+            title: 'Balance gaps',
             headerStyle: { backgroundColor: colors.primary },
             headerTintColor: '#fff',
           }}

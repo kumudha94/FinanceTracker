@@ -62,6 +62,24 @@ export interface SmsPaymentMatchCandidate {
   createdAt: string;
 }
 
+export interface BalanceGapCandidate {
+  id: number;
+  date: string;
+  amount: number;
+  accountName: string;
+  merchant: string | null;
+}
+
+export interface BalanceGapItem {
+  id: number;
+  accountId: number;
+  accountName: string;
+  gapAmount: number; // positive = bank higher (missed credit), negative = missed debit
+  bankBalance: number;
+  detectedAt: string;
+  candidates: BalanceGapCandidate[];
+}
+
 export interface PendingPaymentMatchReview {
   id: number;
   userId: number;

@@ -3,7 +3,7 @@ import {
   paymentOccurrences, savingsGoals, savingsContributions, salaryProfiles, salaryCycles,
   loans, loanComponents, loanInstallments, loanSpendingEntries, loanTerms, loanPayments, loanBtAllocations, cardDetails, transactionSpendingEntries,
   insurances, insurancePremiums, creditCardStatements, senderInstitutionMappings, billSenderMappings,
-  forecastExclusions, smsPaymentMatchReviews, smsPaymentMatchCandidates, plannedIncomeEntries,
+  forecastExclusions, smsPaymentMatchReviews, smsPaymentMatchCandidates, balanceGaps, plannedIncomeEntries,
   type User, type InsertUser,
   type Account, type InsertAccount,
   type Category, type InsertCategory,
@@ -35,6 +35,7 @@ import {
   type SmsPaymentMatchCandidate, type InsertSmsPaymentMatchCandidate,
   type PlannedIncomeEntry, type InsertPlannedIncomeEntry,
   type DashboardStats,
+  type BalanceGap, type InsertBalanceGap,
   DEFAULT_CATEGORIES
 } from "@shared/schema";
 import { db } from "./db";
@@ -74,6 +75,16 @@ export interface IStorage {
   updateAccount(id: number, account: Partial<InsertAccount>): Promise<Account | undefined>;
   deleteAccount(id: number): Promise<boolean>;
   updateAccountBalance(id: number, amount: string, type: 'add' | 'subtract'): Promise<Account | undefined>;
+  createBalanceGap(data: InsertBalanceGap): Promise<BalanceGap>;
+  countBalanceGapsForAccount(accountId: number): Promise<number>;
+  getBalanceGap(id: number): Promise<BalanceGap | undefined>;
+  getPendingBalanceGaps(userId: number): Promise<BalanceGap[]>;
+  getUsedGapDebitIds(userId: number): Promise<Set<number>>;
+  markBalanceGap(id: number, fields: Partial<InsertBalanceGap>, onlyIfPending?: boolean): Promise<BalanceGap | undefined>;
+  setAccountBalance(accountId: number, balance: string): Promise<void>;
+  getLatestOtherTransactionDate(accountId: number, excludeTransactionId: number): Promise<Date | null>;
+  insertTransactionWithoutBalance(data: InsertTransaction): Promise<Transaction>;
+  convertDebitToSyncedTransfer(debitId: number, toAccountId: number): Promise<Transaction | undefined>;
 
   // Categories
   getAllCategories(): Promise<Category[]>;
@@ -3247,6 +3258,78 @@ export class DatabaseStorage implements IStorage {
 
     return { allocation: updatedAllocation, targetLoan: updatedLoan };
   }
+
+  // ========== Balance gaps (bank balance sync) ==========
+  async createBalanceGap(data: InsertBalanceGap): Promise<BalanceGap> {
+    const [row] = await db.insert(balanceGaps).values(data).returning();
+    return row;
+  }
+
+  async countBalanceGapsForAccount(accountId: number): Promise<number> {
+    const [r] = await db.select({ n: sql<number>`count(*)::int` }).from(balanceGaps).where(eq(balanceGaps.accountId, accountId));
+    return r?.n ?? 0;
+  }
+
+  async getBalanceGap(id: number): Promise<BalanceGap | undefined> {
+    const [row] = await db.select().from(balanceGaps).where(eq(balanceGaps.id, id));
+    return row;
+  }
+
+  async getPendingBalanceGaps(userId: number): Promise<BalanceGap[]> {
+    return db.select().from(balanceGaps)
+      .where(and(eq(balanceGaps.userId, userId), eq(balanceGaps.status, 'pending')))
+      .orderBy(desc(balanceGaps.createdAt));
+  }
+
+  // Debits already used to explain a gap, so one debit can't explain two gaps.
+  async getUsedGapDebitIds(userId: number): Promise<Set<number>> {
+    const rows = await db.select({ id: balanceGaps.resolvedTransactionId }).from(balanceGaps)
+      .where(and(eq(balanceGaps.userId, userId), eq(balanceGaps.resolution, 'transfer')));
+    return new Set(rows.map(r => r.id).filter((id): id is number => id !== null));
+  }
+
+  // Updates only while still pending (when onlyIfPending), so a double tap can't resolve twice.
+  async markBalanceGap(id: number, fields: Partial<InsertBalanceGap>, onlyIfPending = true): Promise<BalanceGap | undefined> {
+    const where = onlyIfPending ? and(eq(balanceGaps.id, id), eq(balanceGaps.status, 'pending')) : eq(balanceGaps.id, id);
+    const [row] = await db.update(balanceGaps).set(fields).where(where).returning();
+    return row;
+  }
+
+  async setAccountBalance(accountId: number, balance: string): Promise<void> {
+    await db.update(accounts).set({ balance, updatedAt: new Date() }).where(eq(accounts.id, accountId));
+  }
+
+  // Date of the newest other transaction touching this account (either side of a transfer).
+  // mapWith keeps drizzle's UTC handling of the timestamp column for the raw max().
+  async getLatestOtherTransactionDate(accountId: number, excludeTransactionId: number): Promise<Date | null> {
+    const [r] = await db.select({ d: sql<Date | null>`max(${transactions.transactionDate})`.mapWith(transactions.transactionDate) })
+      .from(transactions)
+      .where(and(
+        or(eq(transactions.accountId, accountId), eq(transactions.toAccountId, accountId)),
+        ne(transactions.id, excludeTransactionId),
+      ));
+    return r?.d ?? null;
+  }
+
+  // For transactions that explain a gap the balance was already synced for.
+  async insertTransactionWithoutBalance(data: InsertTransaction): Promise<Transaction> {
+    const [row] = await db.insert(transactions).values({
+      ...data,
+      transactionDate: data.transactionDate ? new Date(data.transactionDate) : new Date(),
+    }).returning();
+    return row;
+  }
+
+  // The source already paid this debit and the destination was synced to the bank's figure, so
+  // turning it into a transfer must not move either balance (updateTransaction would).
+  async convertDebitToSyncedTransfer(debitId: number, toAccountId: number): Promise<Transaction | undefined> {
+    const [row] = await db.update(transactions)
+      .set({ type: 'transfer', toAccountId, updatedAt: new Date() })
+      .where(and(eq(transactions.id, debitId), eq(transactions.type, 'debit')))
+      .returning();
+    return row;
+  }
+
 }
 
 export const storage = new DatabaseStorage();

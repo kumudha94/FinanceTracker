@@ -1037,6 +1037,26 @@ export type SmsPaymentMatchReview = typeof smsPaymentMatchReviews.$inferSelect;
 
 // One row per pending item that tied for a match on a review (same amount + keyword, both within
 // the due-date window) — the review screen lists these so the user can pick the right one.
+// Gaps between the app's balance and the bank's own "Avl bal" from an SMS. The balance is synced
+// to the bank's figure when a gap is found; the row lets the user explain it (a transfer whose
+// credit alert came only by email, a missed income, a fee). See server/balanceSync.ts.
+export const balanceGaps = pgTable("balance_gaps", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull().references(() => users.id),
+  accountId: integer("account_id").notNull().references(() => accounts.id),
+  smsTransactionId: integer("sms_transaction_id").references(() => transactions.id, { onDelete: 'set null' }),
+  appBalanceBefore: decimal("app_balance_before", { precision: 14, scale: 2 }).notNull(),
+  bankBalance: decimal("bank_balance", { precision: 14, scale: 2 }).notNull(),
+  gapAmount: decimal("gap_amount", { precision: 14, scale: 2 }).notNull(), // positive = missed credit, negative = missed debit
+  status: varchar("status", { length: 20 }).notNull(), // 'auto_synced' | 'pending' | 'resolved' | 'dismissed'
+  resolution: varchar("resolution", { length: 20 }), // 'transfer' | 'income' | 'expense'
+  resolvedTransactionId: integer("resolved_transaction_id").references(() => transactions.id, { onDelete: 'set null' }),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  resolvedAt: timestamp("resolved_at"),
+});
+export type BalanceGap = typeof balanceGaps.$inferSelect;
+export type InsertBalanceGap = typeof balanceGaps.$inferInsert;
+
 export const smsPaymentMatchCandidates = pgTable("sms_payment_match_candidates", {
   id: serial("id").primaryKey(),
   reviewId: integer("review_id").references(() => smsPaymentMatchReviews.id).notNull(),

@@ -3,7 +3,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Notifications from 'expo-notifications';
 import NetInfo from '@react-native-community/netinfo';
 import { API_BASE_URL, TASKER_API_KEY } from './api';
-import { buildSmsNotification, SmsNotificationResult } from './smsNotificationContent';
+import { buildSmsNotification, buildBalanceGapNotification, SmsNotificationResult } from './smsNotificationContent';
+import { createSerialQueue } from './serialQueue';
 import { refreshWidgets } from '../../modules/widget-bridge';
 
 const STORAGE_KEYS = {
@@ -142,6 +143,11 @@ async function notifyTransactionAdded(result: ParseSmsResult): Promise<void> {
 
   // data.url is what App.tsx's linking config opens when the notification is tapped.
   await Notifications.scheduleNotificationAsync({ content, trigger: null });
+
+  const gapContent = buildBalanceGapNotification(result);
+  if (gapContent) {
+    await Notifications.scheduleNotificationAsync({ content: gapContent, trigger: null });
+  }
 }
 
 export async function drainFailedQueue(): Promise<void> {
@@ -164,7 +170,14 @@ export async function drainFailedQueue(): Promise<void> {
   await setQueue(remaining);
 }
 
-export async function processIncomingSms(payload: RawSmsPayload): Promise<void> {
+// One SMS at a time: parallel balance-bearing SMS for an account would raise false balance gaps.
+const smsQueue = createSerialQueue();
+
+export function processIncomingSms(payload: RawSmsPayload): Promise<void> {
+  return smsQueue(() => processIncomingSmsNow(payload));
+}
+
+async function processIncomingSmsNow(payload: RawSmsPayload): Promise<void> {
   const enabled = await isAutoReadEnabled();
   if (!enabled) return;
 

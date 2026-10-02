@@ -31,12 +31,18 @@ export default function NeedsReviewHubScreen() {
     queryFn: api.getPendingPaymentMatchReviews,
   });
 
+  const { data: balanceGaps = [], refetch: refetchBalanceGaps } = useQuery({
+    queryKey: ['/api/balance-gaps'],
+    queryFn: api.getBalanceGaps,
+  });
+
   useFocusEffect(
     useCallback(() => {
       refetchMappings();
       refetchBillMappings();
       refetchPaymentMatches();
-    }, [refetchMappings, refetchBillMappings, refetchPaymentMatches])
+      refetchBalanceGaps();
+    }, [refetchMappings, refetchBillMappings, refetchPaymentMatches, refetchBalanceGaps])
   );
 
   const items = [
@@ -64,6 +70,15 @@ export default function NeedsReviewHubScreen() {
       color: '#f97316',
       count: pendingPaymentMatches.length,
     },
+    {
+      icon: 'scale-outline' as const,
+      title: 'Balance Gaps',
+      subtitle: 'Money the bank saw that no SMS told us about',
+      // Root-stack route (deep-linked from the notification); navigate bubbles up to it.
+      route: 'BalanceGaps' as const,
+      color: '#6366f1',
+      count: balanceGaps.length,
+    },
   ];
 
   return (
@@ -74,7 +89,7 @@ export default function NeedsReviewHubScreen() {
             <TouchableOpacity
               key={item.route}
               style={[styles.menuItem, { backgroundColor: colors.card }]}
-              onPress={() => navigation.navigate(item.route)}
+              onPress={() => navigation.navigate(item.route as any)}
             >
               <View style={[styles.menuIcon, { backgroundColor: `${item.color}15` }]}>
                 <Ionicons name={item.icon} size={24} color={item.color} />
